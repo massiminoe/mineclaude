@@ -1,0 +1,36 @@
+services:
+  mc-server:
+    image: itzg/minecraft-server:latest
+    environment:
+      EULA: "TRUE"
+      VERSION: "1.21.5"
+      ONLINE_MODE: "false"
+      DIFFICULTY: "peaceful"
+      GAMEMODE: "survival"
+      SPAWN_PROTECTION: "0"
+      ENABLE_RCON: "true"
+      RCON_PASSWORD: "mineclaude"
+    ports:
+      - "25565:25565"
+    healthcheck:
+      test: mc-health
+      interval: 10s
+      retries: 12
+      start_period: 60s
+
+  mc-client:
+    build:
+      context: .
+      dockerfile: mc-client/Dockerfile
+    depends_on:
+      mc-server:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - hmc-assets:/headlessmc/HeadlessMC/run/assets
+    stdin_open: true
+    tty: true
+
+volumes:
+  hmc-assets:

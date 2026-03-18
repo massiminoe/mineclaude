@@ -1,0 +1,78 @@
+"""Entry point for the Mineclaw agent."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import pathlib
+import sys
+
+
+def _load_dotenv() -> None:
+    """Load .env file from project root if it exists."""
+    env_file = pathlib.Path(__file__).resolve().parent.parent / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def main() -> None:
+    _load_dotenv()
+
+    # Configure logging
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
+    logger = logging.getLogger("agent")
+
+    # Read config from environment
+    mock_bridge = os.environ.get("MOCK_BRIDGE", "").lower() in ("1", "true", "yes")
+    bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8080")
+    bot_name = os.environ.get("BOT_NAME", "Mineclaw")
+    claude_model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    if not mock_bridge and not api_key:
+        logger.error("ANTHROPIC_API_KEY is required (or set MOCK_BRIDGE=1)")
+        sys.exit(1)
+
+    # Import here to avoid import-time side effects
+    from agent.agent import Agent
+    from agent.bridge import MockBridgeClient, create_bridge
+    from agent.claude import ClaudeClient
+
+    bridge = create_bridge(mock=mock_bridge, base_url=bridge_url)
+    claude = ClaudeClient(model=claude_model, api_key=api_key)
+    agent = Agent(bridge=bridge, claude=claude, bot_name=bot_name)
+
+    logger.info(f"Mineclaw agent starting (mock={mock_bridge}, bot={bot_name}, model={claude_model})")
+
+    # In mock mode, inject a test chat event after a short delay
+    if mock_bridge and isinstance(bridge, MockBridgeClient):
+        async def run_with_test_chat():
+            async def inject_after_delay():
+                await asyncio.sleep(1.0)
+                logger.info("Injecting test chat event")
+                bridge.inject_chat("Steve", "Hey Mineclaw, can you get me some oak logs?")
+            asyncio.create_task(inject_after_delay())
+            await agent.start()
+
+        asyncio.run(run_with_test_chat())
+    else:
+        asyncio.run(agent.start())
+
+
+if __name__ == "__main__":
+    main()

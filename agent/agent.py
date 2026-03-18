@@ -1,0 +1,241 @@
+"""Core agent loop: chat → Claude → tool_use → execute → respond."""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from agent.action_queue import ActionQueue
+from agent.bridge import BridgeClient
+from agent.claude import ClaudeClient
+from agent.primitives import make_primitives
+from agent.prompt import build_system_prompt, format_game_state
+from agent.sandbox import SandboxError, execute
+
+logger = logging.getLogger(__name__)
+
+MAX_ITERATIONS = 10
+CHAT_MAX_LEN = 240
+LOG_TRIM = 4096
+
+
+class Agent:
+    def __init__(
+        self,
+        bridge: BridgeClient,
+        claude: ClaudeClient,
+        bot_name: str = "Mineclaw",
+    ):
+        self.bridge = bridge
+        self.claude = claude
+        self.bot_name = bot_name
+        self.system_prompt = build_system_prompt(bot_name)
+        self.messages: list[dict[str, Any]] = []
+        self.queue = ActionQueue()
+        self.primitives = make_primitives(bridge)
+
+        # Wire up executor
+        self.queue.set_executor(self._execute_action)
+
+    async def start(self) -> None:
+        """Start the agent: queue worker + event listener."""
+        logger.info(f"Starting agent as {self.bot_name}")
+        self.queue.start()
+        await self.bridge.events(self._handle_event)
+
+    async def _handle_event(self, event: dict) -> None:
+        if event.get("type") == "chat":
+            await self._handle_chat(event["data"])
+
+    async def _handle_chat(self, data: dict) -> None:
+        username = data.get("username", "")
+        message = data.get("message", "")
+
+        # Ignore own messages
+        if username.lower() == self.bot_name.lower():
+            return
+
+        logger.info(f"Chat from {username}: {message}")
+
+        # Fetch game state
+        status_resp = await self.bridge.get_status()
+        queue_status = self.queue.status()
+        game_state = format_game_state(status_resp.data, queue_status)
+
+        # Append user message
+        self.messages.append({
+            "role": "user",
+            "content": f"{username}: {message}",
+        })
+
+        # Inject synthetic gameState tool_use/tool_result pair
+        self.messages.append({
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "gamestate_auto",
+                    "name": "gameState",
+                    "input": {},
+                }
+            ],
+        })
+        self.messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "gamestate_auto",
+                    "content": game_state,
+                }
+            ],
+        })
+
+        # Claude loop
+        for iteration in range(MAX_ITERATIONS):
+            logger.info(f"Claude iteration {iteration + 1}/{MAX_ITERATIONS}")
+
+            try:
+                response = await self.claude.send(self.system_prompt, self.messages)
+            except Exception as e:
+                logger.error(f"Claude API error: {e}")
+                await self._send_chat("Sorry, I had a brain glitch. Try again?")
+                break
+
+            logger.info(f"Claude response: stop_reason={response.stop_reason}, blocks={len(response.content)}")
+
+            # Process response content
+            assistant_content = []
+            tool_uses = []
+            text_parts = []
+
+            for block in response.content:
+                if block.type == "text":
+                    logger.info(f"Claude text: {block.text[:LOG_TRIM]}")
+                    text_parts.append(block.text)
+                    assistant_content.append({"type": "text", "text": block.text})
+                elif block.type == "tool_use":
+                    if "code" in block.input:
+                        other = {k: v for k, v in block.input.items() if k != "code"}
+                        extra = f" {json.dumps(other)}" if other else ""
+                        logger.info(f"Claude tool_use: {block.name}{extra}\n{block.input['code'][:LOG_TRIM]}")
+                    else:
+                        logger.info(f"Claude tool_use: {block.name}({json.dumps(block.input, indent=2)[:LOG_TRIM]})")
+                    tool_uses.append(block)
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    })
+
+            self.messages.append({"role": "assistant", "content": assistant_content})
+
+            if tool_uses:
+                # Dispatch all tool calls and collect results
+                tool_results = []
+                for tool_use in tool_uses:
+                    result = await self._dispatch_tool(tool_use.name, tool_use.input)
+                    logger.info(f"Tool result ({tool_use.name}): {result[:LOG_TRIM]}")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.id,
+                        "content": result,
+                    })
+                self.messages.append({"role": "user", "content": tool_results})
+                # Continue loop for Claude to process results
+                continue
+
+            # end_turn with text — send as chat
+            if text_parts:
+                full_text = " ".join(text_parts)
+                logger.info(f"Sending chat: {full_text[:LOG_TRIM]}")
+                await self._send_chat(full_text)
+            break
+
+        # Trim conversation history to avoid unbounded growth
+        self._trim_history()
+
+    async def _dispatch_tool(self, name: str, input_data: dict) -> str:
+        """Route tool calls to appropriate handlers."""
+        logger.debug(f"Tool call: {name}({json.dumps(input_data)[:LOG_TRIM]})")
+
+        try:
+            if name == "newAction":
+                code = input_data.get("code", "")
+                action = await self.queue.enqueue(code)
+                return f"Queued action {action.id}: {code[:100]}"
+
+            elif name == "stats":
+                resp = await self.bridge.get_status()
+                return json.dumps(resp.data, indent=2)
+
+            elif name == "inventory":
+                resp = await self.bridge.get_status()
+                return json.dumps(resp.data.get("inventory", []), indent=2)
+
+            elif name == "nearbyBlocks":
+                radius = input_data.get("range", 16)
+                resp = await self.bridge.get_nearby_blocks(radius)
+                return json.dumps(resp.data.get("blocks", []), indent=2)
+
+            elif name == "nearbyEntities":
+                radius = input_data.get("range", 32)
+                resp = await self.bridge.get_nearby_entities(radius)
+                return json.dumps(resp.data.get("entities", []), indent=2)
+
+            elif name == "queueStatus":
+                return json.dumps(self.queue.status(), indent=2)
+
+            elif name == "queueClear":
+                count = await self.queue.clear()
+                return f"Cleared {count} pending actions"
+
+            elif name == "queueRemove":
+                action_id = input_data.get("id", "")
+                found = await self.queue.cancel(action_id)
+                return f"Cancelled action {action_id}" if found else f"Action {action_id} not found"
+
+            elif name == "stop":
+                await self.queue.interrupt()
+                await self.bridge.stop()
+                return "Stopped all actions and movement"
+
+            else:
+                return f"Unknown tool: {name}"
+
+        except Exception as e:
+            logger.error(f"Tool error ({name}): {e}")
+            return f"Error: {e}"
+
+    async def _execute_action(self, code: str) -> str:
+        """Execute action code in the sandbox. Injected as queue executor."""
+        try:
+            return await execute(code, self.primitives)
+        except SandboxError as e:
+            return f"Sandbox error: {e}"
+
+    async def _send_chat(self, text: str) -> None:
+        """Send a message in-game, splitting if needed."""
+        text = text.strip()
+        if not text:
+            return
+
+        # Split at sentence boundaries or hard limit
+        while text:
+            if len(text) <= CHAT_MAX_LEN:
+                await self.bridge.chat(text)
+                break
+            # Try to split at last space before limit
+            split_at = text.rfind(" ", 0, CHAT_MAX_LEN)
+            if split_at == -1:
+                split_at = CHAT_MAX_LEN
+            await self.bridge.chat(text[:split_at])
+            text = text[split_at:].lstrip()
+
+    def _trim_history(self, max_messages: int = 50) -> None:
+        """Keep conversation history bounded."""
+        if len(self.messages) > max_messages:
+            # Keep the most recent messages
+            self.messages = self.messages[-max_messages:]

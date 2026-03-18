@@ -1,0 +1,14 @@
+.claude
+
+# Generic
+*.egg-info/
+__pycache__/
+dist/
+build/
+.eggs/
+*.pyc
+.env
+.pytest_cache/
+
+# Mod JARs (downloaded via mc-client/download-mods.sh)
+mc-client/mods/*.jar
