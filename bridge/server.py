@@ -68,9 +68,11 @@ async def handle_nearby_entities(request: web.Request) -> web.Response:
 async def handle_goto(request: web.Request) -> web.Response:
     body = await request.json()
     x, y, z = body.get("x", 0), body.get("y", 0), body.get("z", 0)
-    cmd = baritone.goto(x, y, z)
-    await _run(minescript_api.send_chat, cmd)
-    return web.json_response(_ok({"command": cmd}, f"Going to {x}, {y}, {z}"))
+    timeout = body.get("timeout", 60)
+    result = await _run(minescript_api.goto_and_wait, x, y, z, timeout)
+    if result.get("arrived"):
+        return web.json_response(_ok(result, f"Arrived at {x}, {y}, {z}"))
+    return web.json_response(_ok(result, result.get("error", f"Failed to reach {x}, {y}, {z}")))
 
 
 async def handle_mine(request: web.Request) -> web.Response:

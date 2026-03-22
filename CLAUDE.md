@@ -9,11 +9,15 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `docker compose down -v` — full clean restart (clears volumes, regenerates ops)
 - `mineclaude` — run the agent process (requires `.env` with `ANTHROPIC_API_KEY`)
 - `MOCK_BRIDGE=1 mineclaude` — test agent loop without MC server
+- `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
 ## Project Structure
 
-- `agent/` — Python package (bridge, sandbox, primitives, claude, agent, prompt, main)
+- `agent/` — Python package (bridge, sandbox, primitives, claude, agent, prompt, main, monitor)
 - `bridge/` — HTTP+WS bridge server (runs inside MC client container, NOT installed locally)
+  - `player_control.py` — shared helpers (look_at, find_slot, navigate, etc.)
+  - `recipes.py` — crafting recipe table (~30 essential survival recipes)
+- `frontend/` — React + TypeScript + Vite monitor UI
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
 - `mc-client/` — Dockerfile, entrypoint, mods, Minescript scripts
 - `docker-compose.yml` — `itzg/minecraft-server` + custom `mc-client/Dockerfile`
@@ -29,8 +33,13 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 
 ## Tech
 
-- Python 3.13, deps: anthropic, httpx, websockets
+- Python 3.13, deps: aiohttp, anthropic, httpx, websockets
+    - use the virtual environment at .venv/
 - Entry point: `mineclaude = "agent.main:main"`
+- Monitor: aiohttp server on port 5555 (MONITOR_PORT) inside agent process
+- Frontend: React + Vite dev server on port 5173, proxies `/api` to monitor
+  - `cd frontend && npm run dev` — dev server
+  - `cd frontend && npx vite build` — production build (served by monitor)
 - Bridge: aiohttp server on port 8080 inside mc-client container
 - Bridge logs to `/tmp/bridge.log` inside container (NOT to MC chat, to avoid feedback loops)
 
@@ -70,6 +79,12 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - Chat events: use `EventQueue` + `register_chat_listener()`, NOT `chat_events()`
 - `ChatEvent` may arrive as dict — check `isinstance(ev, dict)` before `hasattr(ev, "message")`
 - Chat messages include `[Not Secure]` prefix with `ONLINE_MODE=false` — use regex to find `<Player>` pattern
+- Player-control APIs take `pressed: bool` arg: `player_press_attack(True/False)`, `player_press_use(True/False)`, etc.
+- `player_look_at(x, y, z)` exists — use it instead of manual yaw/pitch math
+- `player_inventory_select_slot(slot)` — selects hotbar slot (NOT `player_select_slot`)
+- `player_inventory_slot_to_hotbar(slot)` — exists but BROKEN on MC 1.21.5 (ServerboundPickItemPacket removed in 1.21.4)
+- `container_click`, `close_screen`, `player_press_inventory`, `open_inventory` — do NOT exist in v5.0b11
+- `GET /probe` endpoint — returns JSON of all available Minescript APIs and capabilities
 
 ## Known Workarounds
 
@@ -77,4 +92,10 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - **Emojis**: MC can't render them — stripped to ASCII before sending, prompt tells Claude not to use them
 - **Bot opping**: `OPS` env var unreliable with offline-mode. RCON ops both bot and player in entrypoint after connection
 - **Bridge logging**: Must NOT use Python `logging` to stdout (Minescript routes it to MC chat → feedback loop). Logs to `/tmp/bridge.log`
-- **Craft/place/break/attack**: MVP implementations use server commands (`/give`, `/setblock`, `/damage`), not real player actions
+- **break/place/attack**: Real player actions (look_at + press_attack/press_use). Verified working in-game
+- **discard**: Real (select slot + press_drop). Works if item already in hotbar
+- **equip hand/offhand**: Real (inventory_select_slot / swap_hands). Works if item in hotbar
+- **equip armor**: Fallback only (/item replace) — no container_click API
+- **craft**: Fallback only (/give) — no container_click/close_screen APIs
+- Items not in hotbar can't be moved there (player_inventory_slot_to_hotbar broken on MC 1.21.5)
+- The `method` field in response dicts indicates "real" or "fallback" path

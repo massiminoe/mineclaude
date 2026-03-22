@@ -72,7 +72,7 @@ broken = 0
 for b in logs[:5]:
     await breakBlockAt(b['x'], b['y'], b['z'])
     broken += 1
-return f"Broke {broken} oak logs"
+return f"Broke {{broken}} oak logs"
 ```
 
 ### Multi-step:
@@ -83,7 +83,7 @@ stone = [b for b in blocks if b['name'] == 'stone']
 if stone:
     for b in stone[:3]:
         await breakBlockAt(b['x'], b['y'], b['z'])
-    return f"Mined {min(3, len(stone))} stone"
+    return f"Mined {{min(3, len(stone))}} stone"
 else:
     return "No stone nearby"
 ```

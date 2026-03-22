@@ -170,6 +170,74 @@ def send_chat(message: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Blocking navigation
+# ---------------------------------------------------------------------------
+
+def goto_and_wait(x: float, y: float, z: float, timeout: float = 60.0, threshold: float = 2.0) -> dict:
+    """Send Baritone #goto and block until player arrives or timeout.
+
+    Returns dict with arrived (bool), final position, and distance.
+    """
+    from bridge.baritone import goto
+    cmd = goto(x, y, z)
+    send_chat(cmd)
+    logger.info(f"goto: sent '{cmd}', waiting for arrival (timeout={timeout}s)")
+
+    deadline = time.monotonic() + timeout
+    stale_count = 0
+    last_pos = None
+
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        try:
+            pos = minescript.player_position()
+            px, py, pz = pos[0], pos[1], pos[2]
+        except Exception:
+            continue
+
+        dist = math.sqrt((px - x) ** 2 + (py - y) ** 2 + (pz - z) ** 2)
+
+        if dist <= threshold:
+            logger.info(f"goto: arrived at ({px:.0f}, {py:.0f}, {pz:.0f}), dist={dist:.1f}")
+            return {
+                "arrived": True,
+                "position": {"x": px, "y": py, "z": pz},
+                "distance": round(dist, 1),
+            }
+
+        # Detect if stuck (position hasn't changed for 5s)
+        current_pos = (round(px, 1), round(py, 1), round(pz, 1))
+        if current_pos == last_pos:
+            stale_count += 1
+            if stale_count >= 10:  # 10 * 0.5s = 5s stuck
+                logger.warning(f"goto: stuck at ({px:.0f}, {py:.0f}, {pz:.0f}), dist={dist:.1f}")
+                return {
+                    "arrived": False,
+                    "error": f"Stuck at distance {dist:.1f} from target",
+                    "position": {"x": px, "y": py, "z": pz},
+                    "distance": round(dist, 1),
+                }
+        else:
+            stale_count = 0
+            last_pos = current_pos
+
+    # Timeout
+    logger.warning(f"goto: timed out after {timeout}s")
+    try:
+        pos = minescript.player_position()
+        px, py, pz = pos[0], pos[1], pos[2]
+        dist = math.sqrt((px - x) ** 2 + (py - y) ** 2 + (pz - z) ** 2)
+        return {
+            "arrived": False,
+            "error": f"Timed out after {timeout}s, distance={dist:.1f}",
+            "position": {"x": px, "y": py, "z": pz},
+            "distance": round(dist, 1),
+        }
+    except Exception:
+        return {"arrived": False, "error": f"Timed out after {timeout}s"}
+
+
+# ---------------------------------------------------------------------------
 # Helpers (shared by real implementations)
 # ---------------------------------------------------------------------------
 
@@ -353,6 +421,16 @@ def _break_real(x: int, y: int, z: int) -> dict:
         name = "unknown"
     if not name or "air" in name:
         return {"broken": False, "error": "No block at position", "method": "real"}
+
+    # Check player is close enough (fail fast instead of 15s timeout)
+    from bridge.player_control import get_player_distance
+    dist = get_player_distance(float(x), float(y), float(z))
+    if dist > 6.0:
+        return {
+            "broken": False,
+            "error": f"Too far from block ({dist:.1f} blocks away, need <6)",
+            "method": "real",
+        }
 
     # Navigate within reach if needed
     if not _is_within_reach(x, y, z):

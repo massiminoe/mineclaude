@@ -24,14 +24,6 @@ async def test_go_to_position(bridge, prims):
 
 
 @pytest.mark.asyncio
-async def test_collect_block(bridge, prims):
-    result = await prims["collectBlock"]("oak_log", 2)
-    assert "Collected" in result
-    # Should have oak_log in inventory
-    assert any(i["name"] == "oak_log" for i in bridge._inventory)
-
-
-@pytest.mark.asyncio
 async def test_get_stats(bridge, prims):
     stats = await prims["getStats"]()
     assert stats["health"] == 20.0

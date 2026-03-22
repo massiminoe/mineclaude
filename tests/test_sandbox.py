@@ -97,9 +97,9 @@ async def test_no_builtins_escape(primitives):
 
 
 @pytest.mark.asyncio
-async def test_collect_block(primitives):
+async def test_break_block(primitives):
     result = await execute(
-        'result = await collectBlock("oak_log", 2)\nreturn result',
+        'result = await breakBlockAt(1, 64, 0)\nreturn result',
         primitives,
     )
-    assert "Collected" in result
+    assert "Broke" in result

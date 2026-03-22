@@ -26,7 +26,7 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "code": {
                     "type": "string",
-                    "description": "Python code to execute. Has access to all primitives (goToPosition, collectBlock, etc). Use await for async calls. Return a result string.",
+                    "description": "Python code to execute. Has access to all primitives (goToPosition, breakBlockAt, findBlocks, etc). Use await for async calls. Return a result string.",
                 }
             },
             "required": ["code"],

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any
+from typing import Any, Callable, Coroutine
 
 from agent.action_queue import ActionQueue
 from agent.bridge import BridgeClient
@@ -50,9 +50,22 @@ class Agent:
         self.queue = ActionQueue()
         self.primitives = make_primitives(bridge)
         self._session_ids: dict[str, str] = {}
+        self._callbacks: dict[str, list[Callable[[str, Any], Coroutine[Any, Any, None]]]] = {}
 
-        # Wire up executor
+        # Wire up executor and logging
         self.queue.set_executor(self._execute_action)
+        self.queue.on("action:started", self._on_action_started)
+        self.queue.on("action:completed", self._on_action_completed)
+
+    def on(self, event: str, callback: Callable[[str, Any], Coroutine[Any, Any, None]]) -> None:
+        self._callbacks.setdefault(event, []).append(callback)
+
+    async def _emit(self, event: str, data: Any = None) -> None:
+        for cb in self._callbacks.get(event, []):
+            try:
+                await cb(event, data)
+            except Exception:
+                pass
 
     async def start(self) -> None:
         """Start the agent: queue worker + event listener."""
@@ -137,6 +150,8 @@ class Agent:
             ],
         })
 
+        await self._emit("conversation:update", self.messages)
+
         # Claude loop
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"Claude iteration {iteration + 1}/{MAX_ITERATIONS}")
@@ -176,6 +191,7 @@ class Agent:
                     })
 
             self.messages.append({"role": "assistant", "content": assistant_content})
+            await self._emit("conversation:update", self.messages)
 
             if tool_uses:
                 # Dispatch all tool calls and collect results
@@ -189,6 +205,7 @@ class Agent:
                         "content": result,
                     })
                 self.messages.append({"role": "user", "content": tool_results})
+                await self._emit("conversation:update", self.messages)
                 # Continue loop for Claude to process results
                 continue
 
@@ -254,6 +271,16 @@ class Agent:
         except Exception as e:
             logger.error(f"Tool error ({name}): {e}")
             return f"Error: {e}"
+
+    async def _on_action_started(self, event: str, action) -> None:
+        logger.info(f"Action {action.id} STARTED: {action.code[:200]}")
+
+    async def _on_action_completed(self, event: str, action) -> None:
+        elapsed = (action.finished_at - action.started_at) if action.started_at and action.finished_at else 0
+        if action.status.value == "completed":
+            logger.info(f"Action {action.id} COMPLETED ({elapsed:.1f}s): {action.result or 'no output'}")
+        else:
+            logger.warning(f"Action {action.id} {action.status.value.upper()} ({elapsed:.1f}s): {action.error or 'no error'}")
 
     async def _execute_action(self, code: str) -> str:
         """Execute action code in the sandbox. Injected as queue executor."""

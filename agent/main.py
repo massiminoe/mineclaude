@@ -85,27 +85,30 @@ def main() -> None:
     from agent.agent import Agent
     from agent.bridge import MockBridgeClient, create_bridge
     from agent.claude import ClaudeClient
+    from agent.monitor import MonitorServer
+
+    monitor_port = int(os.environ.get("MONITOR_PORT", "5555"))
 
     bridge = create_bridge(mock=mock_bridge, base_url=bridge_url)
     claude = ClaudeClient(model=claude_model, api_key=api_key)
     agent = Agent(bridge=bridge, claude=claude, bot_name=bot_name)
+    monitor = MonitorServer(agent, port=monitor_port)
 
     logger.info(f"Mineclaw agent starting (mock={mock_bridge}, bot={bot_name}, model={claude_model})")
 
     try:
         # In mock mode, inject a test chat event after a short delay
-        if mock_bridge and isinstance(bridge, MockBridgeClient):
-            async def run_with_test_chat():
+        async def run():
+            await monitor.start()
+            if mock_bridge and isinstance(bridge, MockBridgeClient):
                 async def inject_after_delay():
                     await asyncio.sleep(1.0)
                     logger.info("Injecting test chat event")
                     bridge.inject_chat("Steve", "Hey Mineclaw, can you get me some oak logs?")
                 asyncio.create_task(inject_after_delay())
-                await agent.start()
+            await agent.start()
 
-            asyncio.run(run_with_test_chat())
-        else:
-            asyncio.run(agent.start())
+        asyncio.run(run())
     finally:
         _shutdown_langfuse(logger)
 
