@@ -58,16 +58,17 @@ sleep 15
 echo "=== Connection status ==="
 grep -i "world\|connect\|join\|baritone.*data" /tmp/hmc.log | tail -10
 
-# Op the bot via RCON
-echo "Opping bot via RCON..."
+# Op the bot and set game rules via RCON
+echo "Opping bot and configuring game rules via RCON..."
 python3 -c "
 from mcrcon import MCRcon
 try:
     with MCRcon('mc-server', 'mineclaude') as mcr:
         print(mcr.command('op Claude'))
         print(mcr.command('op Massimino'))
+        print(mcr.command('gamerule doImmediateRespawn true'))
 except Exception as e:
-    print(f'RCON op failed: {e}')
+    print(f'RCON failed: {e}')
 "
 
 # Wait for bridge to be ready (autorun config starts bridge on world join)
