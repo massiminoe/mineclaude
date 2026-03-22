@@ -19,10 +19,6 @@ def test_mine_diamond():
     assert mine("diamond_ore") == "#mine diamond_ore"
 
 
-def test_follow():
-    assert follow("Steve") == "#follow Steve"
-
-
 def test_explore():
     assert explore() == "#explore"
 

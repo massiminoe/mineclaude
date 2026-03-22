@@ -75,31 +75,35 @@ def get_nearby_blocks(radius: int = 8) -> list[dict]:
     Block names are stripped of the minecraft: namespace and state suffixes
     (e.g. "minecraft:oak_log[axis=y]" -> "oak_log") so consumers can match
     by base block name.
+
+    Results are sorted by distance, closest first.
     """
     pos = minescript.player_position()
     px, py, pz = int(pos[0]), int(pos[1]), int(pos[2])
     blocks = []
+    radius_sq = radius * radius
 
-    # Try batch API first
+    # Use get_block_region for a single bulk load, then iterate locally
     try:
-        positions = []
+        region = minescript.get_block_region(
+            [px - radius, py - radius, pz - radius],
+            [px + radius, py + radius, pz + radius],
+        )
         for dx in range(-radius, radius + 1):
             for dy in range(-radius, radius + 1):
                 for dz in range(-radius, radius + 1):
-                    dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-                    if dist <= radius:
-                        positions.append((px + dx, py + dy, pz + dz))
-
-        block_list = minescript.getblocklist([list(p) for p in positions])
-        for bpos, name in zip(positions, block_list):
-            if name and "air" not in name:
-                bx, by, bz = bpos
-                dist = math.sqrt((bx - px) ** 2 + (by - py) ** 2 + (bz - pz) ** 2)
-                blocks.append({
-                    "name": name.replace("minecraft:", "").split("[")[0],
-                    "x": bx, "y": by, "z": bz,
-                    "distance": round(dist, 1),
-                })
+                    dist_sq = dx * dx + dy * dy + dz * dz
+                    if dist_sq > radius_sq:
+                        continue
+                    bx, by, bz = px + dx, py + dy, pz + dz
+                    name = region.get_block(bx, by, bz)
+                    if name and "air" not in name:
+                        blocks.append({
+                            "name": name.replace("minecraft:", "").split("[")[0],
+                            "x": bx, "y": by, "z": bz,
+                            "distance": round(math.sqrt(dist_sq), 1),
+                        })
+        blocks.sort(key=lambda b: b["distance"])
         return blocks
     except (AttributeError, TypeError):
         pass
@@ -108,8 +112,8 @@ def get_nearby_blocks(radius: int = 8) -> list[dict]:
     for dx in range(-radius, radius + 1):
         for dy in range(-radius, radius + 1):
             for dz in range(-radius, radius + 1):
-                dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-                if dist > radius:
+                dist_sq = dx * dx + dy * dy + dz * dz
+                if dist_sq > radius_sq:
                     continue
                 bx, by, bz = px + dx, py + dy, pz + dz
                 try:
@@ -118,11 +122,12 @@ def get_nearby_blocks(radius: int = 8) -> list[dict]:
                         blocks.append({
                             "name": name.replace("minecraft:", "").split("[")[0],
                             "x": bx, "y": by, "z": bz,
-                            "distance": round(dist, 1),
+                            "distance": round(math.sqrt(dist_sq), 1),
                         })
                 except Exception:
                     continue
 
+    blocks.sort(key=lambda b: b["distance"])
     return blocks
 
 
