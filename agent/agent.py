@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 
 from agent.action_queue import ActionQueue
@@ -12,6 +13,20 @@ from agent.claude import ClaudeClient
 from agent.primitives import make_primitives
 from agent.prompt import build_system_prompt, format_game_state
 from agent.sandbox import SandboxError, execute
+
+try:
+    from langfuse import observe, propagate_attributes
+    _langfuse_available = True
+except ImportError:
+    _langfuse_available = False
+    propagate_attributes = None
+    def observe(*args, **kwargs):
+        """No-op decorator when langfuse is not installed."""
+        if args and callable(args[0]):
+            return args[0]
+        def decorator(fn):
+            return fn
+        return decorator
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +49,7 @@ class Agent:
         self.messages: list[dict[str, Any]] = []
         self.queue = ActionQueue()
         self.primitives = make_primitives(bridge)
+        self._session_ids: dict[str, str] = {}
 
         # Wire up executor
         self.queue.set_executor(self._execute_action)
@@ -47,14 +63,43 @@ class Agent:
     async def _handle_event(self, event: dict) -> None:
         if event.get("type") == "chat":
             await self._handle_chat(event["data"])
+        elif event.get("type") == "death":
+            await self._handle_death()
+        elif event.get("type") == "respawn":
+            await self._handle_respawn()
+
+    async def _handle_death(self) -> None:
+        """Handle player death: stop all actions."""
+        logger.warning("Bot died! Clearing action queue.")
+        await self.queue.interrupt()
+        try:
+            await self.bridge.stop()
+        except Exception:
+            pass
+
+    async def _handle_respawn(self) -> None:
+        """Handle respawn: notify in chat."""
+        logger.info("Bot respawned.")
+        await self._send_chat("I died and respawned! Give me a moment to get my bearings.")
 
     async def _handle_chat(self, data: dict) -> None:
         username = data.get("username", "")
-        message = data.get("message", "")
 
         # Ignore own messages
         if username.lower() == self.bot_name.lower():
             return
+
+        if _langfuse_available and propagate_attributes:
+            session_id = self._session_ids.setdefault(username, str(uuid.uuid4()))
+            with propagate_attributes(user_id=username, session_id=session_id):
+                await self._handle_chat_traced(data)
+        else:
+            await self._handle_chat_traced(data)
+
+    @observe()
+    async def _handle_chat_traced(self, data: dict) -> None:
+        username = data.get("username", "")
+        message = data.get("message", "")
 
         logger.info(f"Chat from {username}: {message}")
 
@@ -157,6 +202,7 @@ class Agent:
         # Trim conversation history to avoid unbounded growth
         self._trim_history()
 
+    @observe()
     async def _dispatch_tool(self, name: str, input_data: dict) -> str:
         """Route tool calls to appropriate handlers."""
         logger.debug(f"Tool call: {name}({json.dumps(input_data)[:LOG_TRIM]})")

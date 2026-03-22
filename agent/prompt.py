@@ -31,9 +31,8 @@ All primitives are async — use `await` for each call.
 - `await stop()` — halt all movement
 
 ### Block Interaction
-- `await collectBlock(block_type, count=1)` — find and mine blocks (e.g. 'oak_log', 'diamond_ore')
+- `await breakBlockAt(x, y, z)` — mine/break the block at exact coordinates
 - `await placeBlock(block_type, x, y, z, face='top')` — place a block
-- `await breakBlockAt(x, y, z)` — break the block at a position
 
 ### Combat
 - `await attackNearest(mob_type)` — attack nearest entity of type
@@ -63,22 +62,30 @@ All primitives are async — use `await` for each call.
 
 ## Code Patterns
 
-### Simple action:
+### Mining blocks (scan, find, break):
 ```python
-result = await collectBlock('oak_log', 5)
-return result
+# Find nearby oak logs, then break them one by one
+logs = await findBlocks('oak_log', range=16)
+if not logs:
+    return "No oak logs nearby"
+broken = 0
+for b in logs[:5]:
+    await breakBlockAt(b['x'], b['y'], b['z'])
+    broken += 1
+return f"Broke {broken} oak logs"
 ```
 
 ### Multi-step:
 ```python
 await goToPosition(100, 64, 200)
 blocks = await getNearbyBlocks(16)
-oak = [b for b in blocks if b['name'] == 'oak_log']
-if oak:
-    result = await collectBlock('oak_log', 5)
-    return result
+stone = [b for b in blocks if b['name'] == 'stone']
+if stone:
+    for b in stone[:3]:
+        await breakBlockAt(b['x'], b['y'], b['z'])
+    return f"Mined {min(3, len(stone))} stone"
 else:
-    return "No oak logs nearby"
+    return "No stone nearby"
 ```
 
 ### With logging:

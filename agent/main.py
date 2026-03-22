@@ -25,6 +25,36 @@ def _load_dotenv() -> None:
             os.environ[key] = value
 
 
+def _init_langfuse(logger: logging.Logger) -> None:
+    """Initialize Langfuse tracing if configured. Must be called BEFORE creating AsyncAnthropic."""
+    if not os.environ.get("LANGFUSE_SECRET_KEY"):
+        logger.debug("Langfuse not configured (LANGFUSE_SECRET_KEY not set)")
+        return
+
+    try:
+        from langfuse import Langfuse
+        from opentelemetry.instrumentation.anthropic import AnthropicInstrumentor
+
+        Langfuse()
+        AnthropicInstrumentor().instrument()
+        logger.info("Langfuse tracing enabled")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Langfuse: {e}")
+
+
+def _shutdown_langfuse(logger: logging.Logger) -> None:
+    """Flush Langfuse on shutdown to avoid losing traces."""
+    try:
+        from langfuse import get_client
+
+        client = get_client()
+        if client:
+            client.flush()
+            logger.debug("Langfuse flushed")
+    except Exception:
+        pass
+
+
 def main() -> None:
     _load_dotenv()
 
@@ -48,6 +78,9 @@ def main() -> None:
         logger.error("ANTHROPIC_API_KEY is required (or set MOCK_BRIDGE=1)")
         sys.exit(1)
 
+    # Initialize Langfuse BEFORE importing modules that create AsyncAnthropic
+    _init_langfuse(logger)
+
     # Import here to avoid import-time side effects
     from agent.agent import Agent
     from agent.bridge import MockBridgeClient, create_bridge
@@ -59,19 +92,22 @@ def main() -> None:
 
     logger.info(f"Mineclaw agent starting (mock={mock_bridge}, bot={bot_name}, model={claude_model})")
 
-    # In mock mode, inject a test chat event after a short delay
-    if mock_bridge and isinstance(bridge, MockBridgeClient):
-        async def run_with_test_chat():
-            async def inject_after_delay():
-                await asyncio.sleep(1.0)
-                logger.info("Injecting test chat event")
-                bridge.inject_chat("Steve", "Hey Mineclaw, can you get me some oak logs?")
-            asyncio.create_task(inject_after_delay())
-            await agent.start()
+    try:
+        # In mock mode, inject a test chat event after a short delay
+        if mock_bridge and isinstance(bridge, MockBridgeClient):
+            async def run_with_test_chat():
+                async def inject_after_delay():
+                    await asyncio.sleep(1.0)
+                    logger.info("Injecting test chat event")
+                    bridge.inject_chat("Steve", "Hey Mineclaw, can you get me some oak logs?")
+                asyncio.create_task(inject_after_delay())
+                await agent.start()
 
-        asyncio.run(run_with_test_chat())
-    else:
-        asyncio.run(agent.start())
+            asyncio.run(run_with_test_chat())
+        else:
+            asyncio.run(agent.start())
+    finally:
+        _shutdown_langfuse(logger)
 
 
 if __name__ == "__main__":

@@ -18,10 +18,6 @@ def make_primitives(bridge: BridgeClient) -> dict[str, Any]:
         resp = await bridge.goto(x, y, z)
         return resp.message
 
-    async def collectBlock(block_type: str, count: int = 1) -> str:
-        resp = await bridge.mine(block_type, count)
-        return resp.message
-
     async def goToPlayer(player: str, distance: int = 3) -> str:
         resp = await bridge.follow(player, distance)
         return resp.message
@@ -96,7 +92,6 @@ def make_primitives(bridge: BridgeClient) -> dict[str, Any]:
 
     return {
         "goToPosition": goToPosition,
-        "collectBlock": collectBlock,
         "goToPlayer": goToPlayer,
         "followPlayer": followPlayer,
         "stop": stop,

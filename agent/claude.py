@@ -6,6 +6,16 @@ from typing import Any
 
 import anthropic
 
+try:
+    from langfuse import observe
+except ImportError:
+    def observe(*args, **kwargs):
+        if args and callable(args[0]):
+            return args[0]
+        def decorator(fn):
+            return fn
+        return decorator
+
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -86,6 +96,7 @@ class ClaudeClient:
         self.model = model
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
 
+    @observe(as_type="generation")
     async def send(
         self,
         system: str,

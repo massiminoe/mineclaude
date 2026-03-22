@@ -14,6 +14,10 @@ dev = [
     "pytest",
     "pytest-asyncio",
 ]
+tracing = [
+    "langfuse",
+    "opentelemetry-instrumentation-anthropic",
+]
 
 [project.scripts]
 mineclaude = "agent.main:main"
