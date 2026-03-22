@@ -5,7 +5,9 @@ def goto(x: float, y: float, z: float) -> str:
     return f"#goto {int(x)} {int(y)} {int(z)}"
 
 
-def mine(block: str) -> str:
+def mine(block: str, count: int = 0) -> str:
+    if count > 0:
+        return f"#mine {count} {block}"
     return f"#mine {block}"
 
 

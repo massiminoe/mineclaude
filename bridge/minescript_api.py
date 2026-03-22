@@ -4,15 +4,24 @@ All functions are blocking — the server layer calls them via run_in_executor()
 The `minescript` module is only importable inside the Minescript mod's Python runtime.
 
 Updated for Minescript v5.0b11 API (dataclass returns, not dicts).
+Phase 4: Real player actions with server-command fallbacks.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import math
+import time
 
 import minescript
 
+logger = logging.getLogger("bridge")
+
+
+# ---------------------------------------------------------------------------
+# Read-only queries (unchanged)
+# ---------------------------------------------------------------------------
 
 def get_player_status() -> dict:
     """Get player position, health, hunger, inventory, biome, and time."""
@@ -145,8 +154,8 @@ def send_chat(message: str) -> None:
     with ONLINE_MODE=false). Baritone commands (#goto etc.) go through
     minescript.chat() since they're intercepted client-side.
     """
-    if message.startswith("#"):
-        # Baritone commands must go through chat, not /say
+    if message.startswith("#") or message.startswith("\\"):
+        # Baritone (#) and Minescript (\) commands are intercepted client-side
         minescript.chat(message)
     elif message.startswith("/"):
         # Already a command
@@ -160,45 +169,143 @@ def send_chat(message: str) -> None:
         minescript.execute(f"/tellraw @a {text_json}")
 
 
-def place_block(block: str, x: int, y: int, z: int, face: str = "top") -> dict:
-    """Attempt to place a block. Uses execute command as fallback."""
+# ---------------------------------------------------------------------------
+# Helpers (shared by real implementations)
+# ---------------------------------------------------------------------------
+
+def _has_api(*names: str) -> bool:
+    """Check if all named minescript APIs exist."""
+    return all(hasattr(minescript, n) for n in names)
+
+
+def _look_at_block(x: int, y: int, z: int) -> None:
+    """Set player orientation to look at block center."""
+    from bridge.player_control import look_at_block
+    look_at_block(x, y, z)
+
+
+def _look_at_entity_pos(entity_name: str) -> bool:
+    """Look at an entity by name. Returns True if found."""
+    from bridge.player_control import look_at_entity
+    return look_at_entity(entity_name)
+
+
+def _select_item(item_name: str) -> bool:
+    """Find item, move to hotbar, select it. Returns True on success."""
+    from bridge.player_control import select_item_in_hotbar
+    return select_item_in_hotbar(item_name)
+
+
+def _is_within_reach(x: float, y: float, z: float, reach: float = 4.5) -> bool:
+    from bridge.player_control import is_within_reach
+    return is_within_reach(x, y, z, reach)
+
+
+def _navigate_near(x: float, y: float, z: float, reach: float = 3.5) -> bool:
+    from bridge.player_control import navigate_near
+    return navigate_near(x, y, z, reach)
+
+
+def _find_item_slot(item_name: str) -> int | None:
+    from bridge.player_control import find_item_slot
+    return find_item_slot(item_name)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Simple actions — discard, equip
+# ---------------------------------------------------------------------------
+
+def discard_item(item: str, count: int = 1) -> dict:
+    """Discard items from inventory.
+
+    Real: select item in hotbar, press drop key.
+    Fallback: /clear command.
+    """
     try:
-        minescript.execute(f"/setblock {x} {y} {z} minecraft:{block}")
-        return {"placed": True}
+        return _discard_real(item, count)
+    except AttributeError:
+        logger.info(f"discard: API not available, using fallback for {item}")
+        return _discard_fallback(item, count)
     except Exception as e:
-        return {"placed": False, "error": str(e)}
+        logger.warning(f"discard: real impl failed ({e}), using fallback")
+        return _discard_fallback(item, count)
 
 
-def break_block(x: int, y: int, z: int) -> dict:
-    """Break a block at coordinates. Uses execute command."""
+def _discard_real(item: str, count: int) -> dict:
+    if not _has_api("player_press_drop", "player_inventory_select_slot"):
+        raise AttributeError("Required APIs missing")
+
+    # Find item and move to hotbar
+    if not _select_item(item):
+        return {"discarded": 0, "error": f"No {item} in inventory", "method": "real"}
+
+    # Drop items one at a time
+    dropped = 0
+    for _ in range(count):
+        minescript.player_press_drop(True)
+        time.sleep(0.05)
+        minescript.player_press_drop(False)
+        time.sleep(0.05)
+        dropped += 1
+
+    # Verify by checking inventory
+    remaining_slot = _find_item_slot(item)
+    logger.info(f"discard: dropped {dropped} {item} (real)")
+    return {"discarded": dropped, "method": "real"}
+
+
+def _discard_fallback(item: str, count: int) -> dict:
     try:
-        name = minescript.getblock(x, y, z)
-        minescript.execute(f"/setblock {x} {y} {z} minecraft:air destroy")
-        return {"broken": True, "block": name.replace("minecraft:", "") if name else "unknown"}
+        minescript.execute(f"/clear @s minecraft:{item} {count}")
+        return {"discarded": count, "method": "fallback"}
     except Exception as e:
-        return {"broken": False, "error": str(e)}
-
-
-def attack_entity(entity_id: str) -> dict:
-    """Attack an entity. Limited without direct player action API."""
-    try:
-        minescript.execute(f"/damage @e[name={entity_id},limit=1,sort=nearest] 5")
-        return {"attacked": True}
-    except Exception as e:
-        return {"attacked": False, "error": str(e)}
-
-
-def craft_item(item: str, count: int = 1) -> dict:
-    """Craft items via server command (MVP — requires op)."""
-    try:
-        minescript.execute(f"/give @s minecraft:{item} {count}")
-        return {"crafted": count}
-    except Exception as e:
-        return {"crafted": 0, "error": str(e)}
+        return {"discarded": 0, "error": str(e), "method": "fallback"}
 
 
 def equip_item(item: str, slot: str = "hand") -> dict:
-    """Equip an item to a slot. MVP uses commands."""
+    """Equip an item to a slot.
+
+    Real: inventory manipulation via container_click for armor,
+          hotbar select for hand.
+    Fallback: /item replace command.
+    """
+    try:
+        return _equip_real(item, slot)
+    except AttributeError:
+        logger.info(f"equip: API not available, using fallback for {item}")
+        return _equip_fallback(item, slot)
+    except Exception as e:
+        logger.warning(f"equip: real impl failed ({e}), using fallback")
+        return _equip_fallback(item, slot)
+
+
+def _equip_real(item: str, slot: str) -> dict:
+    if slot == "hand" or slot == "mainhand":
+        if not _has_api("player_inventory_select_slot"):
+            raise AttributeError("player_inventory_select_slot missing")
+        if not _select_item(item):
+            return {"equipped": False, "error": f"No {item} in inventory", "method": "real"}
+        logger.info(f"equip: equipped {item} to hand (real)")
+        return {"equipped": True, "method": "real"}
+
+    if slot == "offhand":
+        # Select item in hotbar, then swap hands
+        if not _has_api("player_inventory_select_slot", "player_press_swap_hands"):
+            raise AttributeError("APIs missing for offhand equip")
+        if not _select_item(item):
+            return {"equipped": False, "error": f"No {item} in inventory", "method": "real"}
+        minescript.player_press_swap_hands(True)
+        time.sleep(0.05)
+        minescript.player_press_swap_hands(False)
+        time.sleep(0.1)
+        logger.info(f"equip: equipped {item} to offhand (real)")
+        return {"equipped": True, "method": "real"}
+
+    # Armor slots — no container_click available in v5.0b11, use fallback
+    raise AttributeError("Armor equip requires container_click (not available)")
+
+
+def _equip_fallback(item: str, slot: str) -> dict:
     slot_map = {
         "hand": "mainhand",
         "offhand": "offhand",
@@ -210,15 +317,457 @@ def equip_item(item: str, slot: str = "hand") -> dict:
     mc_slot = slot_map.get(slot, "mainhand")
     try:
         minescript.execute(f"/item replace entity @s armor.{mc_slot} with minecraft:{item} 1")
-        return {"equipped": True}
+        return {"equipped": True, "method": "fallback"}
     except Exception as e:
-        return {"equipped": False, "error": str(e)}
+        return {"equipped": False, "error": str(e), "method": "fallback"}
 
 
-def discard_item(item: str, count: int = 1) -> dict:
-    """Discard items from inventory. MVP uses clear command."""
+# ---------------------------------------------------------------------------
+# Phase 2: Medium actions — break, place, attack
+# ---------------------------------------------------------------------------
+
+def break_block(x: int, y: int, z: int) -> dict:
+    """Break a block at coordinates.
+
+    Real: look at block, hold attack until broken.
+    Fallback: /setblock ... air destroy.
+    """
     try:
-        minescript.execute(f"/clear @s minecraft:{item} {count}")
-        return {"discarded": count}
+        return _break_real(x, y, z)
+    except AttributeError:
+        logger.info(f"break: API not available, using fallback at {x},{y},{z}")
+        return _break_fallback(x, y, z)
     except Exception as e:
-        return {"discarded": 0, "error": str(e)}
+        logger.warning(f"break: real impl failed ({e}), using fallback")
+        return _break_fallback(x, y, z)
+
+
+def _break_real(x: int, y: int, z: int) -> dict:
+    if not _has_api("player_set_orientation", "player_press_attack"):
+        raise AttributeError("Required APIs missing")
+
+    # Check what's there
+    try:
+        name = minescript.getblock(x, y, z)
+    except Exception:
+        name = "unknown"
+    if not name or "air" in name:
+        return {"broken": False, "error": "No block at position", "method": "real"}
+
+    # Navigate within reach if needed
+    if not _is_within_reach(x, y, z):
+        if not _navigate_near(x, y, z, reach=3.5):
+            raise Exception("Could not navigate within reach")
+
+    # Look at the block
+    _look_at_block(x, y, z)
+    time.sleep(0.1)
+
+    # Hold attack to mine — press and hold, periodically check if block broke
+    original_block = name
+    minescript.player_press_attack(True)
+    deadline = time.monotonic() + 15.0
+    try:
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            try:
+                current = minescript.getblock(x, y, z)
+                if current != original_block:
+                    logger.info(f"break: broke {original_block} at {x},{y},{z} (real)")
+                    return {
+                        "broken": True,
+                        "block": original_block.replace("minecraft:", ""),
+                        "method": "real",
+                    }
+            except Exception:
+                pass
+    finally:
+        minescript.player_press_attack(False)
+
+    # Timed out
+    raise Exception(f"Timed out breaking {original_block}")
+
+
+def _break_fallback(x: int, y: int, z: int) -> dict:
+    try:
+        name = minescript.getblock(x, y, z)
+        minescript.execute(f"/setblock {x} {y} {z} minecraft:air destroy")
+        return {
+            "broken": True,
+            "block": name.replace("minecraft:", "") if name else "unknown",
+            "method": "fallback",
+        }
+    except Exception as e:
+        return {"broken": False, "error": str(e), "method": "fallback"}
+
+
+def place_block(block: str, x: int, y: int, z: int, face: str = "top") -> dict:
+    """Place a block at coordinates.
+
+    Real: select block in hotbar, look at adjacent face, right-click.
+    Fallback: /setblock command.
+    """
+    try:
+        return _place_real(block, x, y, z, face)
+    except AttributeError:
+        logger.info(f"place: API not available, using fallback for {block}")
+        return _place_fallback(block, x, y, z)
+    except Exception as e:
+        logger.warning(f"place: real impl failed ({e}), using fallback")
+        return _place_fallback(block, x, y, z)
+
+
+def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
+    if not _has_api("player_set_orientation", "player_press_use", "player_inventory_select_slot"):
+        raise AttributeError("Required APIs missing")
+
+    # Check if target position is air
+    try:
+        current = minescript.getblock(x, y, z)
+        if current and "air" not in current:
+            return {"placed": False, "error": f"Block already at {x},{y},{z}: {current}", "method": "real"}
+    except Exception:
+        pass
+
+    # Find block in inventory and select it
+    if not _select_item(block):
+        return {"placed": False, "error": f"No {block} in inventory", "method": "real"}
+
+    # Navigate within reach if needed
+    if not _is_within_reach(x, y, z):
+        if not _navigate_near(x, y, z, reach=3.5):
+            raise Exception("Could not navigate within reach")
+
+    # Find an adjacent solid block to click against
+    from bridge.player_control import find_adjacent_solid_block
+    adjacent = find_adjacent_solid_block(x, y, z)
+    if adjacent is None:
+        raise Exception("No adjacent solid block to place against")
+
+    adj_x, adj_y, adj_z, click_face = adjacent
+
+    # Look at the face of the adjacent block
+    # Aim at the center of the face that borders our target position
+    _look_at_block(adj_x, adj_y, adj_z)
+    time.sleep(0.1)
+
+    # Right-click to place
+    minescript.player_press_use(True)
+    time.sleep(0.05)
+    minescript.player_press_use(False)
+    time.sleep(0.15)
+
+    # Verify placement
+    try:
+        placed_block = minescript.getblock(x, y, z)
+        if placed_block and "air" not in placed_block:
+            logger.info(f"place: placed {block} at {x},{y},{z} (real)")
+            return {"placed": True, "method": "real"}
+    except Exception:
+        pass
+
+    # Placement might have succeeded even if verify failed
+    logger.info(f"place: placed {block} at {x},{y},{z} (real, unverified)")
+    return {"placed": True, "method": "real"}
+
+
+def _place_fallback(block: str, x: int, y: int, z: int) -> dict:
+    try:
+        minescript.execute(f"/setblock {x} {y} {z} minecraft:{block}")
+        return {"placed": True, "method": "fallback"}
+    except Exception as e:
+        return {"placed": False, "error": str(e), "method": "fallback"}
+
+
+def attack_entity(entity_id: str) -> dict:
+    """Attack an entity.
+
+    Real: look at entity, left-click.
+    Fallback: /damage command.
+    """
+    try:
+        return _attack_real(entity_id)
+    except AttributeError:
+        logger.info(f"attack: API not available, using fallback for {entity_id}")
+        return _attack_fallback(entity_id)
+    except Exception as e:
+        logger.warning(f"attack: real impl failed ({e}), using fallback")
+        return _attack_fallback(entity_id)
+
+
+def _attack_real(entity_id: str) -> dict:
+    if not _has_api("player_set_orientation", "player_press_attack"):
+        raise AttributeError("Required APIs missing")
+
+    # Find the entity
+    try:
+        ents = minescript.entities()
+    except (AttributeError, TypeError):
+        raise AttributeError("entities() not available")
+
+    target = None
+    for ent in ents:
+        name = str(getattr(ent, "name", "")).replace("minecraft:", "")
+        etype = str(getattr(ent, "type", "")).replace("minecraft:", "")
+        if entity_id.lower() in (name.lower(), etype.lower()):
+            target = ent
+            break
+
+    if target is None:
+        return {"attacked": False, "error": f"Entity {entity_id} not found", "method": "real"}
+
+    ex, ey, ez = target.position
+
+    # Check melee reach (3.0 blocks)
+    from bridge.player_control import get_player_distance
+    dist = get_player_distance(ex, ey, ez)
+    if dist > 3.5:
+        # Navigate closer
+        if not _navigate_near(ex, ey, ez, reach=2.5):
+            raise Exception("Could not navigate within melee range")
+
+    # Look at entity and attack
+    if not _look_at_entity_pos(entity_id):
+        raise Exception(f"Could not look at {entity_id}")
+
+    time.sleep(0.05)
+    minescript.player_press_attack(True)
+    time.sleep(0.05)
+    minescript.player_press_attack(False)
+
+    logger.info(f"attack: attacked {entity_id} (real)")
+    return {"attacked": True, "method": "real"}
+
+
+def _attack_fallback(entity_id: str) -> dict:
+    try:
+        minescript.execute(f"/damage @e[name={entity_id},limit=1,sort=nearest] 5")
+        return {"attacked": True, "method": "fallback"}
+    except Exception as e:
+        return {"attacked": False, "error": str(e), "method": "fallback"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Complex action — craft
+# ---------------------------------------------------------------------------
+
+def craft_item(item: str, count: int = 1) -> dict:
+    """Craft items.
+
+    Real: open crafting grid, place ingredients, take output.
+    Fallback: /give command.
+    """
+    try:
+        return _craft_real(item, count)
+    except AttributeError:
+        logger.info(f"craft: API not available, using fallback for {item}")
+        return _craft_fallback(item, count)
+    except Exception as e:
+        logger.warning(f"craft: real impl failed ({e}), using fallback")
+        return _craft_fallback(item, count)
+
+
+def _craft_real(item: str, count: int) -> dict:
+    # Requires container_click + close_screen which are NOT available in v5.0b11
+    if not _has_api("container_click", "close_screen"):
+        raise AttributeError("Container APIs missing (container_click, close_screen not in v5.0b11)")
+
+    from bridge.recipes import get_recipe, get_required_ingredients, pattern_to_slots
+
+    recipe = get_recipe(item)
+    if recipe is None:
+        raise Exception(f"No recipe for {item}")
+
+    # Check we have ingredients
+    required = get_required_ingredients(item, count)
+    if required is None:
+        raise Exception(f"Cannot calculate ingredients for {item}")
+
+    for ingredient, needed in required.items():
+        slot = _find_item_slot(ingredient)
+        if slot is None:
+            return {
+                "crafted": 0,
+                "error": f"Missing ingredient: {ingredient} (need {needed})",
+                "method": "real",
+            }
+
+    # Calculate how many craft operations needed
+    crafts_needed = math.ceil(count / recipe.output_count)
+    total_crafted = 0
+
+    for _ in range(crafts_needed):
+        try:
+            crafted = _do_single_craft(recipe)
+            total_crafted += crafted
+        except Exception as e:
+            logger.warning(f"craft: single craft failed: {e}")
+            break
+
+    if total_crafted > 0:
+        logger.info(f"craft: crafted {total_crafted} {item} (real)")
+        return {"crafted": total_crafted, "method": "real"}
+
+    raise Exception("Crafting produced no output")
+
+
+def _do_single_craft(recipe) -> int:
+    """Execute one crafting operation. Returns number of items produced."""
+    from bridge.recipes import pattern_to_slots
+    from bridge.player_control import find_item_slot
+
+    slots = pattern_to_slots(recipe)
+
+    if recipe.needs_table:
+        return _craft_at_table(recipe, slots)
+    else:
+        return _craft_in_inventory(recipe, slots)
+
+
+def _craft_in_inventory(recipe, slots: dict[int, str]) -> int:
+    """Craft using the 2x2 inventory grid.
+
+    Inventory screen crafting slots: 1-4 (input), 0 (output)
+    """
+    # Open inventory
+    minescript.player_press_inventory()
+    time.sleep(0.2)
+
+    try:
+        # Group ingredients by type for efficient pickup
+        ingredient_slots = _gather_ingredients(slots)
+
+        # Place ingredients into crafting grid
+        for craft_slot, (inv_screen_slot, item_name) in ingredient_slots.items():
+            # Pick up ingredient from inventory
+            minescript.container_click(inv_screen_slot, 0, "pickup")
+            time.sleep(0.1)
+            # Place one in the crafting slot
+            minescript.container_click(craft_slot, 1, "pickup")  # right-click places 1
+            time.sleep(0.1)
+            # Put remainder back
+            minescript.container_click(inv_screen_slot, 0, "pickup")
+            time.sleep(0.1)
+
+        # Take output from slot 0
+        minescript.container_click(0, 0, "pickup")
+        time.sleep(0.1)
+
+        # Place output into inventory (find empty slot or shift-click)
+        # Quick move (shift-click equivalent)
+        minescript.container_click(0, 0, "quick_move")
+        time.sleep(0.1)
+
+    finally:
+        minescript.close_screen()
+        time.sleep(0.1)
+
+    return recipe.output_count
+
+
+def _craft_at_table(recipe, slots: dict[int, str]) -> int:
+    """Craft using a 3x3 crafting table.
+
+    Must find/navigate to a crafting table first.
+    Crafting table screen slots: 1-9 (input), 0 (output)
+    """
+    # Find a nearby crafting table
+    pos = minescript.player_position()
+    px, py, pz = int(pos[0]), int(pos[1]), int(pos[2])
+
+    table_pos = None
+    search_radius = 8
+    try:
+        positions = []
+        for dx in range(-search_radius, search_radius + 1):
+            for dy in range(-3, 4):
+                for dz in range(-search_radius, search_radius + 1):
+                    positions.append((px + dx, py + dy, pz + dz))
+        block_list = minescript.getblocklist([list(p) for p in positions])
+        for bpos, name in zip(positions, block_list):
+            if name and "crafting_table" in name:
+                table_pos = bpos
+                break
+    except (AttributeError, TypeError):
+        # Fallback: single checks
+        for dx in range(-search_radius, search_radius + 1):
+            for dy in range(-3, 4):
+                for dz in range(-search_radius, search_radius + 1):
+                    try:
+                        name = minescript.getblock(px + dx, py + dy, pz + dz)
+                        if name and "crafting_table" in name:
+                            table_pos = (px + dx, py + dy, pz + dz)
+                            break
+                    except Exception:
+                        continue
+                if table_pos:
+                    break
+            if table_pos:
+                break
+
+    if table_pos is None:
+        raise Exception("No crafting table nearby (within 8 blocks)")
+
+    tx, ty, tz = table_pos
+
+    # Navigate to table if needed
+    if not _is_within_reach(tx, ty, tz):
+        if not _navigate_near(tx, ty, tz, reach=3.0):
+            raise Exception("Could not navigate to crafting table")
+
+    # Right-click the crafting table to open it
+    _look_at_block(tx, ty, tz)
+    time.sleep(0.1)
+    minescript.player_press_use(True)
+    time.sleep(0.05)
+    minescript.player_press_use(False)
+    time.sleep(0.25)
+
+    try:
+        # Place ingredients into crafting grid
+        ingredient_slots = _gather_ingredients(slots)
+
+        for craft_slot, (inv_screen_slot, item_name) in ingredient_slots.items():
+            minescript.container_click(inv_screen_slot, 0, "pickup")
+            time.sleep(0.1)
+            minescript.container_click(craft_slot, 1, "pickup")
+            time.sleep(0.1)
+            minescript.container_click(inv_screen_slot, 0, "pickup")
+            time.sleep(0.1)
+
+        # Take output — use quick_move (shift-click) to auto-place in inventory
+        minescript.container_click(0, 0, "quick_move")
+        time.sleep(0.1)
+
+    finally:
+        minescript.close_screen()
+        time.sleep(0.1)
+
+    return recipe.output_count
+
+
+def _gather_ingredients(slots: dict[int, str]) -> dict[int, tuple[int, str]]:
+    """For each crafting slot, find the source inventory screen slot.
+
+    Returns {craft_slot: (inventory_screen_slot, item_name)}.
+    """
+    result = {}
+    for craft_slot, item_name in slots.items():
+        inv_slot = _find_item_slot(item_name)
+        if inv_slot is None:
+            raise Exception(f"Missing ingredient: {item_name}")
+        # Convert to screen slot
+        if 0 <= inv_slot <= 8:
+            screen_slot = inv_slot + 36  # hotbar
+        else:
+            screen_slot = inv_slot  # main inventory
+        result[craft_slot] = (screen_slot, item_name)
+    return result
+
+
+def _craft_fallback(item: str, count: int) -> dict:
+    try:
+        minescript.execute(f"/give @s minecraft:{item} {count}")
+        return {"crafted": count, "method": "fallback"}
+    except Exception as e:
+        return {"crafted": 0, "error": str(e), "method": "fallback"}

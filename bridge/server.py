@@ -76,11 +76,12 @@ async def handle_goto(request: web.Request) -> web.Response:
 async def handle_mine(request: web.Request) -> web.Response:
     body = await request.json()
     block = body.get("block", "")
+    count = body.get("count", 0)
     if not block:
         return web.json_response(_err("Missing 'block' parameter"), status=400)
-    cmd = baritone.mine(block)
+    cmd = baritone.mine(block, count)
     await _run(minescript_api.send_chat, cmd)
-    return web.json_response(_ok({"command": cmd}, f"Mining {block}"))
+    return web.json_response(_ok({"command": cmd}, f"Mining {count} {block}" if count else f"Mining {block}"))
 
 
 async def handle_follow(request: web.Request) -> web.Response:
@@ -174,6 +175,92 @@ async def handle_discard(request: web.Request) -> web.Response:
     return web.json_response(_err(result.get("error", "Failed to discard")))
 
 
+async def handle_probe(request: web.Request) -> web.Response:
+    """Run API probe and return results — tests which minescript APIs exist."""
+    import inspect
+
+    def _probe():
+        import minescript
+        results = {"player_control": {}, "container": {}, "capabilities": {}, "tests": {}}
+
+        for name in [
+            "player_set_orientation", "player_orientation",
+            "player_press_attack", "player_press_use", "player_press_drop",
+            "player_select_slot", "player_press_forward", "player_press_backward",
+            "player_press_left", "player_press_right", "player_press_jump",
+            "player_press_sneak", "player_press_sprint",
+        ]:
+            exists = hasattr(minescript, name)
+            sig = ""
+            if exists:
+                try:
+                    sig = str(inspect.signature(getattr(minescript, name)))
+                except (ValueError, TypeError):
+                    sig = "(?)"
+            results["player_control"][name] = {"exists": exists, "signature": sig}
+
+        for name in [
+            "screen_name", "container_get_items", "container_click",
+            "close_screen", "player_press_inventory", "open_inventory",
+        ]:
+            exists = hasattr(minescript, name)
+            sig = ""
+            if exists:
+                try:
+                    sig = str(inspect.signature(getattr(minescript, name)))
+                except (ValueError, TypeError):
+                    sig = "(?)"
+            results["container"][name] = {"exists": exists, "signature": sig}
+
+        # All public APIs
+        results["all_apis"] = []
+        for name in sorted(dir(minescript)):
+            if name.startswith("_"):
+                continue
+            obj = getattr(minescript, name)
+            if callable(obj):
+                try:
+                    sig = str(inspect.signature(obj))
+                except (ValueError, TypeError):
+                    sig = "(?)"
+                results["all_apis"].append({"name": name, "signature": sig})
+
+        # Safe read-only tests
+        try:
+            yaw, pitch = minescript.player_orientation()
+            results["tests"]["player_orientation()"] = f"ok: yaw={yaw:.1f}, pitch={pitch:.1f}"
+        except Exception as e:
+            results["tests"]["player_orientation()"] = str(e)
+
+        try:
+            result = minescript.player_look_at(0.0, 64.0, 0.0)
+            results["tests"]["player_look_at(0,64,0)"] = f"ok: {result}"
+        except Exception as e:
+            results["tests"]["player_look_at(0,64,0)"] = str(e)
+
+        try:
+            minescript.player_inventory_select_slot(0)
+            results["tests"]["player_inventory_select_slot(0)"] = "ok"
+        except Exception as e:
+            results["tests"]["player_inventory_select_slot(0)"] = str(e)
+
+        pc = results["player_control"]
+        ct = results["container"]
+        results["capabilities"] = {
+            "break_block": pc.get("player_set_orientation", {}).get("exists") and pc.get("player_press_attack", {}).get("exists"),
+            "place_block": pc.get("player_set_orientation", {}).get("exists") and pc.get("player_press_use", {}).get("exists"),
+            "attack_entity": pc.get("player_set_orientation", {}).get("exists") and pc.get("player_press_attack", {}).get("exists"),
+            "craft_item": ct.get("container_click", {}).get("exists") and ct.get("container_get_items", {}).get("exists"),
+            "equip_item": ct.get("container_click", {}).get("exists"),
+            "discard_item": pc.get("player_press_drop", {}).get("exists") and pc.get("player_select_slot", {}).get("exists"),
+        }
+
+        return results
+
+    results = await _run(_probe)
+    return web.json_response(_ok(results, "API probe complete"))
+
+
 async def handle_chat(request: web.Request) -> web.Response:
     body = await request.json()
     message = body.get("message", "")
@@ -213,6 +300,38 @@ async def broadcast_event(event: dict) -> None:
         except Exception:
             dead.add(ws)
     _ws_clients.difference_update(dead)
+
+
+async def death_monitor(app: web.Application) -> None:
+    """Background task: detect player death (health <= 0) and broadcast events."""
+    import minescript
+
+    loop = asyncio.get_event_loop()
+    was_dead = False
+
+    while True:
+        try:
+            health = await loop.run_in_executor(_executor, minescript.player_health)
+            is_dead = health <= 0
+
+            if is_dead and not was_dead:
+                logger.info("Player died! Broadcasting death event.")
+                await broadcast_event({
+                    "type": "death",
+                    "data": {"message": "Player died"},
+                })
+            elif not is_dead and was_dead:
+                logger.info("Player respawned.")
+                await broadcast_event({
+                    "type": "respawn",
+                    "data": {"message": "Player respawned"},
+                })
+
+            was_dead = is_dead
+        except Exception as e:
+            logger.debug(f"Death monitor error: {e}")
+
+        await asyncio.sleep(1)
 
 
 async def chat_event_poller(app: web.Application) -> None:
@@ -283,14 +402,16 @@ async def chat_event_poller(app: web.Application) -> None:
 
 async def start_background_tasks(app: web.Application) -> None:
     app["chat_poller"] = asyncio.create_task(chat_event_poller(app))
+    app["death_monitor"] = asyncio.create_task(death_monitor(app))
 
 
 async def cleanup_background_tasks(app: web.Application) -> None:
-    app["chat_poller"].cancel()
-    try:
-        await app["chat_poller"]
-    except asyncio.CancelledError:
-        pass
+    for task_name in ("chat_poller", "death_monitor"):
+        app[task_name].cancel()
+        try:
+            await app[task_name]
+        except asyncio.CancelledError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +439,7 @@ def create_app() -> web.Application:
     app.router.add_post("/equip", handle_equip)
     app.router.add_post("/discard", handle_discard)
     app.router.add_post("/chat", handle_chat)
+    app.router.add_get("/probe", handle_probe)
 
     # WebSocket
     app.router.add_get("/events", handle_events)
