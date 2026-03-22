@@ -10,10 +10,8 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="sidebar">
-        <ConversationPanel messages={conversation} />
-        <ActionQueue queue={queue} />
-      </div>
+      <ConversationPanel messages={conversation} />
+      <ActionQueue queue={queue} />
       <div className="main-area">
         <VideoPlaceholder />
       </div>
