@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { ConversationMessage, ContentBlock } from "../types";
 
 interface Props {
@@ -35,9 +34,6 @@ export function MessageBubble({ message }: Props) {
           return <AssistantTextBubble key={i} text={block.text || ""} />;
         }
         if (block.type === "tool_use") {
-          if (block.id === "gamestate_auto") {
-            return <GameStateIndicator key={i} block={block} />;
-          }
           return <ToolCall key={i} block={block} />;
         }
         return null;
@@ -73,21 +69,6 @@ function AssistantTextBubble({ text }: { text: string }) {
   );
 }
 
-function GameStateIndicator({ block }: { block: ContentBlock }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="gamestate-indicator" onClick={() => setExpanded(!expanded)}>
-      <span className="gamestate-toggle">{expanded ? "\u25BC" : "\u25B6"}</span>
-      <span className="gamestate-label">Game state updated</span>
-      {expanded && block.input && (
-        <pre className="gamestate-detail">
-          {JSON.stringify(block.input, null, 2)}
-        </pre>
-      )}
-    </div>
-  );
-}
 
 function ToolCall({ block }: { block: ContentBlock }) {
   const isNewAction = block.name === "newAction";
@@ -108,9 +89,6 @@ function ToolCall({ block }: { block: ContentBlock }) {
 function ToolResult({ block }: { block: ContentBlock }) {
   const content = block.content || "";
   const isError = content.toLowerCase().startsWith("error");
-
-  // Don't render gamestate results
-  if (block.tool_use_id === "gamestate_auto") return null;
 
   return (
     <div className="tool-result">
