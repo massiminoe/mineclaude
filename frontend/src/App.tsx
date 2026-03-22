@@ -1,3 +1,4 @@
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { useSocket } from "./hooks/useSocket";
 import { ConversationPanel } from "./components/ConversationPanel";
 import { ActionQueue } from "./components/ActionQueue";
@@ -10,11 +11,21 @@ export default function App() {
 
   return (
     <div className="app">
-      <ConversationPanel messages={conversation} />
-      <ActionQueue queue={queue} />
-      <div className="main-area">
-        <VideoPlaceholder />
-      </div>
+      <Group direction="horizontal">
+        <Panel defaultSize={33} minSize={15}>
+          <ConversationPanel messages={conversation} />
+        </Panel>
+        <Separator className="resize-handle" />
+        <Panel defaultSize={33} minSize={15}>
+          <ActionQueue queue={queue} />
+        </Panel>
+        <Separator className="resize-handle" />
+        <Panel defaultSize={34} minSize={15}>
+          <div className="main-area">
+            <VideoPlaceholder />
+          </div>
+        </Panel>
+      </Group>
       <StatsBar gameState={gameState} connected={connected} />
     </div>
   );

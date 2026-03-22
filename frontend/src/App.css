@@ -41,9 +41,8 @@ body {
 /* ===== Layout ===== */
 
 .app {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  grid-template-rows: 1fr auto;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
 }
 
@@ -52,6 +51,19 @@ body {
   align-items: center;
   justify-content: center;
   background: var(--bg-primary);
+  height: 100%;
+}
+
+/* ===== Resize Handles ===== */
+
+.resize-handle {
+  width: 3px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+.resize-handle:hover {
+  background: var(--color-user);
 }
 
 /* ===== Panel Headers ===== */
@@ -72,10 +84,10 @@ body {
 .conversation-panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--bg-sidebar);
-  border-right: 1px solid var(--border);
 }
 
 .conversation-messages {
@@ -246,10 +258,10 @@ body {
 .action-queue {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--bg-sidebar);
-  border-right: 1px solid var(--border);
 }
 
 .queue-content {
@@ -432,7 +444,6 @@ body {
 /* ===== Stats Bar ===== */
 
 .stats-bar {
-  grid-column: 1 / -1;
   padding: 8px 16px;
   border-top: 1px solid var(--border);
   display: flex;
@@ -440,6 +451,7 @@ body {
   gap: 24px;
   background: var(--bg-primary);
   font-size: 13px;
+  flex-shrink: 0;
 }
 
 .stat {
