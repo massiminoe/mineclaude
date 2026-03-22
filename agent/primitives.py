@@ -3,15 +3,60 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import functools
+import inspect
+import uuid
+from typing import Any, Callable, Coroutine
 
 from agent.bridge import BridgeClient
 
 # Shared log buffer, cleared before each sandbox execution
 _log_buffer: list[str] = []
 
+# Type for sub-action callback
+SubActionCallback = Callable[..., Coroutine[Any, Any, None]]
 
-def make_primitives(bridge: BridgeClient) -> dict[str, Any]:
+
+def _summarize_args(fn: Any, args: tuple, kwargs: dict) -> dict[str, Any]:
+    """Convert positional args to a named dict using the function's signature."""
+    sig = inspect.signature(fn)
+    params = list(sig.parameters.keys())
+    summary: dict[str, Any] = {}
+    for i, val in enumerate(args):
+        key = params[i] if i < len(params) else f"arg{i}"
+        # Truncate large results (like block lists)
+        if isinstance(val, list) and len(val) > 3:
+            summary[key] = f"[{len(val)} items]"
+        elif isinstance(val, str) and len(val) > 80:
+            summary[key] = val[:80] + "..."
+        else:
+            summary[key] = val
+    for key, val in kwargs.items():
+        summary[key] = val
+    return summary
+
+
+def _wrap(name: str, fn: Any, on_subaction: SubActionCallback) -> Any:
+    """Wrap an async primitive to emit sub-action events."""
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        sub_id = uuid.uuid4().hex[:8]
+        summarized = _summarize_args(fn, args, kwargs)
+        await on_subaction(sub_id, name, summarized, "started")
+        try:
+            result = await fn(*args, **kwargs)
+            await on_subaction(sub_id, name, None, "completed", result=result)
+            return result
+        except Exception as e:
+            await on_subaction(sub_id, name, None, "failed", error=str(e))
+            raise
+    return wrapper
+
+
+def make_primitives(
+    bridge: BridgeClient,
+    on_subaction: SubActionCallback | None = None,
+) -> dict[str, Any]:
     """Create a dict of name → async callable primitives, closed over bridge."""
 
     async def goToPosition(x: float, y: float, z: float) -> str:
@@ -90,7 +135,7 @@ def make_primitives(bridge: BridgeClient) -> dict[str, Any]:
     def log(message: str) -> None:
         _log_buffer.append(str(message))
 
-    return {
+    primitives = {
         "goToPosition": goToPosition,
         "goToPlayer": goToPlayer,
         "followPlayer": followPlayer,
@@ -111,3 +156,12 @@ def make_primitives(bridge: BridgeClient) -> dict[str, Any]:
         "sleep": sleep,
         "log": log,
     }
+
+    # Wrap async primitives with sub-action tracking (skip log and sleep)
+    if on_subaction is not None:
+        skip = {"log", "sleep"}
+        for name, fn in primitives.items():
+            if name not in skip and asyncio.iscoroutinefunction(fn):
+                primitives[name] = _wrap(name, fn, on_subaction)
+
+    return primitives

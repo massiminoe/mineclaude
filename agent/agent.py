@@ -48,7 +48,7 @@ class Agent:
         self.system_prompt = build_system_prompt(bot_name)
         self.messages: list[dict[str, Any]] = []
         self.queue = ActionQueue()
-        self.primitives = make_primitives(bridge)
+        self.primitives = make_primitives(bridge, on_subaction=self._on_subaction)
         self._session_ids: dict[str, str] = {}
         self._callbacks: dict[str, list[Callable[[str, Any], Coroutine[Any, Any, None]]]] = {}
 
@@ -276,10 +276,16 @@ class Agent:
             logger.error(f"Tool error ({name}): {e}")
             return f"Error: {e}"
 
-    async def _on_action_started(self, event: str, action) -> None:
+    async def _on_subaction(
+        self, sub_id: str, name: str, args: dict | None, status: str, **kwargs: Any
+    ) -> None:
+        """Callback from instrumented primitives — forwards to queue."""
+        await self.queue.record_subaction(sub_id, name, args, status, **kwargs)
+
+    async def _on_action_started(self, event: str, action, *_extra) -> None:
         logger.info(f"Action {action.id} STARTED: {action.code[:200]}")
 
-    async def _on_action_completed(self, event: str, action) -> None:
+    async def _on_action_completed(self, event: str, action, *_extra) -> None:
         elapsed = (action.finished_at - action.started_at) if action.started_at and action.finished_at else 0
         if action.status.value == "completed":
             logger.info(f"Action {action.id} COMPLETED ({elapsed:.1f}s): {action.result or 'no output'}")

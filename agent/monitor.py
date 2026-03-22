@@ -44,6 +44,8 @@ class MonitorServer:
         self.agent.queue.on("action:enqueued", self._on_action_event)
         self.agent.queue.on("action:started", self._on_action_event)
         self.agent.queue.on("action:completed", self._on_action_event)
+        self.agent.queue.on("subaction:started", self._on_subaction_event)
+        self.agent.queue.on("subaction:completed", self._on_subaction_event)
 
     async def start(self) -> None:
         runner = web.AppRunner(self._app)
@@ -118,7 +120,7 @@ class MonitorServer:
     async def _on_conversation_update(self, event: str, messages: Any) -> None:
         await self._broadcast("conversation:update", {"messages": messages})
 
-    async def _on_action_event(self, event: str, action: Any) -> None:
+    async def _on_action_event(self, event: str, action: Any, *_extra: Any) -> None:
         await self._broadcast(event.replace(":", "_"), {
             "action": {
                 "id": action.id,
@@ -129,7 +131,14 @@ class MonitorServer:
                 "finished_at": action.finished_at,
                 "result": action.result,
                 "error": action.error,
+                "subactions": action.subactions,
             }
+        })
+
+    async def _on_subaction_event(self, event: str, action: Any, subaction: dict) -> None:
+        await self._broadcast(event.replace(":", "_"), {
+            "action_id": action.id,
+            "subaction": subaction,
         })
 
     # --- Game state polling ---

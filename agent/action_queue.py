@@ -30,13 +30,14 @@ class Action:
     result: str | None = None
     error: str | None = None
     timeout: float = 300.0
+    subactions: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Type for the executor callable: (code: str) -> result string
 Executor = Callable[[str], Coroutine[Any, Any, str]]
 
-# Type for event callbacks
-EventCallback = Callable[[str, Action], Coroutine[Any, Any, None]]
+# Type for event callbacks: (event, action, *extra)
+EventCallback = Callable[..., Coroutine[Any, Any, None]]
 
 
 class ActionQueue:
@@ -57,12 +58,50 @@ class ActionQueue:
     def on(self, event: str, callback: EventCallback) -> None:
         self._callbacks.setdefault(event, []).append(callback)
 
-    async def _emit(self, event: str, action: Action) -> None:
+    async def _emit(self, event: str, action: Action, *extra: Any) -> None:
         for cb in self._callbacks.get(event, []):
             try:
-                await cb(event, action)
+                await cb(event, action, *extra)
             except Exception:
                 pass
+
+    async def record_subaction(
+        self,
+        sub_id: str,
+        name: str,
+        args: dict[str, Any] | None,
+        status: str,
+        *,
+        result: Any = None,
+        error: str | None = None,
+    ) -> None:
+        """Record a sub-action event on the currently running action."""
+        action = self._running_action
+        if action is None:
+            return
+        if status == "started":
+            sub: dict[str, Any] = {
+                "id": sub_id,
+                "name": name,
+                "args": args,
+                "status": "started",
+                "started_at": time.time(),
+                "finished_at": None,
+                "result": None,
+                "error": None,
+            }
+            action.subactions.append(sub)
+            await self._emit("subaction:started", action, sub)
+        else:
+            # Update existing sub-action
+            for s in action.subactions:
+                if s["id"] == sub_id:
+                    s["status"] = status
+                    s["finished_at"] = time.time()
+                    s["result"] = _truncate(result) if result is not None else None
+                    s["error"] = error
+                    await self._emit("subaction:completed", action, s)
+                    break
 
     def start(self) -> None:
         if self._worker_task is None:
@@ -199,6 +238,16 @@ class ActionQueue:
                 await self._emit("action:drained", action)
 
 
+def _truncate(value: Any, max_len: int = 200) -> str | None:
+    """Truncate a result value to a reasonable display length."""
+    if value is None:
+        return None
+    s = str(value)
+    if len(s) > max_len:
+        return s[:max_len] + "..."
+    return s
+
+
 def _action_summary(action: Action) -> dict[str, Any]:
     return {
         "id": action.id,
@@ -209,4 +258,5 @@ def _action_summary(action: Action) -> dict[str, Any]:
         "finished_at": action.finished_at,
         "result": action.result,
         "error": action.error,
+        "subactions": action.subactions,
     }

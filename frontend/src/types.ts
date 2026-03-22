@@ -13,6 +13,17 @@ export interface ConversationMessage {
   content: string | ContentBlock[];
 }
 
+export interface SubActionItem {
+  id: string;
+  name: string;
+  args: Record<string, unknown> | null;
+  status: "started" | "completed" | "failed";
+  started_at: number;
+  finished_at: number | null;
+  result: unknown;
+  error: string | null;
+}
+
 export interface ActionItem {
   id: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -22,6 +33,7 @@ export interface ActionItem {
   finished_at: number | null;
   result: string | null;
   error: string | null;
+  subactions: SubActionItem[];
 }
 
 export interface QueueState {

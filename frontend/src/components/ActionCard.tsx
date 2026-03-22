@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { ActionItem } from "../types";
+import type { ActionItem, SubActionItem } from "../types";
 
 interface Props {
   action: ActionItem;
@@ -10,6 +10,8 @@ export function ActionCard({ action, position }: Props) {
   const statusClass = `action-${action.status}`;
   const isRunning = action.status === "running";
   const [expanded, setExpanded] = useState(false);
+  const subs = action.subactions || [];
+  const showSubs = subs.length > 0 && (isRunning || expanded);
 
   return (
     <div
@@ -31,9 +33,18 @@ export function ActionCard({ action, position }: Props) {
           ) : null}
         </span>
       </div>
-      <pre className={`action-code ${expanded ? "" : "truncated"}`}>
-        {action.code}
-      </pre>
+      {showSubs && (
+        <div className="subaction-list">
+          {subs.map((sub) => (
+            <SubActionRow key={sub.id} sub={sub} />
+          ))}
+        </div>
+      )}
+      {!showSubs && (
+        <pre className={`action-code ${expanded ? "" : "truncated"}`}>
+          {action.code}
+        </pre>
+      )}
       {expanded && action.result && (
         <div className="action-result success">{action.result}</div>
       )}
@@ -45,6 +56,45 @@ export function ActionCard({ action, position }: Props) {
       )}
     </div>
   );
+}
+
+function SubActionRow({ sub }: { sub: SubActionItem }) {
+  const argsStr = sub.args
+    ? Object.values(sub.args)
+        .map((v) => (typeof v === "string" ? `'${v}'` : String(v)))
+        .join(", ")
+    : "";
+
+  return (
+    <div className={`subaction-row subaction-${sub.status}`}>
+      <SubStatusIcon status={sub.status} />
+      <span className="subaction-call">
+        {sub.name}({argsStr})
+      </span>
+      <span className="subaction-timing">
+        {sub.status === "started" ? (
+          <ElapsedTime since={sub.started_at} />
+        ) : sub.started_at && sub.finished_at ? (
+          `${(sub.finished_at - sub.started_at).toFixed(1)}s`
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+function SubStatusIcon({ status }: { status: string }) {
+  switch (status) {
+    case "started":
+      return <span className="status-icon sub-running running-pulse" />;
+    case "completed":
+      return (
+        <span className="status-icon sub-completed">{"\u2714"}</span>
+      );
+    case "failed":
+      return <span className="status-icon sub-failed">{"\u2718"}</span>;
+    default:
+      return null;
+  }
 }
 
 function StatusIcon({ status }: { status: string }) {

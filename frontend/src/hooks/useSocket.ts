@@ -4,6 +4,7 @@ import type {
   QueueState,
   GameState,
   ActionItem,
+  SubActionItem,
 } from "../types";
 
 const RECONNECT_BASE = 1000;
@@ -65,6 +66,13 @@ export function useSocket() {
         case "action_completed":
           updateQueueFromEvent(data.action as ActionItem);
           break;
+        case "subaction_started":
+        case "subaction_completed":
+          updateSubAction(
+            data.action_id as string,
+            data.subaction as SubActionItem
+          );
+          break;
         case "game:state":
           setGameState(data as unknown as GameState);
           break;
@@ -74,6 +82,9 @@ export function useSocket() {
   );
 
   const updateQueueFromEvent = useCallback((action: ActionItem) => {
+    // Ensure subactions array exists
+    if (!action.subactions) action.subactions = [];
+
     setQueue((prev) => {
       const newQueue = { ...prev };
 
@@ -98,6 +109,36 @@ export function useSocket() {
       return newQueue;
     });
   }, []);
+
+  const updateSubAction = useCallback(
+    (actionId: string, sub: SubActionItem) => {
+      setQueue((prev) => {
+        const update = (action: ActionItem): ActionItem => {
+          const subs = action.subactions ? [...action.subactions] : [];
+          const idx = subs.findIndex((s) => s.id === sub.id);
+          if (idx >= 0) {
+            subs[idx] = sub;
+          } else {
+            subs.push(sub);
+          }
+          return { ...action, subactions: subs };
+        };
+
+        const newQueue = { ...prev };
+
+        if (prev.running?.id === actionId) {
+          newQueue.running = update(prev.running);
+        } else {
+          newQueue.recent = prev.recent.map((a) =>
+            a.id === actionId ? update(a) : a
+          );
+        }
+
+        return newQueue;
+      });
+    },
+    []
+  );
 
   // Fetch initial state and connect WebSocket
   useEffect(() => {

@@ -378,6 +378,67 @@ body {
   text-overflow: ellipsis;
 }
 
+/* ===== Sub-Actions ===== */
+
+.subaction-list {
+  margin: 4px 0 2px 0;
+}
+
+.subaction-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.subaction-call {
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subaction-started .subaction-call {
+  color: var(--color-tool-text);
+}
+
+.subaction-completed .subaction-call {
+  color: var(--text-dim);
+}
+
+.subaction-failed .subaction-call {
+  color: var(--color-error);
+}
+
+.subaction-timing {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.subaction-started .subaction-timing {
+  color: var(--color-good);
+}
+
+.status-icon.sub-running {
+  width: 6px;
+  height: 6px;
+}
+
+.status-icon.sub-completed {
+  color: var(--color-good);
+  font-size: 9px;
+}
+
+.status-icon.sub-failed {
+  color: var(--color-error);
+  font-size: 9px;
+}
+
 /* ===== Status Icons ===== */
 
 .status-icon {
