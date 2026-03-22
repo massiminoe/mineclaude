@@ -70,7 +70,12 @@ def get_player_status() -> dict:
 
 
 def get_nearby_blocks(radius: int = 8) -> list[dict]:
-    """Scan blocks in a sphere around the player. Skip air."""
+    """Scan blocks in a sphere around the player. Skip air.
+
+    Block names are stripped of the minecraft: namespace and state suffixes
+    (e.g. "minecraft:oak_log[axis=y]" -> "oak_log") so consumers can match
+    by base block name.
+    """
     pos = minescript.player_position()
     px, py, pz = int(pos[0]), int(pos[1]), int(pos[2])
     blocks = []
@@ -91,7 +96,7 @@ def get_nearby_blocks(radius: int = 8) -> list[dict]:
                 bx, by, bz = bpos
                 dist = math.sqrt((bx - px) ** 2 + (by - py) ** 2 + (bz - pz) ** 2)
                 blocks.append({
-                    "name": name.replace("minecraft:", ""),
+                    "name": name.replace("minecraft:", "").split("[")[0],
                     "x": bx, "y": by, "z": bz,
                     "distance": round(dist, 1),
                 })
@@ -111,7 +116,7 @@ def get_nearby_blocks(radius: int = 8) -> list[dict]:
                     name = minescript.getblock(bx, by, bz)
                     if name and "air" not in name:
                         blocks.append({
-                            "name": name.replace("minecraft:", ""),
+                            "name": name.replace("minecraft:", "").split("[")[0],
                             "x": bx, "y": by, "z": bz,
                             "distance": round(dist, 1),
                         })

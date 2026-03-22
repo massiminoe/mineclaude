@@ -228,7 +228,11 @@ class Agent:
             if name == "newAction":
                 code = input_data.get("code", "")
                 action = await self.queue.enqueue(code)
-                return f"Queued action {action.id}: {code[:100]}"
+                await self.queue.drain()
+                if action.status.value == "completed":
+                    return action.result or "Action completed (no output)"
+                else:
+                    return f"Action failed: {action.error or 'unknown error'}"
 
             elif name == "stats":
                 resp = await self.bridge.get_status()

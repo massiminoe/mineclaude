@@ -46,10 +46,10 @@ All primitives are async — use `await` for each call.
 ### Queries (also available as standalone tools)
 - `await getStats()` — dict with health, hunger, position, biome, time
 - `await getInventory()` — list of {{name, count, slot}}
-- `await getNearbyBlocks(range=16)` — list of {{name, x, y, z, distance}}
-- `await getNearbyEntities(range=32)` — list of {{name, type, x, y, z, health}}
-- `await findBlocks(block_type, range=64, count=10)` — find specific blocks
-- `await findEntities(entity_type, range=32)` — find specific entities
+- `await getNearbyBlocks(16)` — list of {{name, x, y, z, distance}}
+- `await getNearbyEntities(32)` — list of {{name, type, x, y, z, health}}
+- `await findBlocks(block_type, 64, 10)` — find specific blocks nearby
+- `await findEntities(entity_type, 32)` — find specific entities nearby
 
 ### Utilities
 - `await sleep(seconds)` — wait
@@ -65,7 +65,7 @@ All primitives are async — use `await` for each call.
 ### Mining blocks (scan, find, break):
 ```python
 # Find nearby oak logs, then break them one by one
-logs = await findBlocks('oak_log', range=16)
+logs = await findBlocks('oak_log', 16)
 if not logs:
     return "No oak logs nearby"
 broken = 0
