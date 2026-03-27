@@ -639,223 +639,75 @@ def _attack_fallback(entity_id: str) -> dict:
 # Phase 3: Complex action — craft
 # ---------------------------------------------------------------------------
 
-def craft_item(item: str, count: int = 1) -> dict:
-    """Craft items.
+def _get_inventory_counts() -> dict[str, int]:
+    """Read player inventory and return {item_name: total_count}."""
+    counts: dict[str, int] = {}
+    try:
+        inv = minescript.player_inventory()
+        for item in inv:
+            if item is None:
+                continue
+            name = getattr(item, "item", None)
+            count = getattr(item, "count", 1)
+            if name and "air" not in name:
+                clean = name.replace("minecraft:", "")
+                counts[clean] = counts.get(clean, 0) + count
+    except (AttributeError, TypeError):
+        pass
+    return counts
 
-    Real: open crafting grid, place ingredients, take output.
-    Fallback: /give command.
+
+def craft_item(item: str, count: int = 1) -> dict:
+    """Craft items via simulated crafting.
+
+    Validates recipe exists and player has required ingredients.
+    Consumes ingredients via /clear, gives output via /give.
     """
     try:
-        return _craft_real(item, count)
-    except AttributeError:
-        logger.info(f"craft: API not available, using fallback for {item}")
-        return _craft_fallback(item, count)
+        return _craft_simulated(item, count)
     except Exception as e:
-        logger.warning(f"craft: real impl failed ({e}), using fallback")
-        return _craft_fallback(item, count)
+        logger.warning(f"craft: simulated craft failed: {e}")
+        return {"crafted": 0, "error": str(e), "method": "simulated"}
 
 
-def _craft_real(item: str, count: int) -> dict:
-    # Requires container_click + close_screen which are NOT available in v5.0b11
-    if not _has_api("container_click", "close_screen"):
-        raise AttributeError("Container APIs missing (container_click, close_screen not in v5.0b11)")
+def _craft_simulated(item: str, count: int) -> dict:
+    from bridge.recipes import get_recipe, get_required_ingredients, resolve_ingredients
 
-    from bridge.recipes import get_recipe, get_required_ingredients, pattern_to_slots
-
+    item = item.replace("minecraft:", "")
     recipe = get_recipe(item)
     if recipe is None:
-        raise Exception(f"No recipe for {item}")
+        return {
+            "crafted": 0,
+            "error": f"Unknown recipe: {item}. Cannot craft without a known recipe.",
+            "method": "simulated",
+        }
 
-    # Check we have ingredients
     required = get_required_ingredients(item, count)
     if required is None:
-        raise Exception(f"Cannot calculate ingredients for {item}")
+        return {"crafted": 0, "error": f"Cannot calculate ingredients for {item}", "method": "simulated"}
 
-    for ingredient, needed in required.items():
-        slot = _find_item_slot(ingredient)
-        if slot is None:
-            return {
-                "crafted": 0,
-                "error": f"Missing ingredient: {ingredient} (need {needed})",
-                "method": "real",
-            }
+    # Check inventory (with variant matching)
+    have = _get_inventory_counts()
+    resolved = resolve_ingredients(required, have)
 
-    # Calculate how many craft operations needed
+    if resolved is None:
+        need_str = ", ".join(f"{v}x {k}" for k, v in required.items())
+        have_str = ", ".join(f"{v}x {k}" for k, v in have.items()) if have else "nothing"
+        return {
+            "crafted": 0,
+            "error": f"Cannot craft {item}: missing ingredients. Need: {need_str}. Have: {have_str}.",
+            "method": "simulated",
+        }
+
+    # Consume resolved actual items via /clear
     crafts_needed = math.ceil(count / recipe.output_count)
-    total_crafted = 0
+    total_output = crafts_needed * recipe.output_count
 
-    for _ in range(crafts_needed):
-        try:
-            crafted = _do_single_craft(recipe)
-            total_crafted += crafted
-        except Exception as e:
-            logger.warning(f"craft: single craft failed: {e}")
-            break
+    for actual_item, needed in resolved.items():
+        minescript.execute(f"/clear @s minecraft:{actual_item} {needed}")
 
-    if total_crafted > 0:
-        logger.info(f"craft: crafted {total_crafted} {item} (real)")
-        return {"crafted": total_crafted, "method": "real"}
+    # Give output
+    minescript.execute(f"/give @s minecraft:{item} {total_output}")
 
-    raise Exception("Crafting produced no output")
-
-
-def _do_single_craft(recipe) -> int:
-    """Execute one crafting operation. Returns number of items produced."""
-    from bridge.recipes import pattern_to_slots
-    from bridge.player_control import find_item_slot
-
-    slots = pattern_to_slots(recipe)
-
-    if recipe.needs_table:
-        return _craft_at_table(recipe, slots)
-    else:
-        return _craft_in_inventory(recipe, slots)
-
-
-def _craft_in_inventory(recipe, slots: dict[int, str]) -> int:
-    """Craft using the 2x2 inventory grid.
-
-    Inventory screen crafting slots: 1-4 (input), 0 (output)
-    """
-    # Open inventory
-    minescript.player_press_inventory()
-    time.sleep(0.2)
-
-    try:
-        # Group ingredients by type for efficient pickup
-        ingredient_slots = _gather_ingredients(slots)
-
-        # Place ingredients into crafting grid
-        for craft_slot, (inv_screen_slot, item_name) in ingredient_slots.items():
-            # Pick up ingredient from inventory
-            minescript.container_click(inv_screen_slot, 0, "pickup")
-            time.sleep(0.1)
-            # Place one in the crafting slot
-            minescript.container_click(craft_slot, 1, "pickup")  # right-click places 1
-            time.sleep(0.1)
-            # Put remainder back
-            minescript.container_click(inv_screen_slot, 0, "pickup")
-            time.sleep(0.1)
-
-        # Take output from slot 0
-        minescript.container_click(0, 0, "pickup")
-        time.sleep(0.1)
-
-        # Place output into inventory (find empty slot or shift-click)
-        # Quick move (shift-click equivalent)
-        minescript.container_click(0, 0, "quick_move")
-        time.sleep(0.1)
-
-    finally:
-        minescript.close_screen()
-        time.sleep(0.1)
-
-    return recipe.output_count
-
-
-def _craft_at_table(recipe, slots: dict[int, str]) -> int:
-    """Craft using a 3x3 crafting table.
-
-    Must find/navigate to a crafting table first.
-    Crafting table screen slots: 1-9 (input), 0 (output)
-    """
-    # Find a nearby crafting table
-    pos = minescript.player_position()
-    px, py, pz = int(pos[0]), int(pos[1]), int(pos[2])
-
-    table_pos = None
-    search_radius = 8
-    try:
-        positions = []
-        for dx in range(-search_radius, search_radius + 1):
-            for dy in range(-3, 4):
-                for dz in range(-search_radius, search_radius + 1):
-                    positions.append((px + dx, py + dy, pz + dz))
-        block_list = minescript.getblocklist([list(p) for p in positions])
-        for bpos, name in zip(positions, block_list):
-            if name and "crafting_table" in name:
-                table_pos = bpos
-                break
-    except (AttributeError, TypeError):
-        # Fallback: single checks
-        for dx in range(-search_radius, search_radius + 1):
-            for dy in range(-3, 4):
-                for dz in range(-search_radius, search_radius + 1):
-                    try:
-                        name = minescript.getblock(px + dx, py + dy, pz + dz)
-                        if name and "crafting_table" in name:
-                            table_pos = (px + dx, py + dy, pz + dz)
-                            break
-                    except Exception:
-                        continue
-                if table_pos:
-                    break
-            if table_pos:
-                break
-
-    if table_pos is None:
-        raise Exception("No crafting table nearby (within 8 blocks)")
-
-    tx, ty, tz = table_pos
-
-    # Navigate to table if needed
-    if not _is_within_reach(tx, ty, tz):
-        if not _navigate_near(tx, ty, tz, reach=3.0):
-            raise Exception("Could not navigate to crafting table")
-
-    # Right-click the crafting table to open it
-    _look_at_block(tx, ty, tz)
-    time.sleep(0.1)
-    minescript.player_press_use(True)
-    time.sleep(0.05)
-    minescript.player_press_use(False)
-    time.sleep(0.25)
-
-    try:
-        # Place ingredients into crafting grid
-        ingredient_slots = _gather_ingredients(slots)
-
-        for craft_slot, (inv_screen_slot, item_name) in ingredient_slots.items():
-            minescript.container_click(inv_screen_slot, 0, "pickup")
-            time.sleep(0.1)
-            minescript.container_click(craft_slot, 1, "pickup")
-            time.sleep(0.1)
-            minescript.container_click(inv_screen_slot, 0, "pickup")
-            time.sleep(0.1)
-
-        # Take output — use quick_move (shift-click) to auto-place in inventory
-        minescript.container_click(0, 0, "quick_move")
-        time.sleep(0.1)
-
-    finally:
-        minescript.close_screen()
-        time.sleep(0.1)
-
-    return recipe.output_count
-
-
-def _gather_ingredients(slots: dict[int, str]) -> dict[int, tuple[int, str]]:
-    """For each crafting slot, find the source inventory screen slot.
-
-    Returns {craft_slot: (inventory_screen_slot, item_name)}.
-    """
-    result = {}
-    for craft_slot, item_name in slots.items():
-        inv_slot = _find_item_slot(item_name)
-        if inv_slot is None:
-            raise Exception(f"Missing ingredient: {item_name}")
-        # Convert to screen slot
-        if 0 <= inv_slot <= 8:
-            screen_slot = inv_slot + 36  # hotbar
-        else:
-            screen_slot = inv_slot  # main inventory
-        result[craft_slot] = (screen_slot, item_name)
-    return result
-
-
-def _craft_fallback(item: str, count: int) -> dict:
-    try:
-        minescript.execute(f"/give @s minecraft:{item} {count}")
-        return {"crafted": count, "method": "fallback"}
-    except Exception as e:
-        return {"crafted": 0, "error": str(e), "method": "fallback"}
+    logger.info(f"craft: crafted {total_output} {item} (simulated, {crafts_needed} crafts)")
+    return {"crafted": total_output, "method": "simulated"}

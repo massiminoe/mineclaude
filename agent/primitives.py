@@ -8,7 +8,7 @@ import inspect
 import uuid
 from typing import Any, Callable, Coroutine
 
-from agent.bridge import BridgeClient
+from agent.bridge import BridgeClient, BridgeResponse
 
 # Shared log buffer, cleared before each sandbox execution
 _log_buffer: list[str] = []
@@ -53,6 +53,13 @@ def _wrap(name: str, fn: Any, on_subaction: SubActionCallback) -> Any:
     return wrapper
 
 
+def _check(resp: BridgeResponse) -> str:
+    """Raise on error responses so sandbox code stops on failure."""
+    if resp.status == "error":
+        raise RuntimeError(resp.message)
+    return resp.message
+
+
 def make_primitives(
     bridge: BridgeClient,
     on_subaction: SubActionCallback | None = None,
@@ -60,48 +67,37 @@ def make_primitives(
     """Create a dict of name → async callable primitives, closed over bridge."""
 
     async def goToPosition(x: float, y: float, z: float) -> str:
-        resp = await bridge.goto(x, y, z)
-        return resp.message
+        return _check(await bridge.goto(x, y, z))
 
     async def goToPlayer(player: str, distance: int = 3) -> str:
-        resp = await bridge.follow(player, distance)
-        return resp.message
+        return _check(await bridge.follow(player, distance))
 
     async def followPlayer(player: str, distance: int = 3) -> str:
-        resp = await bridge.follow(player, distance)
-        return resp.message
+        return _check(await bridge.follow(player, distance))
 
     async def stop() -> str:
-        resp = await bridge.stop()
-        return resp.message
+        return _check(await bridge.stop())
 
     async def placeBlock(block_type: str, x: int, y: int, z: int, face: str = "top") -> str:
-        resp = await bridge.place(block_type, x, y, z, face)
-        return resp.message
+        return _check(await bridge.place(block_type, x, y, z, face))
 
     async def breakBlockAt(x: int, y: int, z: int) -> str:
-        resp = await bridge.break_block(x, y, z)
-        return resp.message
+        return _check(await bridge.break_block(x, y, z))
 
     async def attackNearest(mob_type: str) -> str:
-        resp = await bridge.attack(mob_type)
-        return resp.message
+        return _check(await bridge.attack(mob_type))
 
     async def defendSelf() -> str:
-        resp = await bridge.attack("hostile")
-        return resp.message
+        return _check(await bridge.attack("hostile"))
 
     async def craft(item: str, count: int = 1) -> str:
-        resp = await bridge.craft(item, count)
-        return resp.message
+        return _check(await bridge.craft(item, count))
 
     async def equip(item: str, slot: str = "hand") -> str:
-        resp = await bridge.equip(item, slot)
-        return resp.message
+        return _check(await bridge.equip(item, slot))
 
     async def discard(item: str, count: int = 1) -> str:
-        resp = await bridge.discard(item, count)
-        return resp.message
+        return _check(await bridge.discard(item, count))
 
     async def getStats() -> dict:
         resp = await bridge.get_status()

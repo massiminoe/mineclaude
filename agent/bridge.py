@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import random
 import time
 from dataclasses import dataclass, field
@@ -220,8 +221,39 @@ class MockBridgeClient:
         return BridgeResponse("error", f"Entity {entity_id} not found")
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
-        self._add_to_inventory(item, count)
-        return BridgeResponse("success", f"Crafted {count} {item}", {"crafted": count})
+        from agent.recipes import get_recipe, get_required_ingredients, resolve_ingredients
+
+        item = item.replace("minecraft:", "")
+        recipe = get_recipe(item)
+        if recipe is None:
+            return BridgeResponse("error", f"Unknown recipe: {item}. Cannot craft without a known recipe.", {"crafted": 0, "method": "simulated"})
+
+        required = get_required_ingredients(item, count)
+        if required is None:
+            return BridgeResponse("error", f"Cannot calculate ingredients for {item}", {"crafted": 0, "method": "simulated"})
+
+        # Check inventory (with variant matching)
+        have: dict[str, int] = {}
+        for entry in self._inventory:
+            have[entry["name"]] = have.get(entry["name"], 0) + entry["count"]
+
+        resolved = resolve_ingredients(required, have)
+        if resolved is None:
+            need_str = ", ".join(f"{v}x {k}" for k, v in required.items())
+            have_str = ", ".join(f"{v}x {k}" for k, v in have.items()) if have else "nothing"
+            msg = f"Cannot craft {item}: missing ingredients. Need: {need_str}. Have: {have_str}."
+            return BridgeResponse("error", msg, {"crafted": 0, "method": "simulated"})
+
+        # Consume resolved actual items
+        for actual_item, needed in resolved.items():
+            self._remove_from_inventory(actual_item, needed)
+
+        # Produce output
+        crafts_needed = math.ceil(count / recipe.output_count)
+        total_output = crafts_needed * recipe.output_count
+        self._add_to_inventory(item, total_output)
+
+        return BridgeResponse("success", f"Crafted {total_output} {item}", {"crafted": total_output, "method": "simulated"})
 
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         for entry in self._inventory:
@@ -271,13 +303,22 @@ class MockBridgeClient:
         self._inventory.append({"name": item, "count": count, "slot": len(self._inventory)})
 
     def _remove_from_inventory(self, item: str, count: int) -> bool:
+        # Check total available first
+        total = sum(e["count"] for e in self._inventory if e["name"] == item)
+        if total < count:
+            return False
+        remaining = count
+        to_remove = []
         for entry in self._inventory:
-            if entry["name"] == item and entry["count"] >= count:
-                entry["count"] -= count
+            if entry["name"] == item and remaining > 0:
+                take = min(entry["count"], remaining)
+                entry["count"] -= take
+                remaining -= take
                 if entry["count"] == 0:
-                    self._inventory.remove(entry)
-                return True
-        return False
+                    to_remove.append(entry)
+        for entry in to_remove:
+            self._inventory.remove(entry)
+        return True
 
 
 def create_bridge(mock: bool = False, base_url: str = "http://localhost:8080") -> BridgeClient:

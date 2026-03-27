@@ -1,16 +1,11 @@
 """Crafting recipe table for essential survival items.
 
+Duplicated from bridge/recipes.py because bridge/ runs inside the MC container
+and agent/ is a separate installable package.  Keep both files in sync when
+adding recipes.
+
 Each recipe maps an output item to its crafting pattern and ingredients.
 Patterns use single-char keys mapped to item names.
-
-Slot layout for 3x3 crafting table:
-  1 2 3
-  4 5 6
-  7 8 9
-
-Slot layout for 2x2 inventory crafting:
-  1 2
-  3 4
 """
 
 from __future__ import annotations
@@ -24,7 +19,7 @@ class Recipe:
     output: str
     output_count: int
     pattern: list[str]  # rows of the pattern, e.g. ["##", "##"]
-    key: dict[str, str]  # char → minecraft item name
+    key: dict[str, str]  # char -> minecraft item name
     needs_table: bool  # True if requires 3x3 crafting table
 
 
@@ -284,35 +279,3 @@ def get_required_ingredients(item: str, count: int = 1) -> dict[str, int] | None
 
     # Scale by number of crafts
     return {k: v * crafts_needed for k, v in ingredient_counts.items()}
-
-
-def pattern_to_slots(recipe: Recipe) -> dict[int, str]:
-    """Convert a recipe pattern to {slot_number: ingredient_item}.
-
-    For 2x2 patterns (no table): slots 1-4
-    For 3x3 patterns (table): slots 1-9
-    """
-    slots: dict[int, str] = {}
-    if recipe.needs_table:
-        # Pad pattern to 3 rows of 3
-        rows = [row.ljust(3) for row in recipe.pattern]
-        while len(rows) < 3:
-            rows.append("   ")
-        for r, row in enumerate(rows):
-            for c, ch in enumerate(row[:3]):
-                if ch != " " and ch in recipe.key:
-                    slot = r * 3 + c + 1  # 1-indexed
-                    slots[slot] = recipe.key[ch]
-    else:
-        # Pad pattern to 2 rows of 2
-        rows = [row.ljust(2) for row in recipe.pattern]
-        while len(rows) < 2:
-            rows.append("  ")
-        for r, row in enumerate(rows):
-            for c, ch in enumerate(row[:2]):
-                if ch != " " and ch in recipe.key:
-                    slot = r * 2 + c + 1  # 1-indexed
-                    slots[slot] = recipe.key[ch]
-    return slots
-
-

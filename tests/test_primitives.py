@@ -58,9 +58,91 @@ async def test_find_blocks(bridge, prims):
 
 @pytest.mark.asyncio
 async def test_craft(bridge, prims):
+    bridge._add_to_inventory("oak_log", 1)
     result = await prims["craft"]("oak_planks", 4)
     assert "Crafted" in result
-    assert any(i["name"] == "oak_planks" for i in bridge._inventory)
+    # 1 log -> 4 planks
+    assert any(i["name"] == "oak_planks" and i["count"] == 4 for i in bridge._inventory)
+    # log consumed
+    assert not any(i["name"] == "oak_log" for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_craft_missing_ingredients(bridge, prims):
+    with pytest.raises(RuntimeError, match="missing"):
+        await prims["craft"]("iron_pickaxe", 1)
+
+
+@pytest.mark.asyncio
+async def test_craft_partial_ingredients(bridge, prims):
+    bridge._add_to_inventory("iron_ingot", 2)  # need 3
+    bridge._add_to_inventory("stick", 2)
+    with pytest.raises(RuntimeError, match="missing"):
+        await prims["craft"]("iron_pickaxe", 1)
+    # Ingredients should NOT be consumed on failure
+    assert any(i["name"] == "iron_ingot" and i["count"] == 2 for i in bridge._inventory)
+    assert any(i["name"] == "stick" and i["count"] == 2 for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_craft_unknown_recipe(bridge, prims):
+    with pytest.raises(RuntimeError, match="Unknown recipe"):
+        await prims["craft"]("diamond_block", 1)
+
+
+@pytest.mark.asyncio
+async def test_craft_consumes_ingredients(bridge, prims):
+    bridge._add_to_inventory("cobblestone", 8)
+    bridge._add_to_inventory("stick", 2)
+    result = await prims["craft"]("stone_pickaxe", 1)
+    assert "Crafted" in result
+    # 3 cobblestone + 2 sticks consumed
+    cobble = next((i for i in bridge._inventory if i["name"] == "cobblestone"), None)
+    assert cobble is not None and cobble["count"] == 5  # 8 - 3
+    assert not any(i["name"] == "stick" for i in bridge._inventory)  # 2 - 2 = 0
+
+
+@pytest.mark.asyncio
+async def test_craft_multiple_batches(bridge, prims):
+    bridge._add_to_inventory("oak_log", 2)
+    result = await prims["craft"]("oak_planks", 5)
+    # ceil(5/4) = 2 crafts, 2 logs consumed, 8 planks produced
+    assert "Crafted" in result
+    planks = next((i for i in bridge._inventory if i["name"] == "oak_planks"), None)
+    assert planks is not None and planks["count"] == 8
+    assert not any(i["name"] == "oak_log" for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_craft_output_rounding(bridge, prims):
+    bridge._add_to_inventory("oak_log", 1)
+    result = await prims["craft"]("oak_planks", 1)
+    # Requesting 1 plank still yields 4 (1 craft minimum)
+    assert "Crafted" in result
+    planks = next((i for i in bridge._inventory if i["name"] == "oak_planks"), None)
+    assert planks is not None and planks["count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_craft_spruce_planks_make_sticks(bridge, prims):
+    bridge._add_to_inventory("spruce_planks", 4)
+    result = await prims["craft"]("stick", 4)
+    assert "Crafted" in result
+    assert any(i["name"] == "stick" and i["count"] == 4 for i in bridge._inventory)
+    # 2 spruce planks consumed (recipe uses 2 planks per craft)
+    planks = next((i for i in bridge._inventory if i["name"] == "spruce_planks"), None)
+    assert planks is not None and planks["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_craft_mixed_planks_for_crafting_table(bridge, prims):
+    # crafting_table needs 4 planks — mix of types should work
+    bridge._add_to_inventory("spruce_planks", 2)
+    bridge._add_to_inventory("birch_planks", 2)
+    result = await prims["craft"]("crafting_table", 1)
+    assert "Crafted" in result
+    assert any(i["name"] == "crafting_table" for i in bridge._inventory)
+    assert not any(i["name"] in ("spruce_planks", "birch_planks") for i in bridge._inventory)
 
 
 @pytest.mark.asyncio

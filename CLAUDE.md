@@ -96,6 +96,6 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - **discard**: Real (select slot + press_drop). Works if item already in hotbar
 - **equip hand/offhand**: Real (inventory_select_slot / swap_hands). Works if item in hotbar
 - **equip armor**: Fallback only (/item replace) — no container_click API
-- **craft**: Fallback only (/give) — no container_click/close_screen APIs
+- **craft**: Simulated (/clear ingredients + /give output) — validates recipe and ingredients, no container_click/close_screen APIs
 - Items not in hotbar can't be moved there (player_inventory_slot_to_hotbar broken on MC 1.21.5)
 - The `method` field in response dicts indicates "real" or "fallback" path
