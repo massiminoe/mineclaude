@@ -17,5 +17,8 @@ frontend/dist/
 # Superpowers brainstorm
 .superpowers/
 
+# Git worktrees
+.worktrees/
+
 # Mod JARs (downloaded via mc-client/download-mods.sh)
 mc-client/mods/*.jar
