@@ -57,6 +57,23 @@ async def test_find_blocks(bridge, prims):
 
 
 @pytest.mark.asyncio
+async def test_find_multiple_blocks(bridge, prims):
+    result = await prims["findMultipleBlocks"](["oak_log", "dirt"], 64, 10)
+    assert isinstance(result, dict)
+    assert set(result.keys()) == {"oak_log", "dirt"}
+    assert all(b["name"] == "oak_log" for b in result["oak_log"])
+    assert all(b["name"] == "dirt" for b in result["dirt"])
+    assert len(result["oak_log"]) == 3  # mock has 3 oak_logs
+    assert len(result["dirt"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_find_multiple_blocks_missing_type(bridge, prims):
+    result = await prims["findMultipleBlocks"](["diamond_ore", "emerald_ore"], 64, 10)
+    assert result == {"diamond_ore": [], "emerald_ore": []}
+
+
+@pytest.mark.asyncio
 async def test_craft(bridge, prims):
     bridge._add_to_inventory("oak_log", 1)
     result = await prims["craft"]("oak_planks", 4)

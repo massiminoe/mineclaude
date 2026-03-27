@@ -24,7 +24,7 @@ class BridgeResponse:
 @runtime_checkable
 class BridgeClient(Protocol):
     async def get_status(self) -> BridgeResponse: ...
-    async def get_nearby_blocks(self, radius: int = 16) -> BridgeResponse: ...
+    async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse: ...
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse: ...
     async def goto(self, x: float, y: float, z: float) -> BridgeResponse: ...
     async def mine(self, block: str, count: int = 1) -> BridgeResponse: ...
@@ -63,8 +63,11 @@ class RealBridgeClient:
     async def get_status(self) -> BridgeResponse:
         return self._parse(await self._http.get("/status"))
 
-    async def get_nearby_blocks(self, radius: int = 16) -> BridgeResponse:
-        return self._parse(await self._http.get("/nearby/blocks", params={"r": radius}))
+    async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse:
+        params: dict = {"r": radius}
+        if block_types:
+            params["types"] = ",".join(block_types)
+        return self._parse(await self._http.get("/nearby/blocks", params=params))
 
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse:
         return self._parse(await self._http.get("/nearby/entities", params={"r": radius}))
@@ -160,8 +163,11 @@ class MockBridgeClient:
             "time": 6000,
         })
 
-    async def get_nearby_blocks(self, radius: int = 16) -> BridgeResponse:
+    async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse:
         blocks = [b for b in self._nearby_blocks if b["distance"] <= radius]
+        if block_types:
+            type_set = set(block_types)
+            blocks = [b for b in blocks if b["name"] in type_set]
         return BridgeResponse("success", f"Found {len(blocks)} blocks", {"blocks": blocks})
 
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse:

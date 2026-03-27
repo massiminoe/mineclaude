@@ -69,12 +69,14 @@ def get_player_status() -> dict:
     return result
 
 
-def get_nearby_blocks(radius: int = 8) -> list[dict]:
+def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> list[dict]:
     """Scan blocks in a sphere around the player. Skip air.
 
     Block names are stripped of the minecraft: namespace and state suffixes
     (e.g. "minecraft:oak_log[axis=y]" -> "oak_log") so consumers can match
     by base block name.
+
+    If block_types is provided, only blocks matching those names are returned.
 
     Results are sorted by distance, closest first.
     """
@@ -82,6 +84,7 @@ def get_nearby_blocks(radius: int = 8) -> list[dict]:
     px, py, pz = int(pos[0]), int(pos[1]), int(pos[2])
     blocks = []
     radius_sq = radius * radius
+    type_set = set(block_types) if block_types else None
 
     # Use get_block_region for a single bulk load, then iterate locally
     try:
@@ -98,8 +101,11 @@ def get_nearby_blocks(radius: int = 8) -> list[dict]:
                     bx, by, bz = px + dx, py + dy, pz + dz
                     name = region.get_block(bx, by, bz)
                     if name and "air" not in name:
+                        clean = name.replace("minecraft:", "").split("[")[0]
+                        if type_set and clean not in type_set:
+                            continue
                         blocks.append({
-                            "name": name.replace("minecraft:", "").split("[")[0],
+                            "name": clean,
                             "x": bx, "y": by, "z": bz,
                             "distance": round(math.sqrt(dist_sq), 1),
                         })
@@ -119,8 +125,11 @@ def get_nearby_blocks(radius: int = 8) -> list[dict]:
                 try:
                     name = minescript.getblock(bx, by, bz)
                     if name and "air" not in name:
+                        clean = name.replace("minecraft:", "").split("[")[0]
+                        if type_set and clean not in type_set:
+                            continue
                         blocks.append({
-                            "name": name.replace("minecraft:", "").split("[")[0],
+                            "name": clean,
                             "x": bx, "y": by, "z": bz,
                             "distance": round(math.sqrt(dist_sq), 1),
                         })

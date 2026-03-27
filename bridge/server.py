@@ -55,7 +55,9 @@ async def handle_status(request: web.Request) -> web.Response:
 
 async def handle_nearby_blocks(request: web.Request) -> web.Response:
     radius = int(request.query.get("r", 8))
-    blocks = await _run(minescript_api.get_nearby_blocks, radius)
+    types_raw = request.query.get("types", "")
+    block_types = [t.strip() for t in types_raw.split(",") if t.strip()] or None
+    blocks = await _run(minescript_api.get_nearby_blocks, radius, block_types)
     return web.json_response(_ok({"blocks": blocks}, f"Found {len(blocks)} blocks"))
 
 

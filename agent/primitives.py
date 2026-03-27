@@ -116,9 +116,19 @@ def make_primitives(
         return resp.data.get("entities", [])
 
     async def findBlocks(block_type: str, range_: int = 64, count: int = 10) -> list[dict]:
-        resp = await bridge.get_nearby_blocks(range_)
+        resp = await bridge.get_nearby_blocks(range_, block_types=[block_type])
         blocks = resp.data.get("blocks", [])
-        return [b for b in blocks if b["name"] == block_type][:count]
+        return blocks[:count]
+
+    async def findMultipleBlocks(block_types: list[str], range_: int = 64, count: int = 10) -> dict[str, list[dict]]:
+        resp = await bridge.get_nearby_blocks(range_, block_types=block_types)
+        blocks = resp.data.get("blocks", [])
+        result: dict[str, list[dict]] = {t: [] for t in block_types}
+        for b in blocks:
+            name = b["name"]
+            if name in result and len(result[name]) < count:
+                result[name].append(b)
+        return result
 
     async def findEntities(entity_type: str, range_: int = 32) -> list[dict]:
         resp = await bridge.get_nearby_entities(range_)
@@ -148,6 +158,7 @@ def make_primitives(
         "getNearbyBlocks": getNearbyBlocks,
         "getNearbyEntities": getNearbyEntities,
         "findBlocks": findBlocks,
+        "findMultipleBlocks": findMultipleBlocks,
         "findEntities": findEntities,
         "sleep": sleep,
         "log": log,

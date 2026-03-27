@@ -48,6 +48,7 @@ All primitives are async — use `await` for each call.
 - `await getInventory()` — list of {{name, count, slot}}
 - `await getNearbyEntities(32)` — list of {{name, type, x, y, z, health}}
 - `await findBlocks(block_type, 64, 10)` — find specific blocks nearby
+- `await findMultipleBlocks(['oak_log', 'birch_log'], 64, 10)` — find multiple block types in one scan (returns dict of type → list)
 - `await findEntities(entity_type, 32)` — find specific entities nearby
 
 ### Utilities
@@ -63,15 +64,24 @@ All primitives are async — use `await` for each call.
 
 ### Mining blocks (scan, find, break):
 ```python
-# Find nearby oak logs, then break them one by one
-logs = await findBlocks('oak_log', 16)
+# Find any type of log nearby with a single scan
+all_logs = await findMultipleBlocks([
+    'oak_log', 'birch_log', 'spruce_log', 'jungle_log',
+    'acacia_log', 'dark_oak_log', 'mangrove_log'
+], 64)
+# all_logs is a dict: {{'oak_log': [...], 'birch_log': [...], ...}}
+# Flatten to a single list sorted by distance
+logs = sorted(
+    [b for blocks in all_logs.values() for b in blocks],
+    key=lambda b: b['distance']
+)
 if not logs:
-    return "No oak logs nearby"
+    return "No logs nearby"
 broken = 0
 for b in logs[:5]:
     await breakBlockAt(b['x'], b['y'], b['z'])
     broken += 1
-return f"Broke {{broken}} oak logs"
+return f"Broke {{broken}} logs"
 ```
 
 ### Multi-step:
