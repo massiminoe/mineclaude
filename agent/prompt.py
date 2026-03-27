@@ -47,8 +47,8 @@ All primitives are async — use `await` for each call.
 - `await getStats()` — dict with health, hunger, position, biome, time
 - `await getInventory()` — list of {{name, count, slot}}
 - `await getNearbyEntities(32)` — list of {{name, type, x, y, z, health}}
-- `await findBlocks(block_type, 64, 10)` — find specific blocks nearby
-- `await findMultipleBlocks(['oak_log', 'birch_log'], 64, 10)` — find multiple block types in one scan (returns dict of type → list)
+- `await findBlocks(block_type, 32, 10)` — find specific blocks nearby (max range 64)
+- `await findMultipleBlocks(['oak_log', 'birch_log'], 32, 10)` — find multiple block types in one scan (returns dict of type → list, max range 64)
 - `await findEntities(entity_type, 32)` — find specific entities nearby
 
 ### Utilities
@@ -68,7 +68,7 @@ All primitives are async — use `await` for each call.
 all_logs = await findMultipleBlocks([
     'oak_log', 'birch_log', 'spruce_log', 'jungle_log',
     'acacia_log', 'dark_oak_log', 'mangrove_log'
-], 64)
+], 32)
 # all_logs is a dict: {{'oak_log': [...], 'birch_log': [...], ...}}
 # Flatten to a single list sorted by distance
 logs = sorted(

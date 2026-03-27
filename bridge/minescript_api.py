@@ -80,6 +80,7 @@ def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> 
 
     Results are sorted by distance, closest first.
     """
+    radius = min(radius, 64)
     pos = minescript.player_position()
     px, py, pz = int(pos[0]), int(pos[1]), int(pos[2])
     blocks = []
