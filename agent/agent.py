@@ -242,11 +242,6 @@ class Agent:
                 resp = await self.bridge.get_status()
                 return json.dumps(resp.data.get("inventory", []), indent=2)
 
-            elif name == "nearbyBlocks":
-                radius = input_data.get("range", 16)
-                resp = await self.bridge.get_nearby_blocks(radius)
-                return json.dumps(resp.data.get("blocks", []), indent=2)
-
             elif name == "nearbyEntities":
                 radius = input_data.get("range", 32)
                 resp = await self.bridge.get_nearby_entities(radius)

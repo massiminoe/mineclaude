@@ -46,7 +46,6 @@ All primitives are async — use `await` for each call.
 ### Queries (also available as standalone tools)
 - `await getStats()` — dict with health, hunger, position, biome, time
 - `await getInventory()` — list of {{name, count, slot}}
-- `await getNearbyBlocks(16)` — list of {{name, x, y, z, distance}}
 - `await getNearbyEntities(32)` — list of {{name, type, x, y, z, health}}
 - `await findBlocks(block_type, 64, 10)` — find specific blocks nearby
 - `await findEntities(entity_type, 32)` — find specific entities nearby

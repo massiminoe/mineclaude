@@ -43,16 +43,6 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
-        "name": "nearbyBlocks",
-        "description": "Get blocks within range.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "range": {"type": "integer", "description": "Search radius (default 16)", "default": 16}
-            },
-        },
-    },
-    {
         "name": "nearbyEntities",
         "description": "Get entities within range.",
         "input_schema": {
