@@ -234,6 +234,14 @@ class MockBridgeClient:
         if recipe is None:
             return BridgeResponse("error", f"Unknown recipe: {item}. Cannot craft without a known recipe.", {"crafted": 0, "method": "simulated"})
 
+        if recipe.needs_table:
+            has_table = any(
+                b["name"] == "crafting_table" and b["distance"] <= 4
+                for b in self._nearby_blocks
+            )
+            if not has_table:
+                return BridgeResponse("error", f"Cannot craft {item}: requires a crafting table nearby.", {"crafted": 0, "method": "simulated"})
+
         required = get_required_ingredients(item, count)
         if required is None:
             return BridgeResponse("error", f"Cannot calculate ingredients for {item}", {"crafted": 0, "method": "simulated"})

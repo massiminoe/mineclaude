@@ -39,7 +39,7 @@ All primitives are async — use `await` for each call.
 - `await defendSelf()` — attack nearest hostile mob
 
 ### Inventory
-- `await craft(item, count=1)` — craft items if you have the ingredients (e.g. 'oak_planks' needs 'oak_log')
+- `await craft(item, count=1)` — craft items if you have the ingredients (e.g. 'oak_planks' needs 'oak_log'). 3x3 recipes (tools, armor, furnace) require a crafting table within 4 blocks
 - `await equip(item, slot='hand')` — equip item to hand or armor slot
 - `await discard(item, count=1)` — drop items
 

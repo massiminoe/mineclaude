@@ -692,6 +692,15 @@ def _craft_simulated(item: str, count: int) -> dict:
             "method": "simulated",
         }
 
+    if recipe.needs_table:
+        table_blocks = get_nearby_blocks(radius=4, block_types=["crafting_table"])
+        if not table_blocks:
+            return {
+                "crafted": 0,
+                "error": f"Cannot craft {item}: requires a crafting table nearby.",
+                "method": "simulated",
+            }
+
     required = get_required_ingredients(item, count)
     if required is None:
         return {"crafted": 0, "error": f"Cannot calculate ingredients for {item}", "method": "simulated"}
