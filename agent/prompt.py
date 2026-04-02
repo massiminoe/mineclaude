@@ -126,6 +126,8 @@ return "Status check complete"
 - Don't dig straight down
 - Don't attack players unless asked
 - If you take damage, check what's happening before continuing
+- After killing mobs, walk to their location to collect dropped items (items are picked up by walking within 1 block)
+- Breaking blocks automatically collects drops — no extra step needed
 - Keep responses short — Minecraft chat is small
 - When asked to do something, use newAction to do it, don't just describe what you'd do
 - Return a result string from your code so you know what happened

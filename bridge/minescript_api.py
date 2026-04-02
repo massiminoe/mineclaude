@@ -472,6 +472,9 @@ def _break_real(x: int, y: int, z: int) -> dict:
                 current = minescript.getblock(x, y, z)
                 if current != original_block:
                     logger.info(f"break: broke {original_block} at {x},{y},{z} (real)")
+                    minescript.player_press_attack(False)
+                    from bridge.player_control import collect_nearby_item
+                    collect_nearby_item(x + 0.5, y, z + 0.5)
                     return {
                         "broken": True,
                         "block": original_block.replace("minecraft:", ""),
@@ -490,6 +493,8 @@ def _break_fallback(x: int, y: int, z: int) -> dict:
     try:
         name = minescript.getblock(x, y, z)
         minescript.execute(f"/setblock {x} {y} {z} minecraft:air destroy")
+        from bridge.player_control import collect_nearby_item
+        collect_nearby_item(x + 0.5, y, z + 0.5)
         return {
             "broken": True,
             "block": name.replace("minecraft:", "") if name else "unknown",
