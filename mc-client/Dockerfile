@@ -2,7 +2,10 @@ FROM 3arthqu4ke/headlessmc:latest
 
 # Install Python 3 (required by Minescript for .py scripts) and screen (for CLI interaction)
 RUN apt-get update -qq && \
-    apt-get install -y -qq python3 python3-pip screen curl > /dev/null 2>&1 && \
+    apt-get install -y -qq --no-install-recommends \
+    python3 python3-pip screen curl \
+    xvfb mesa-utils libgl1-mesa-dri libgl1-mesa-glx ffmpeg \
+    > /dev/null 2>&1 && \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
@@ -10,7 +13,8 @@ RUN apt-get update -qq && \
 RUN mkdir -p /headlessmc/HeadlessMC && \
     echo "hmc.assets.dummy=true" >> /headlessmc/HeadlessMC/config.properties && \
     echo "hmc.offline=true" >> /headlessmc/HeadlessMC/config.properties && \
-    echo "hmc.offline.username=Claude" >> /headlessmc/HeadlessMC/config.properties
+    echo "hmc.offline.username=Claude" >> /headlessmc/HeadlessMC/config.properties && \
+    echo "hmc.check.xvfb=true" >> /headlessmc/HeadlessMC/config.properties
 
 # Download and install Fabric for MC 1.21.5
 RUN hmc download fabric:1.21.5
@@ -20,10 +24,13 @@ RUN hmc download fabric:1.21.5
 COPY mc-client/mods/*.jar /tmp/mods/
 
 # Install aiohttp for bridge HTTP+WS server, mcrcon for server commands
-RUN pip3 install --break-system-packages aiohttp mcrcon
+RUN pip3 install --break-system-packages aiohttp mcrcon Pillow
 
 # Copy test scripts
 COPY mc-client/scripts/ /tmp/scripts/
+
+# Copy MC render options
+COPY mc-client/options.txt /tmp/options.txt
 
 # Copy bridge package
 COPY bridge/ /tmp/bridge/

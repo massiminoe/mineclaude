@@ -25,6 +25,9 @@ services:
     depends_on:
       mc-server:
         condition: service_healthy
+    environment:
+      DISPLAY: ":99"
+      LIBGL_ALWAYS_SOFTWARE: "1"
     ports:
       - "8080:8080"
     volumes:

@@ -59,10 +59,12 @@ class MonitorServer:
 
     async def _handle_state(self, request: web.Request) -> web.Response:
         game = await self._get_game_state()
+        bridge_url = getattr(self.agent.bridge, "base_url", "")
         return web.json_response({
             "conversation": self.agent.messages,
             "queue": self.agent.queue.status(),
             "game": game,
+            "video_url": f"{bridge_url}/video/stream?fps=10&quality=50" if bridge_url else None,
         })
 
     async def _handle_conversation(self, request: web.Request) -> web.Response:

@@ -10,6 +10,10 @@ export default defineConfig({
         target: 'http://localhost:5555',
         ws: true,
       },
+      '/bridge': {
+        target: 'http://localhost:8080',
+        rewrite: (path: string) => path.replace(/^\/bridge/, ''),
+      },
     },
   },
 })
