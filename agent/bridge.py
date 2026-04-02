@@ -38,6 +38,7 @@ class BridgeClient(Protocol):
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse: ...
     async def discard(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
+    async def screenshot(self) -> BridgeResponse: ...
     async def events(self, callback) -> None: ...
     async def close(self) -> None: ...
 
@@ -107,6 +108,9 @@ class RealBridgeClient:
 
     async def chat(self, message: str) -> BridgeResponse:
         return self._parse(await self._http.post("/chat", json={"message": message}))
+
+    async def screenshot(self) -> BridgeResponse:
+        return self._parse(await self._http.get("/screenshot", params={"format": "jpeg", "quality": "80"}))
 
     async def events(self, callback) -> None:
         """Connect to WS event stream with reconnection backoff."""
@@ -284,6 +288,14 @@ class MockBridgeClient:
     async def chat(self, message: str) -> BridgeResponse:
         self._chat_log.append(message)
         return BridgeResponse("success", f"Sent: {message}")
+
+    async def screenshot(self) -> BridgeResponse:
+        import base64
+        # 1x1 red pixel JPEG
+        dummy = base64.b64encode(b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9').decode()
+        return BridgeResponse("success", "Screenshot captured", {
+            "image": dummy, "format": "jpeg", "width": 854, "height": 480, "size_bytes": 23,
+        })
 
     async def events(self, callback) -> None:
         """Process events from the mock event queue."""

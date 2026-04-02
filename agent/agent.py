@@ -198,12 +198,35 @@ class Agent:
                 tool_results = []
                 for tool_use in tool_uses:
                     result = await self._dispatch_tool(tool_use.name, tool_use.input)
-                    logger.info(f"Tool result ({tool_use.name}): {result[:LOG_TRIM]}")
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_use.id,
-                        "content": result,
-                    })
+                    if isinstance(result, dict) and result.get("_type") == "image_tool_result":
+                        # Image tool result — send as multi-part content with image block
+                        media_type = f"image/{result.get('format', 'jpeg')}"
+                        logger.info(f"Tool result ({tool_use.name}): [image {result.get('text', '')}]")
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": result["image"],
+                                    },
+                                },
+                                {
+                                    "type": "text",
+                                    "text": result.get("text", "Screenshot captured."),
+                                },
+                            ],
+                        })
+                    else:
+                        logger.info(f"Tool result ({tool_use.name}): {result[:LOG_TRIM]}")
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": result,
+                        })
                 self.messages.append({"role": "user", "content": tool_results})
                 await self._emit("conversation:update", self.messages)
                 # Continue loop for Claude to process results
@@ -220,8 +243,12 @@ class Agent:
         self._trim_history()
 
     @observe()
-    async def _dispatch_tool(self, name: str, input_data: dict) -> str:
-        """Route tool calls to appropriate handlers."""
+    async def _dispatch_tool(self, name: str, input_data: dict) -> str | dict:
+        """Route tool calls to appropriate handlers.
+
+        Returns str for text results, or dict with _type='image_tool_result'
+        for image results (screenshot).
+        """
         logger.debug(f"Tool call: {name}({json.dumps(input_data)[:LOG_TRIM]})")
 
         try:
@@ -263,6 +290,17 @@ class Agent:
                 await self.queue.interrupt()
                 await self.bridge.stop()
                 return "Stopped all actions and movement"
+
+            elif name == "screenshot":
+                resp = await self.bridge.screenshot()
+                if resp.status != "success":
+                    return f"Screenshot failed: {resp.message}"
+                return {
+                    "_type": "image_tool_result",
+                    "image": resp.data["image"],
+                    "format": resp.data.get("format", "jpeg"),
+                    "text": f"Screenshot captured ({resp.data.get('width', '?')}x{resp.data.get('height', '?')})",
+                }
 
             else:
                 return f"Unknown tool: {name}"

@@ -18,7 +18,7 @@ from aiohttp import web
 
 import re
 
-from bridge import minescript_api, baritone
+from bridge import minescript_api, baritone, screenshot as screenshot_mod
 
 logger = logging.getLogger("bridge")
 _log_handler = logging.FileHandler("/tmp/bridge.log")
@@ -265,6 +265,60 @@ async def handle_probe(request: web.Request) -> web.Response:
     return web.json_response(_ok(results, "API probe complete"))
 
 
+async def handle_screenshot(request: web.Request) -> web.Response:
+    """Capture a screenshot of the game view."""
+    fmt = request.query.get("format", "jpeg")
+    quality = int(request.query.get("quality", 80))
+    raw = request.query.get("raw", "").lower() in ("true", "1")
+
+    try:
+        result = await _run(screenshot_mod.capture_screenshot, fmt, quality)
+    except Exception as e:
+        logger.error(f"Screenshot failed: {e}")
+        return web.json_response(_err(f"Screenshot failed: {e}"), status=500)
+
+    if raw:
+        import base64
+        media_type = "image/png" if fmt == "png" else "image/jpeg"
+        return web.Response(
+            body=base64.b64decode(result["image"]),
+            content_type=media_type,
+        )
+    return web.json_response(_ok(result, "Screenshot captured"))
+
+
+async def handle_video_stream(request: web.Request) -> web.StreamResponse:
+    """MJPEG video stream of the game view."""
+    fps = min(int(request.query.get("fps", 10)), 15)
+    quality = int(request.query.get("quality", 50))
+    interval = 1.0 / fps
+
+    response = web.StreamResponse()
+    response.content_type = "multipart/x-mixed-replace; boundary=frame"
+    response.headers["Cache-Control"] = "no-cache"
+    await response.prepare(request)
+
+    logger.info(f"Video stream client connected (fps={fps})")
+    try:
+        while True:
+            try:
+                result = await _run(screenshot_mod.capture_screenshot, "jpeg", quality)
+                import base64
+                frame_bytes = base64.b64decode(result["image"])
+                await response.write(
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n\r\n"
+                    + frame_bytes + b"\r\n"
+                )
+            except Exception as e:
+                logger.debug(f"Video frame error: {e}")
+            await asyncio.sleep(interval)
+    except (asyncio.CancelledError, ConnectionResetError, ConnectionError):
+        logger.info("Video stream client disconnected")
+    return response
+
+
 async def handle_chat(request: web.Request) -> web.Response:
     body = await request.json()
     message = body.get("message", "")
@@ -444,6 +498,8 @@ def create_app() -> web.Application:
     app.router.add_post("/discard", handle_discard)
     app.router.add_post("/chat", handle_chat)
     app.router.add_get("/probe", handle_probe)
+    app.router.add_get("/screenshot", handle_screenshot)
+    app.router.add_get("/video/stream", handle_video_stream)
 
     # WebSocket
     app.router.add_get("/events", handle_events)

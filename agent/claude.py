@@ -78,6 +78,11 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Emergency stop: clear the action queue and interrupt the running action.",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "screenshot",
+        "description": "Take a screenshot of your current first-person view. Returns the image for visual analysis. Use when you need to see what's around you, verify a build, check terrain, or when text-based block data isn't sufficient.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
 

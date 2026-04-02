@@ -34,10 +34,24 @@ if [ -d /tmp/bridge ]; then
     echo "Bridge package installed at /headlessmc/bridge/"
 fi
 
-echo "Launching Fabric 1.21.5 headlessly (offline, in-memory mode)..."
+# Copy MC render options into game dir
+if [ -f /tmp/options.txt ]; then
+    cp /tmp/options.txt "$GAME_DIR/options.txt"
+    echo "MC options.txt installed"
+fi
 
-# Start HMC in a screen session so we can send commands via screen -X stuff
-screen -dmS hmc bash -c 'hmc launch fabric:1.21.5 -lwjgl -offline -inmemory 2>&1 | tee /tmp/hmc.log'
+# Start virtual framebuffer for real rendering
+echo "Starting Xvfb virtual display..."
+Xvfb :99 -screen 0 854x480x24 -ac +extension GLX +render -noreset &
+export DISPLAY=:99
+export LIBGL_ALWAYS_SOFTWARE=1
+sleep 1
+echo "Xvfb started on :99"
+
+echo "Launching Fabric 1.21.5 with rendering (offline, in-memory mode)..."
+
+# Start HMC in a screen session — no -lwjgl flag, renders to Xvfb
+screen -dmS hmc bash -c 'DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 hmc launch fabric:1.21.5 -offline -inmemory 2>&1 | tee /tmp/hmc.log'
 
 # Wait for game to load by watching for the blur shader messages
 echo "Waiting for game to load..."

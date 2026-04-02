@@ -1,0 +1,14 @@
+renderDistance:8
+simulationDistance:8
+graphicsMode:1
+ao:true
+enableVsync:false
+maxFps:30
+guiScale:2
+fullscreen:false
+overrideWidth:854
+overrideHeight:480
+particles:1
+renderClouds:fast
+entityShadows:true
+biomeBlendRadius:2

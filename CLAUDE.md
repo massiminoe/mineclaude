@@ -17,6 +17,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `bridge/` — HTTP+WS bridge server (runs inside MC client container, NOT installed locally)
   - `player_control.py` — shared helpers (look_at, find_slot, navigate, etc.)
   - `recipes.py` — crafting recipe table (~30 essential survival recipes)
+  - `screenshot.py` — screenshot capture via Minescript + Pillow
 - `frontend/` — React + TypeScript + Vite monitor UI
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
 - `mc-client/` — Dockerfile, entrypoint, mods, Minescript scripts
@@ -54,6 +55,8 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `POST /stop` — Baritone stop
 - `POST /chat` `{message}` — send chat via `/tellraw` (avoids signed chat issues)
 - `POST /place`, `/break`, `/craft`, `/equip`, `/discard` — MVP via server commands (`/give`, `/setblock`, etc.)
+- `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`)
+- `GET /video/stream` — MJPEG video stream of game view
 - `WS /events` — chat event stream
 
 ## Infrastructure Gotchas
@@ -61,13 +64,17 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - MC **1.21.5** (NOT 1.21.6), Fabric Loader 0.18.4, Fabric API 0.128.2
 - HMC config: `/headlessmc/HeadlessMC/config.properties` (NOT `/root/HeadlessMC/`)
 - Do NOT pass `-D` flags to `hmc` CLI — crashes silently. Use config.properties.
-- Launch: `hmc launch fabric:1.21.5 -lwjgl -offline -inmemory`
+- Launch: `hmc launch fabric:1.21.5 -offline -inmemory` (no -lwjgl, renders to Xvfb)
 - Game dir: `/headlessmc/HeadlessMC/run`
 - Scripts: `/headlessmc/minescript/` (NOT game dir)
 - Python 3 must be installed in Docker image for .py Minescript scripts
 - Baritone commands: `#goto X Y Z`, `#mine <block>`, `#follow player <name>`, `#stop`
 - Baritone v1.14.0, Minescript 5.0b11, hmc-specifics 2.3.0
 - HeadlessMC 2.8.0 (`3arthqu4ke/headlessmc:latest`)
+- Rendering via Xvfb virtual framebuffer + Mesa llvmpipe (software OpenGL 4.5)
+- `hmc.check.xvfb=true` in config.properties, `LIBGL_ALWAYS_SOFTWARE=1` env var
+- `minescript.screenshot(filename)` — native MC screenshot API (saves PNG to screenshots/ dir)
+- Vision: Claude `screenshot` tool sends game view as base64 JPEG in tool_result image block
 
 ## Minescript v5.0 API Notes
 
