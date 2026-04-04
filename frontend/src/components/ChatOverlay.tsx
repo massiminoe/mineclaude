@@ -3,9 +3,10 @@ import type { ConversationMessage, ContentBlock } from "../types";
 
 interface Props {
   messages: ConversationMessage[];
+  onClose: () => void;
 }
 
-export function ChatOverlay({ messages }: Props) {
+export function ChatOverlay({ messages, onClose }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -14,6 +15,7 @@ export function ChatOverlay({ messages }: Props) {
 
   return (
     <div className="chat-overlay">
+      <button className="chat-close" onClick={onClose}>{"\u25BC"}</button>
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="chat-empty">Waiting for conversation...</div>

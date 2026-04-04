@@ -14,6 +14,7 @@ export function VideoPane({ gameState, conversation }: Props) {
   const [streamStatus, setStreamStatus] = useState<
     "loading" | "connected" | "error"
   >("loading");
+  const [chatOpen, setChatOpen] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
@@ -49,7 +50,13 @@ export function VideoPane({ gameState, conversation }: Props) {
         alt="Minecraft POV"
         style={{ display: streamStatus === "connected" ? "block" : "none" }}
       />
-      <ChatOverlay messages={conversation} />
+      {chatOpen ? (
+        <ChatOverlay messages={conversation} onClose={() => setChatOpen(false)} />
+      ) : (
+        <button className="chat-toggle-tab" onClick={() => setChatOpen(true)}>
+          {"\u25B2"} Chat
+        </button>
+      )}
     </div>
   );
 }
