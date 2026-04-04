@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react";
 import type { ConversationMessage, GameState } from "../types";
-import { HealthOverlay } from "./HealthOverlay";
 import { ChatOverlay } from "./ChatOverlay";
 
 const BRIDGE_URL = "http://localhost:8080";
@@ -35,9 +34,6 @@ export function VideoPane({ gameState, conversation }: Props) {
 
   return (
     <div className="video-pane">
-      {gameState && (
-        <HealthOverlay health={gameState.health} hunger={gameState.hunger} />
-      )}
       {streamStatus !== "connected" && (
         <div className="video-placeholder">
           <div className="video-placeholder-icon">{"\u25B7"}</div>
