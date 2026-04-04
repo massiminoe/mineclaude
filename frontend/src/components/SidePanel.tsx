@@ -27,7 +27,7 @@ export function SidePanel({ queue, gameState }: Props) {
           </div>
           <div className="side-section">
             <div className="side-section-label">Inventory</div>
-            <InventoryList inventory={gameState.inventory} />
+            <InventoryList inventory={gameState.inventory || []} />
           </div>
         </>
       )}

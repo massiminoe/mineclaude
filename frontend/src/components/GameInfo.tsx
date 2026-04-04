@@ -1,7 +1,7 @@
 interface Props {
-  position: { x: number; y: number; z: number };
-  biome: string;
-  time: number;
+  position?: { x: number; y: number; z: number };
+  biome?: string;
+  time?: number;
 }
 
 function tickToTime(tick: number): string {
@@ -13,15 +13,19 @@ function tickToTime(tick: number): string {
 }
 
 export function GameInfo({ position, biome, time }: Props) {
-  const day = Math.floor(time / 24000) + 1;
+  const day = time != null ? Math.floor(time / 24000) + 1 : null;
 
   return (
     <div>
-      <div className="game-info-coords">
-        {Math.floor(position.x)}, {Math.floor(position.y)}, {Math.floor(position.z)}
-      </div>
+      {position && (
+        <div className="game-info-coords">
+          {Math.floor(position.x)}, {Math.floor(position.y)}, {Math.floor(position.z)}
+        </div>
+      )}
       <div className="game-info-secondary">
-        {biome} &middot; day {day} &middot; {tickToTime(time)}
+        {[biome, day != null && `day ${day}`, time != null && tickToTime(time)]
+          .filter(Boolean)
+          .join(" \u00b7 ")}
       </div>
     </div>
   );

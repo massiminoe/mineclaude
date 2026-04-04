@@ -3,7 +3,7 @@ interface Props {
 }
 
 export function InventoryList({ inventory }: Props) {
-  if (inventory.length === 0) {
+  if (!inventory || inventory.length === 0) {
     return <div className="empty-state">Empty</div>;
   }
 
