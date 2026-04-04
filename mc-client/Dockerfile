@@ -4,17 +4,18 @@ FROM 3arthqu4ke/headlessmc:latest
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends \
     python3 python3-pip screen curl \
-    xvfb mesa-utils libgl1-mesa-dri libgl1-mesa-glx ffmpeg \
+    xvfb mesa-utils libgl1-mesa-dri libgl1 ffmpeg \
     > /dev/null 2>&1 && \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
 # Configure HeadlessMC for headless operation
 RUN mkdir -p /headlessmc/HeadlessMC && \
-    echo "hmc.assets.dummy=true" >> /headlessmc/HeadlessMC/config.properties && \
     echo "hmc.offline=true" >> /headlessmc/HeadlessMC/config.properties && \
     echo "hmc.offline.username=Claude" >> /headlessmc/HeadlessMC/config.properties && \
-    echo "hmc.check.xvfb=true" >> /headlessmc/HeadlessMC/config.properties
+    echo "hmc.check.xvfb=true" >> /headlessmc/HeadlessMC/config.properties && \
+    echo "hmc.assets.dummy=false" >> /headlessmc/HeadlessMC/config.properties && \
+    echo "hmc.always.lwjgl.flag=false" >> /headlessmc/HeadlessMC/config.properties
 
 # Download and install Fabric for MC 1.21.5
 RUN hmc download fabric:1.21.5

@@ -50,14 +50,16 @@ echo "Xvfb started on :99"
 
 echo "Launching Fabric 1.21.5 with rendering (offline, in-memory mode)..."
 
-# Start HMC in a screen session — no -lwjgl flag, renders to Xvfb
-screen -dmS hmc bash -c 'DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 hmc launch fabric:1.21.5 -offline -inmemory 2>&1 | tee /tmp/hmc.log'
+# Start HMC in a screen session
+# NOTE: base image sets hmc.invert.lwjgl.flag=true, so -lwjgl DISABLES the stub (real rendering)
+screen -dmS hmc bash -c 'DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 hmc launch fabric:1.21.5 -lwjgl -offline -inmemory 2>&1 | tee /tmp/hmc.log'
 
-# Wait for game to load by watching for the blur shader messages
+# Wait for game to load
+# With -lwjgl (headless), marker is "blur/5"; with Xvfb (real rendering), marker is "gui.png-atlas"
 echo "Waiting for game to load..."
 for i in $(seq 1 60); do
     sleep 5
-    if grep -q "blur/5" /tmp/hmc.log 2>/dev/null; then
+    if grep -q "blur/5\|gui.png-atlas" /tmp/hmc.log 2>/dev/null; then
         echo "Game loaded! (detected at iteration $i)"
         break
     fi
