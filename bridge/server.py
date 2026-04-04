@@ -288,34 +288,55 @@ async def handle_screenshot(request: web.Request) -> web.Response:
 
 
 async def handle_video_stream(request: web.Request) -> web.StreamResponse:
-    """MJPEG video stream of the game view."""
+    """MJPEG video stream via persistent ffmpeg x11grab process."""
     fps = min(int(request.query.get("fps", 10)), 15)
-    quality = int(request.query.get("quality", 50))
-    interval = 1.0 / fps
+    quality = int(request.query.get("quality", 5))  # ffmpeg q:v scale: 2=best, 31=worst
 
     response = web.StreamResponse()
     response.content_type = "multipart/x-mixed-replace; boundary=frame"
     response.headers["Cache-Control"] = "no-cache"
     await response.prepare(request)
 
-    logger.info(f"Video stream client connected (fps={fps})")
+    # Launch one persistent ffmpeg that continuously captures Xvfb → MJPEG pipe
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-f", "x11grab", "-r", str(fps), "-video_size", "854x480", "-i", ":99",
+        "-vcodec", "mjpeg", "-q:v", str(quality), "-f", "mjpeg", "pipe:1",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+
+    logger.info(f"Video stream client connected (fps={fps}, ffmpeg pid={proc.pid})")
     try:
+        buf = b""
         while True:
-            try:
-                result = await _run(screenshot_mod.capture_screenshot, "jpeg", quality)
-                import base64
-                frame_bytes = base64.b64decode(result["image"])
+            chunk = await proc.stdout.read(65536)
+            if not chunk:
+                break
+            buf += chunk
+            # Extract complete JPEG frames (SOI=FFD8, EOI=FFD9)
+            while True:
+                start = buf.find(b"\xff\xd8")
+                if start < 0:
+                    buf = b""
+                    break
+                end = buf.find(b"\xff\xd9", start + 2)
+                if end < 0:
+                    buf = buf[start:]  # keep partial frame
+                    break
+                frame = buf[start:end + 2]
+                buf = buf[end + 2:]
                 await response.write(
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n"
-                    b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n\r\n"
-                    + frame_bytes + b"\r\n"
+                    b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
+                    + frame + b"\r\n"
                 )
-            except Exception as e:
-                logger.debug(f"Video frame error: {e}")
-            await asyncio.sleep(interval)
     except (asyncio.CancelledError, ConnectionResetError, ConnectionError):
-        logger.info("Video stream client disconnected")
+        pass
+    finally:
+        proc.kill()
+        await proc.wait()
+        logger.info("Video stream client disconnected, ffmpeg killed")
     return response
 
 
