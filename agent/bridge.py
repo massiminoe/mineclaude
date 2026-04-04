@@ -33,6 +33,7 @@ class BridgeClient(Protocol):
     async def stop(self) -> BridgeResponse: ...
     async def place(self, block: str, x: int, y: int, z: int, face: str = "top") -> BridgeResponse: ...
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
+    async def collect(self, x: float, y: float, z: float) -> BridgeResponse: ...
     async def attack(self, entity_id: str) -> BridgeResponse: ...
     async def craft(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse: ...
@@ -93,6 +94,9 @@ class RealBridgeClient:
 
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.post("/break", json={"x": x, "y": y, "z": z}))
+
+    async def collect(self, x: float, y: float, z: float) -> BridgeResponse:
+        return self._parse(await self._http.post("/collect", json={"x": x, "y": y, "z": z}))
 
     async def attack(self, entity_id: str) -> BridgeResponse:
         return self._parse(await self._http.post("/attack", json={"entity_id": entity_id}))
@@ -219,9 +223,32 @@ class MockBridgeClient:
         for b in self._nearby_blocks:
             if b["x"] == x and b["y"] == y and b["z"] == z:
                 self._nearby_blocks.remove(b)
-                self._add_to_inventory(b["name"], 1)
+                # Spawn dropped item entity (like real MC) — use collect() to pick up
+                self._nearby_entities.append({
+                    "name": b["name"], "type": "item",
+                    "x": x + 0.5, "y": y, "z": z + 0.5,
+                    "distance": b.get("distance", 1.0), "health": 0,
+                })
                 return BridgeResponse("success", f"Broke {b['name']} at {x}, {y}, {z}")
         return BridgeResponse("error", f"No block at {x}, {y}, {z}")
+
+    async def collect(self, x: float, y: float, z: float) -> BridgeResponse:
+        # Find closest item entity near the given position
+        best = None
+        best_dist = float("inf")
+        for e in self._nearby_entities:
+            if e["type"] != "item":
+                continue
+            dist = math.sqrt((e["x"] - x) ** 2 + (e["y"] - y) ** 2 + (e["z"] - z) ** 2)
+            if dist < best_dist:
+                best_dist = dist
+                best = e
+        if best is None:
+            return BridgeResponse("error", "No items found nearby")
+        self._nearby_entities.remove(best)
+        self._add_to_inventory(best["name"], 1)
+        self._position = {"x": best["x"], "y": best["y"], "z": best["z"]}
+        return BridgeResponse("success", f"Collected {best['name']}")
 
     async def attack(self, entity_id: str) -> BridgeResponse:
         for e in self._nearby_entities:

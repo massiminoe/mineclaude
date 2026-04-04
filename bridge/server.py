@@ -132,6 +132,15 @@ async def handle_break(request: web.Request) -> web.Response:
     return web.json_response(_err(result.get("error", "Failed to break block")))
 
 
+async def handle_collect(request: web.Request) -> web.Response:
+    body = await request.json()
+    x, y, z = body.get("x", 0), body.get("y", 0), body.get("z", 0)
+    result = await _run(minescript_api.collect_items, x, y, z)
+    if result.get("collected"):
+        return web.json_response(_ok(result, f"Collected items near {x}, {y}, {z}"))
+    return web.json_response(_err(result.get("error", "Failed to collect items")))
+
+
 async def handle_attack(request: web.Request) -> web.Response:
     body = await request.json()
     entity_id = body.get("entity_id", "")
@@ -513,6 +522,7 @@ def create_app() -> web.Application:
     app.router.add_post("/stop", handle_stop)
     app.router.add_post("/place", handle_place)
     app.router.add_post("/break", handle_break)
+    app.router.add_post("/collect", handle_collect)
     app.router.add_post("/attack", handle_attack)
     app.router.add_post("/craft", handle_craft)
     app.router.add_post("/equip", handle_equip)

@@ -221,35 +221,45 @@ def navigate_near(x: float, y: float, z: float, reach: float = 3.5) -> bool:
 
 def collect_nearby_item(
     near_x: float, near_y: float, near_z: float,
-    search_radius: float = 5.0,
+    search_radius: float = 8.0,
     timeout: float = 4.0,
 ) -> bool:
     """Find a dropped item entity near coordinates and walk to pick it up."""
-    # Brief pause for item entity to spawn
-    time.sleep(0.2)
 
-    # Find closest item entity near the expected drop position
-    try:
-        entities = minescript.entities(max_distance=search_radius)
-    except Exception:
-        return False
+    def _find_closest_item() -> tuple[float, float, float] | None:
+        try:
+            entities = minescript.entities(max_distance=search_radius)
+        except Exception:
+            return None
+        best = None
+        best_dist = float("inf")
+        for ent in entities:
+            if str(ent.type).replace("minecraft:", "") != "item":
+                continue
+            ex, ey, ez = ent.position
+            dist = math.sqrt((ex - near_x) ** 2 + (ey - near_y) ** 2 + (ez - near_z) ** 2)
+            if dist < best_dist:
+                best_dist = dist
+                best = (ex, ey, ez)
+        return best
 
+    # Retry entity scan — item may not have spawned yet
     best = None
-    best_dist = float("inf")
-    for ent in entities:
-        if str(ent.type).replace("minecraft:", "") != "item":
-            continue
-        ex, ey, ez = ent.position
-        dist = math.sqrt((ex - near_x) ** 2 + (ey - near_y) ** 2 + (ez - near_z) ** 2)
-        if dist < best_dist:
-            best_dist = dist
-            best = (ex, ey, ez)
+    for attempt in range(4):
+        time.sleep(0.15 if attempt == 0 else 0.25)
+        best = _find_closest_item()
+        if best is not None:
+            break
 
     if best is None:
+        logger.info(f"collect: no item entities found near {near_x:.1f},{near_y:.1f},{near_z:.1f}")
         return False
+
+    logger.info(f"collect: found item at {best[0]:.1f},{best[1]:.1f},{best[2]:.1f}")
 
     # Already close enough to pick up
     if is_within_reach(best[0], best[1], best[2], 1.0):
+        logger.info("collect: already within pickup range")
         return True
 
     # Walk to the item entity's actual position
@@ -260,8 +270,10 @@ def collect_nearby_item(
         if is_within_reach(best[0], best[1], best[2], 1.5):
             minescript.chat("#stop")
             time.sleep(0.2)
+            logger.info("collect: picked up item")
             return True
     minescript.chat("#stop")
+    logger.info("collect: timed out walking to item")
     return False
 
 

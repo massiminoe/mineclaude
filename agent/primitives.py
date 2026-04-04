@@ -84,6 +84,9 @@ def make_primitives(
     async def breakBlockAt(x: int, y: int, z: int) -> str:
         return _check(await bridge.break_block(x, y, z))
 
+    async def collectItems(x: float, y: float, z: float) -> str:
+        return _check(await bridge.collect(x, y, z))
+
     async def attackNearest(mob_type: str) -> str:
         return _check(await bridge.attack(mob_type))
 
@@ -148,6 +151,7 @@ def make_primitives(
         "stop": stop,
         "placeBlock": placeBlock,
         "breakBlockAt": breakBlockAt,
+        "collectItems": collectItems,
         "attackNearest": attackNearest,
         "defendSelf": defendSelf,
         "craft": craft,

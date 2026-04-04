@@ -189,6 +189,36 @@ async def test_break_block(bridge, prims):
 
 
 @pytest.mark.asyncio
+async def test_break_and_collect(bridge, prims):
+    """Break a block, then collect the dropped item — mimics real gameplay flow."""
+    # Break creates a dropped item entity (not auto-added to inventory)
+    inv_before = await prims["getInventory"]()
+    grass_before = sum(i["count"] for i in inv_before if i["name"] == "grass_block")
+
+    await prims["breakBlockAt"](1, 64, 0)  # grass_block at (1, 64, 0)
+
+    # Item should NOT be in inventory yet — it's a dropped entity
+    inv_mid = await prims["getInventory"]()
+    grass_mid = sum(i["count"] for i in inv_mid if i["name"] == "grass_block")
+    assert grass_mid == grass_before
+
+    # Collect picks it up
+    result = await prims["collectItems"](1.5, 64.0, 0.5)
+    assert "Collected" in result
+
+    inv_after = await prims["getInventory"]()
+    grass_after = sum(i["count"] for i in inv_after if i["name"] == "grass_block")
+    assert grass_after == grass_before + 1
+
+
+@pytest.mark.asyncio
+async def test_collect_no_items(bridge, prims):
+    """collectItems fails gracefully when no items are nearby."""
+    with pytest.raises(RuntimeError, match="No items"):
+        await prims["collectItems"](100.0, 64.0, 100.0)
+
+
+@pytest.mark.asyncio
 async def test_log(prims):
     from agent.primitives import _log_buffer
     _log_buffer.clear()

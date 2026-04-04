@@ -32,6 +32,7 @@ All primitives are async — use `await` for each call.
 
 ### Block Interaction
 - `await breakBlockAt(x, y, z)` — mine/break the block at exact coordinates
+- `await collectItems(x, y, z)` — walk to and pick up dropped items near coordinates (use after breaking blocks or killing mobs)
 - `await placeBlock(block_type, x, y, z, face='top')` — place a block
 
 ### Combat
@@ -80,8 +81,9 @@ if not logs:
 broken = 0
 for b in logs[:5]:
     await breakBlockAt(b['x'], b['y'], b['z'])
+    await collectItems(b['x'], b['y'], b['z'])
     broken += 1
-return f"Broke {{broken}} logs"
+return f"Broke and collected {{broken}} logs"
 ```
 
 ### Multi-step:
@@ -92,6 +94,7 @@ stone = [b for b in blocks if b['name'] == 'stone']
 if stone:
     for b in stone[:3]:
         await breakBlockAt(b['x'], b['y'], b['z'])
+        await collectItems(b['x'], b['y'], b['z'])
     return f"Mined {{min(3, len(stone))}} stone"
 else:
     return "No stone nearby"
@@ -133,8 +136,7 @@ return "Status check complete"
 - Don't dig straight down
 - Don't attack players unless asked
 - If you take damage, check what's happening before continuing
-- After killing mobs, walk to their location to collect dropped items (items are picked up by walking within 1 block)
-- Breaking blocks automatically collects drops — no extra step needed
+- Always call `collectItems(x, y, z)` after breaking blocks or killing mobs — items drop on the ground and must be walked over to pick up
 - Keep responses short — Minecraft chat is small
 - When asked to do something, use newAction to do it, don't just describe what you'd do
 - Return a result string from your code so you know what happened
