@@ -141,6 +141,21 @@ def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> 
     return blocks
 
 
+def _clean_entity_type(raw) -> str:
+    """Strip Minescript prefixes from an entity type/name string.
+
+    Minescript v5.0 returns types like 'entity.minecraft.zombie' (with dots)
+    rather than 'minecraft:zombie' (with colon). Both forms appear in the wild,
+    so handle both defensively.
+    """
+    s = str(raw)
+    if s.startswith("entity.minecraft."):
+        return s[len("entity.minecraft."):]
+    if s.startswith("minecraft:"):
+        return s[len("minecraft:"):]
+    return s
+
+
 def get_nearby_entities(radius: int = 32) -> list[dict]:
     """List entities within radius."""
     pos = minescript.player_position()
@@ -157,8 +172,8 @@ def get_nearby_entities(radius: int = 32) -> list[dict]:
         ex, ey, ez = ent.position
         dist = math.sqrt((ex - px) ** 2 + (ey - py) ** 2 + (ez - pz) ** 2)
         result.append({
-            "name": str(ent.name).replace("minecraft:", ""),
-            "type": str(ent.type).replace("minecraft:", ""),
+            "name": _clean_entity_type(ent.name),
+            "type": _clean_entity_type(ent.type),
             "x": ex, "y": ey, "z": ez,
             "distance": round(dist, 1),
             "health": ent.health or 0,
@@ -499,13 +514,11 @@ def _break_fallback(x: int, y: int, z: int) -> dict:
         return {"broken": False, "error": str(e), "method": "fallback"}
 
 
-def collect_items(x: float, y: float, z: float) -> dict:
-    """Walk to and pick up dropped item entities near coordinates."""
-    from bridge.player_control import collect_nearby_item
-    collected = collect_nearby_item(x, y, z)
-    if collected:
-        return {"collected": True}
-    return {"collected": False, "error": "No items found nearby"}
+def collect_items(radius: float = 3.0) -> dict:
+    """Walk to and pick up dropped item entities near the player."""
+    from bridge.player_control import collect_nearby_items
+    count = collect_nearby_items(radius)
+    return {"collected": count}
 
 
 def place_block(block: str, x: int, y: int, z: int, face: str = "top") -> dict:
@@ -739,3 +752,156 @@ def _craft_simulated(item: str, count: int) -> dict:
 
     logger.info(f"craft: crafted {total_output} {item} (simulated, {crafts_needed} crafts)")
     return {"crafted": total_output, "method": "simulated"}
+
+
+# ---------------------------------------------------------------------------
+# Smelting (real furnace via container APIs)
+# ---------------------------------------------------------------------------
+
+
+def smelt_item(item: str, count: int = 1) -> dict:
+    """Smelt items in a nearby furnace using container APIs.
+
+    Opens the furnace GUI, inserts input + fuel, waits for smelting,
+    then extracts the output. Requires a placed furnace within 4 blocks.
+    """
+    from bridge.recipes import (
+        get_smelting_recipe, get_fuel_value,
+        _matches_smelting_input, SMELTING_VARIANT_SUFFIXES,
+    )
+
+    item = item.replace("minecraft:", "")
+    recipe = get_smelting_recipe(item)
+    if recipe is None:
+        return {"smelted": 0, "error": f"Unknown smelting recipe: {item}", "method": "real"}
+
+    count = min(count, 64)  # furnace slots cap at 64
+
+    # Find a furnace nearby
+    furnace_blocks = get_nearby_blocks(radius=4, block_types=["furnace", "lit_furnace"])
+    if not furnace_blocks:
+        return {"smelted": 0, "error": "No furnace within 4 blocks. Place one first.", "method": "real"}
+
+    fb = furnace_blocks[0]
+    fx, fy, fz = fb["x"], fb["y"], fb["z"]
+
+    # Check player has input items (with variant matching)
+    have = _get_inventory_counts()
+    input_item = recipe.input
+    actual_input = None
+    for inv_item, inv_count in have.items():
+        if _matches_smelting_input(input_item, inv_item) and inv_count > 0:
+            actual_input = inv_item
+            break
+    if actual_input is None:
+        return {
+            "smelted": 0,
+            "error": f"No {input_item} in inventory.",
+            "method": "real",
+        }
+    available_input = have.get(actual_input, 0)
+    smelt_count = min(count, available_input)
+
+    # Find fuel in inventory
+    actual_fuel = None
+    fuel_value = 0
+    for inv_item, inv_count in have.items():
+        fv = get_fuel_value(inv_item)
+        if fv > 0 and inv_count > 0:
+            actual_fuel = inv_item
+            fuel_value = fv
+            break
+    if actual_fuel is None:
+        return {"smelted": 0, "error": "No fuel in inventory (need coal, logs, planks, etc.).", "method": "real"}
+
+    fuel_needed = math.ceil(smelt_count / fuel_value)
+    fuel_available = have.get(actual_fuel, 0)
+    if fuel_available < fuel_needed:
+        # Smelt as many as fuel allows
+        smelt_count = int(fuel_available * fuel_value)
+        fuel_needed = fuel_available
+        if smelt_count <= 0:
+            return {"smelted": 0, "error": "Not enough fuel.", "method": "real"}
+
+    # Navigate within reach
+    from bridge.player_control import navigate_near
+    if not _is_within_reach(fx, fy, fz):
+        if not navigate_near(fx, fy, fz, reach=3.5):
+            return {"smelted": 0, "error": "Could not reach furnace.", "method": "real"}
+
+    # Open furnace
+    try:
+        minescript.container_open(fx, fy, fz)
+    except Exception as e:
+        return {"smelted": 0, "error": f"Failed to open furnace: {e}", "method": "real"}
+    time.sleep(0.3)
+
+    # Extract any existing output first (preserve items)
+    try:
+        existing = minescript.container_get_items()
+        if existing:
+            # Shift-click output slot (slot 2) to extract to player inventory
+            output_item = None
+            for ci in existing:
+                slot = getattr(ci, "slot", None)
+                if slot == 2:
+                    output_item = ci
+                    break
+            if output_item is not None:
+                minescript.container_click_slot(2, 0, True)  # shift-click
+                time.sleep(0.1)
+    except Exception:
+        pass
+
+    # Insert input items via /clear from player + /item replace into furnace
+    # Using commands is more reliable than clicking slots when item locations vary
+    minescript.execute(f"/clear @s minecraft:{actual_input} {smelt_count}")
+    # Put items directly into furnace input slot (container slot 0)
+    # We need to close first to use /item replace block, then reopen
+    try:
+        minescript.container_close()
+    except Exception:
+        pass
+    time.sleep(0.1)
+
+    minescript.execute(
+        f"/item replace block {fx} {fy} {fz} container.0 "
+        f"with minecraft:{actual_input} {smelt_count}"
+    )
+    # Insert fuel into furnace fuel slot (container slot 1)
+    minescript.execute(f"/clear @s minecraft:{actual_fuel} {fuel_needed}")
+    minescript.execute(
+        f"/item replace block {fx} {fy} {fz} container.1 "
+        f"with minecraft:{actual_fuel} {fuel_needed}"
+    )
+
+    # Wait for smelting: poll getblock for lit=false
+    # Each item takes ~10 seconds (200 ticks)
+    smelt_time = smelt_count * 10 + 5  # buffer
+    deadline = time.monotonic() + smelt_time
+    time.sleep(2)  # initial wait for furnace to light
+
+    while time.monotonic() < deadline:
+        try:
+            block_state = minescript.getblock(fx, fy, fz)
+            if block_state and "lit=false" in block_state:
+                # Furnace stopped — smelting complete (or out of fuel)
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+
+    time.sleep(0.5)
+
+    # Extract output: /item replace from furnace output to player
+    minescript.execute(
+        f"/item replace entity @s container.0 "
+        f"from block {fx} {fy} {fz} container.2"
+    )
+    # Clear furnace output slot
+    minescript.execute(
+        f"/item replace block {fx} {fy} {fz} container.2 with minecraft:air"
+    )
+
+    logger.info(f"smelt: smelted {smelt_count} {item} from {actual_input} with {actual_fuel} fuel")
+    return {"smelted": smelt_count, "output": item, "fuel_used": fuel_needed, "method": "real"}

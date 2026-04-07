@@ -32,7 +32,7 @@ All primitives are async — use `await` for each call.
 
 ### Block Interaction
 - `await breakBlockAt(x, y, z)` — mine/break the block at exact coordinates
-- `await collectItems(x, y, z)` — walk to and pick up dropped items near coordinates (use after breaking blocks or killing mobs)
+- `await collectItems(radius=3)` — walk to and pick up dropped items near you (use after breaking blocks or killing mobs)
 - `await placeBlock(block_type, x, y, z, face='top')` — place a block
 
 ### Combat
@@ -41,11 +41,12 @@ All primitives are async — use `await` for each call.
 
 ### Inventory
 - `await craft(item, count=1)` — craft items if you have the ingredients (e.g. 'oak_planks' needs 'oak_log'). 3x3 recipes (tools, armor, furnace) require a crafting table within 4 blocks
+- `await smelt(item, count=1)` — smelt items in a nearby furnace (e.g. 'raw_iron' → iron_ingot, 'sand' → glass). Requires a placed furnace within 4 blocks and fuel (coal, logs, planks) in inventory. Auto-selects fuel and waits for completion
 - `await equip(item, slot='hand')` — equip item to hand or armor slot
 - `await discard(item, count=1)` — drop items
 
 ### Queries (also available as standalone tools)
-- `await getStats()` — dict with health, hunger, position, biome, time
+- `await getStats()` — `{{'health', 'hunger', 'position': {{'x', 'y', 'z'}}, 'biome', 'time'}}` — note position is a NESTED dict, use `stats['position']['x']` not `stats['x']`
 - `await getInventory()` — list of {{name, count, slot}}
 - `await getNearbyEntities(32)` — list of {{name, type, x, y, z, health}}
 - `await findBlocks(block_type, 32, 10)` — find specific blocks nearby (max range 64)
@@ -81,7 +82,7 @@ if not logs:
 broken = 0
 for b in logs[:5]:
     await breakBlockAt(b['x'], b['y'], b['z'])
-    await collectItems(b['x'], b['y'], b['z'])
+    await collectItems()
     broken += 1
 return f"Broke and collected {{broken}} logs"
 ```
@@ -94,7 +95,7 @@ stone = [b for b in blocks if b['name'] == 'stone']
 if stone:
     for b in stone[:3]:
         await breakBlockAt(b['x'], b['y'], b['z'])
-        await collectItems(b['x'], b['y'], b['z'])
+        await collectItems()
     return f"Mined {{min(3, len(stone))}} stone"
 else:
     return "No stone nearby"
@@ -136,7 +137,7 @@ return "Status check complete"
 - Don't dig straight down
 - Don't attack players unless asked
 - If you take damage, check what's happening before continuing
-- Always call `collectItems(x, y, z)` after breaking blocks or killing mobs — items drop on the ground and must be walked over to pick up
+- Always call `collectItems()` after breaking blocks or killing mobs — picks up everything dropped within 3 blocks of you
 - Keep responses short — Minecraft chat is small
 - When asked to do something, use newAction to do it, don't just describe what you'd do
 - Return a result string from your code so you know what happened

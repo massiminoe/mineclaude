@@ -3,13 +3,14 @@
 All functions are blocking — called via run_in_executor() from the server layer.
 The `minescript` module is only importable inside the Minescript mod's Python runtime.
 
-API names confirmed via probe against Minescript v5.0b11:
+API names confirmed via probe against Minescript v5.0b11 + container PR:
   - player_set_orientation, player_orientation, player_look_at
   - player_press_attack, player_press_use, player_press_drop
-  - player_inventory_select_slot, player_inventory_slot_to_hotbar
+  - player_inventory_select_slot, player_inventory_slot_to_hotbar (broken on MC 1.21.5)
   - player_press_swap_hands, player_press_pick_item
-  - screen_name, container_get_items (read-only, no container_click)
-  - NO: container_click, close_screen, player_press_inventory, open_inventory
+  - container_open, container_close, container_click_slot, container_swap_slots
+  - container_get_items, container_get_slot, container_get_info, container_find_item
+  - screen_name
 """
 
 from __future__ import annotations
@@ -99,7 +100,7 @@ def find_item_slot(item_name: str) -> int | None:
         return None
 
     item_name_lower = item_name.lower().replace("minecraft:", "")
-    for item in inv:
+    for i, item in enumerate(inv):
         if item is None:
             continue
         name = getattr(item, "item", "")
@@ -107,6 +108,7 @@ def find_item_slot(item_name: str) -> int | None:
             slot = getattr(item, "slot", None)
             if slot is not None:
                 return slot
+            return i  # fallback to enumeration index
     return None
 
 
@@ -129,17 +131,107 @@ def find_item_in_hotbar(item_name: str) -> int | None:
     return None
 
 
-def move_item_to_hotbar(inv_slot: int, hotbar_slot: int = 0) -> bool:
-    """Move an item from any inventory slot to the currently selected hotbar slot.
+def _slot_to_item_name(mc_slot: int) -> str:
+    """/item replace slot name for a Minecraft inventory slot number."""
+    if 0 <= mc_slot <= 8:
+        return f"hotbar.{mc_slot}"
+    elif 9 <= mc_slot <= 35:
+        return f"inventory.{mc_slot - 9}"
+    elif mc_slot == 40:
+        return "weapon.offhand"
+    else:
+        raise ValueError(f"Unsupported slot: {mc_slot}")
 
-    Uses player_inventory_slot_to_hotbar (v5.0b11 — takes 1 arg: source slot).
-    First selects the target hotbar slot, then swaps.
-    """
+
+def _find_empty_hotbar_slot() -> int | None:
+    """Find an empty hotbar slot (0-8). Returns slot number or None."""
     try:
-        minescript.player_inventory_select_slot(hotbar_slot)
+        inv = minescript.player_inventory()
+    except (AttributeError, TypeError):
+        return None
+
+    occupied = set()
+    for item in inv:
+        if item is None:
+            continue
+        name = getattr(item, "item", "")
+        slot = getattr(item, "slot", None)
+        if name and "air" not in name and slot is not None and 0 <= slot <= 8:
+            occupied.add(slot)
+    for s in range(9):
+        if s not in occupied:
+            return s
+    return None
+
+
+def _find_empty_inventory_slot() -> int | None:
+    """Find any empty slot in main inventory (9-35). Returns slot number or None."""
+    try:
+        inv = minescript.player_inventory()
+    except (AttributeError, TypeError):
+        return None
+
+    occupied = set()
+    for item in inv:
+        if item is None:
+            continue
+        name = getattr(item, "item", "")
+        slot = getattr(item, "slot", None)
+        if name and "air" not in name and slot is not None and 9 <= slot <= 35:
+            occupied.add(slot)
+    for s in range(9, 36):
+        if s not in occupied:
+            return s
+    return None
+
+
+def move_item_to_hotbar(inv_slot: int, hotbar_slot: int = 0) -> bool:
+    """Move an item from any inventory slot to a hotbar slot (lossless).
+
+    Uses /item replace commands (bot is opped) since player_inventory_slot_to_hotbar
+    is broken on MC 1.21.5.  Slot-to-slot copies preserve full NBT/durability.
+
+    Strategy:
+    1. If item already in hotbar, just select it.
+    2. Try an empty hotbar slot first (no displacement).
+    3. If hotbar full, save the displaced item to an empty inventory slot first.
+    4. If inventory 100% full, fail.
+    """
+    if 0 <= inv_slot <= 8:
+        # Already in hotbar
+        minescript.player_inventory_select_slot(inv_slot)
+        return True
+
+    if inv_slot < 9 or inv_slot > 35:
+        logger.warning(f"move_item_to_hotbar: unsupported slot {inv_slot}")
+        return False
+
+    src = _slot_to_item_name(inv_slot)
+
+    # Prefer an empty hotbar slot to avoid displacing anything
+    empty_hotbar = _find_empty_hotbar_slot()
+    if empty_hotbar is not None:
+        hotbar_slot = empty_hotbar
+
+    dst = _slot_to_item_name(hotbar_slot)
+
+    try:
+        if empty_hotbar is None:
+            # Hotbar full — save the displaced item to an empty inventory slot
+            temp = _find_empty_inventory_slot()
+            if temp is None:
+                logger.warning("move_item_to_hotbar: inventory full, cannot swap")
+                return False
+            temp_name = _slot_to_item_name(temp)
+            # Save hotbar item to temp (copy preserves NBT)
+            minescript.execute(f"/item replace entity @s {temp_name} from entity @s {dst}")
+
+        # Copy source item to hotbar
+        minescript.execute(f"/item replace entity @s {dst} from entity @s {src}")
+        # Clear source (from copies, doesn't move)
+        minescript.execute(f"/item replace entity @s {src} with minecraft:air")
         time.sleep(0.05)
-        minescript.player_inventory_slot_to_hotbar(inv_slot)
-        time.sleep(0.1)
+        minescript.player_inventory_select_slot(hotbar_slot)
         return True
     except Exception as e:
         logger.warning(f"move_item_to_hotbar failed: {e}")
@@ -219,62 +311,99 @@ def navigate_near(x: float, y: float, z: float, reach: float = 3.5) -> bool:
     return False
 
 
-def collect_nearby_item(
-    near_x: float, near_y: float, near_z: float,
-    search_radius: float = 8.0,
-    timeout: float = 4.0,
-) -> bool:
-    """Find a dropped item entity near coordinates and walk to pick it up."""
+def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
+    """Walk to and pick up all dropped item entities within radius of player.
+    Returns count of items collected (entities that disappeared)."""
 
-    def _find_closest_item() -> tuple[float, float, float] | None:
+    def _scan_items(verbose: bool = False) -> list[tuple[float, float, float]]:
         try:
-            entities = minescript.entities(max_distance=search_radius)
-        except Exception:
-            return None
-        best = None
-        best_dist = float("inf")
-        for ent in entities:
-            if str(ent.type).replace("minecraft:", "") != "item":
-                continue
-            ex, ey, ez = ent.position
-            dist = math.sqrt((ex - near_x) ** 2 + (ey - near_y) ** 2 + (ez - near_z) ** 2)
-            if dist < best_dist:
-                best_dist = dist
-                best = (ex, ey, ez)
-        return best
+            entities = minescript.entities(max_distance=float(radius))
+        except Exception as e:
+            logger.warning(f"collect: minescript.entities() raised {type(e).__name__}: {e}")
+            return []
 
-    # Retry entity scan — item may not have spawned yet
-    best = None
-    for attempt in range(4):
-        time.sleep(0.15 if attempt == 0 else 0.25)
-        best = _find_closest_item()
-        if best is not None:
+        if verbose:
+            type_summary = [str(getattr(e, "type", "?")) for e in entities[:10]]
+            logger.info(
+                f"collect: scan returned {len(entities)} entities; "
+                f"first types: {type_summary}"
+            )
+
+        items = []
+        for ent in entities:
+            type_str = str(getattr(ent, "type", ""))
+            # Minescript v5.0 format: "entity.minecraft.item"
+            if not type_str.endswith(".item") and type_str != "item":
+                continue
+            try:
+                ex, ey, ez = ent.position
+            except Exception:
+                continue
+            if verbose:
+                name_str = str(getattr(ent, "name", ""))
+                logger.info(
+                    f"collect:   item entity name={name_str!r} type={type_str!r} pos=({ex:.1f},{ey:.1f},{ez:.1f})"
+                )
+            items.append((ex, ey, ez))
+        return items
+
+    # Total time budget — must stay well under the 30s bridge HTTP timeout
+    overall_deadline = time.monotonic() + 18.0
+
+    # Initial settle for any in-flight item entities
+    time.sleep(0.2)
+
+    collected = 0
+    for iteration in range(max_iterations):
+        if time.monotonic() >= overall_deadline:
+            logger.info("collect: overall time budget exhausted")
             break
 
-    if best is None:
-        logger.info(f"collect: no item entities found near {near_x:.1f},{near_y:.1f},{near_z:.1f}")
-        return False
+        # Verbose logging on first iteration so we can diagnose empty results
+        items = _scan_items(verbose=(iteration == 0))
+        if not items:
+            if iteration == 0:
+                logger.info(f"collect: no item entities found within radius={radius}")
+            break
 
-    logger.info(f"collect: found item at {best[0]:.1f},{best[1]:.1f},{best[2]:.1f}")
+        # Pick closest to player
+        pos = minescript.player_position()
+        px, py, pz = pos[0], pos[1], pos[2]
+        items.sort(key=lambda p: (p[0] - px) ** 2 + (p[1] - py) ** 2 + (p[2] - pz) ** 2)
+        target = items[0]
+        before_count = len(items)
 
-    # Already close enough to pick up
-    if is_within_reach(best[0], best[1], best[2], 1.0):
-        logger.info("collect: already within pickup range")
-        return True
+        logger.info(
+            f"collect: targeting item at {target[0]:.1f},{target[1]:.1f},{target[2]:.1f} "
+            f"({before_count} item(s) in range)"
+        )
 
-    # Walk to the item entity's actual position
-    minescript.chat(f"#goto {int(best[0])} {int(best[1])} {int(best[2])}")
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(0.25)
-        if is_within_reach(best[0], best[1], best[2], 1.5):
+        # If already in pickup range, just wait briefly for auto-collect
+        if is_within_reach(target[0], target[1], target[2], 1.0):
+            time.sleep(0.3)
+        else:
+            walk_budget = min(3.0, overall_deadline - time.monotonic())
+            if walk_budget <= 0:
+                break
+            minescript.chat(f"#goto {int(target[0])} {int(target[1])} {int(target[2])}")
+            deadline = time.monotonic() + walk_budget
+            while time.monotonic() < deadline:
+                time.sleep(0.25)
+                if is_within_reach(target[0], target[1], target[2], 1.5):
+                    break
             minescript.chat("#stop")
-            time.sleep(0.2)
-            logger.info("collect: picked up item")
-            return True
-    minescript.chat("#stop")
-    logger.info("collect: timed out walking to item")
-    return False
+            time.sleep(0.3)
+
+        # Re-scan: anything we collected reduces the count
+        after = _scan_items()
+        delta = before_count - len(after)
+        if delta <= 0:
+            logger.info("collect: no progress, stopping")
+            break
+        collected += delta
+
+    logger.info(f"collect: picked up {collected} item(s)")
+    return collected
 
 
 def find_adjacent_solid_block(x: int, y: int, z: int) -> tuple[int, int, int, str] | None:

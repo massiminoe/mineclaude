@@ -1,6 +1,6 @@
-"""Crafting recipe table for essential survival items.
+"""Crafting and smelting recipe tables for essential survival items.
 
-Each recipe maps an output item to its crafting pattern and ingredients.
+Each crafting recipe maps an output item to its crafting pattern and ingredients.
 Patterns use single-char keys mapped to item names.
 
 Slot layout for 3x3 crafting table:
@@ -11,6 +11,8 @@ Slot layout for 3x3 crafting table:
 Slot layout for 2x2 inventory crafting:
   1 2
   3 4
+
+Smelting recipes map output → input item. Require a placed furnace within 4 blocks.
 """
 
 from __future__ import annotations
@@ -314,5 +316,92 @@ def pattern_to_slots(recipe: Recipe) -> dict[int, str]:
                     slot = r * 2 + c + 1  # 1-indexed
                     slots[slot] = recipe.key[ch]
     return slots
+
+
+# ---------------------------------------------------------------------------
+# Smelting recipes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SmeltingRecipe:
+    output: str
+    input: str
+    output_count: int = 1
+
+
+# Inputs that accept any variant with the same suffix (e.g. any _log → charcoal).
+SMELTING_VARIANT_SUFFIXES: dict[str, str] = {
+    "oak_log": "_log",
+}
+
+
+SMELTING_RECIPES: dict[str, SmeltingRecipe] = {
+    # --- Ores ---
+    "iron_ingot": SmeltingRecipe(output="iron_ingot", input="raw_iron"),
+    "gold_ingot": SmeltingRecipe(output="gold_ingot", input="raw_gold"),
+    "copper_ingot": SmeltingRecipe(output="copper_ingot", input="raw_copper"),
+    # --- Blocks ---
+    "glass": SmeltingRecipe(output="glass", input="sand"),
+    "stone": SmeltingRecipe(output="stone", input="cobblestone"),
+    "smooth_stone": SmeltingRecipe(output="smooth_stone", input="stone"),
+    "brick": SmeltingRecipe(output="brick", input="clay_ball"),
+    "nether_brick": SmeltingRecipe(output="nether_brick", input="netherrack"),
+    # --- Charcoal ---
+    "charcoal": SmeltingRecipe(output="charcoal", input="oak_log"),  # any _log variant
+    # --- Food ---
+    "cooked_beef": SmeltingRecipe(output="cooked_beef", input="beef"),
+    "cooked_porkchop": SmeltingRecipe(output="cooked_porkchop", input="porkchop"),
+    "cooked_chicken": SmeltingRecipe(output="cooked_chicken", input="chicken"),
+    "cooked_mutton": SmeltingRecipe(output="cooked_mutton", input="mutton"),
+    "cooked_cod": SmeltingRecipe(output="cooked_cod", input="cod"),
+    "cooked_salmon": SmeltingRecipe(output="cooked_salmon", input="salmon"),
+    "dried_kelp": SmeltingRecipe(output="dried_kelp", input="kelp"),
+}
+
+# Fuel values: how many items one unit of fuel can smelt.
+FUEL_VALUES: dict[str, float] = {
+    "coal": 8,
+    "charcoal": 8,
+    "coal_block": 80,
+    "lava_bucket": 100,
+    "blaze_rod": 12,
+    "stick": 0.5,
+    # Variants handled by suffix matching below
+    "oak_planks": 1.5,
+    "oak_log": 1.5,
+}
+
+# Fuel items that accept any variant with the same suffix.
+FUEL_VARIANT_SUFFIXES: dict[str, str] = {
+    "oak_planks": "_planks",
+    "oak_log": "_log",
+}
+
+
+def _matches_smelting_input(required: str, available: str) -> bool:
+    """Check if an inventory item can satisfy a smelting input."""
+    if required == available:
+        return True
+    suffix = SMELTING_VARIANT_SUFFIXES.get(required)
+    return suffix is not None and available.endswith(suffix)
+
+
+def get_fuel_value(item: str) -> float:
+    """Return how many items one unit of this fuel can smelt, or 0 if not fuel."""
+    item = item.replace("minecraft:", "")
+    if item in FUEL_VALUES:
+        return FUEL_VALUES[item]
+    # Check variant suffixes
+    for canonical, suffix in FUEL_VARIANT_SUFFIXES.items():
+        if item.endswith(suffix) and canonical in FUEL_VALUES:
+            return FUEL_VALUES[canonical]
+    return 0
+
+
+def get_smelting_recipe(item: str) -> SmeltingRecipe | None:
+    """Look up a smelting recipe by output item name."""
+    item = item.replace("minecraft:", "")
+    return SMELTING_RECIPES.get(item)
 
 

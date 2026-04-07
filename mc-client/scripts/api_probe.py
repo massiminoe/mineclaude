@@ -81,7 +81,14 @@ print("\n=== Container / Screen APIs ===")
 
 container_apis = [
     "screen_name",
+    "container_open",
+    "container_close",
     "container_get_items",
+    "container_get_slot",
+    "container_get_info",
+    "container_find_item",
+    "container_click_slot",
+    "container_swap_slots",
     "container_click",
     "close_screen",
     "player_press_inventory",

@@ -202,8 +202,8 @@ async def test_break_and_collect(bridge, prims):
     grass_mid = sum(i["count"] for i in inv_mid if i["name"] == "grass_block")
     assert grass_mid == grass_before
 
-    # Collect picks it up
-    result = await prims["collectItems"](1.5, 64.0, 0.5)
+    # collectItems vacuums up nearby drops (no coordinates needed)
+    result = await prims["collectItems"]()
     assert "Collected" in result
 
     inv_after = await prims["getInventory"]()
@@ -212,10 +212,42 @@ async def test_break_and_collect(bridge, prims):
 
 
 @pytest.mark.asyncio
-async def test_collect_no_items(bridge, prims):
-    """collectItems fails gracefully when no items are nearby."""
-    with pytest.raises(RuntimeError, match="No items"):
-        await prims["collectItems"](100.0, 64.0, 100.0)
+async def test_collect_no_items_is_success(bridge, prims):
+    """collectItems is idempotent — returns success when nothing to pick up."""
+    # No item entities anywhere; should not raise
+    result = await prims["collectItems"]()
+    assert "No items" in result
+
+
+@pytest.mark.asyncio
+async def test_smelt(bridge, prims):
+    bridge._add_to_inventory("raw_iron", 5)
+    bridge._add_to_inventory("coal", 1)
+    bridge._nearby_blocks.append({"name": "furnace", "x": 2, "y": 64, "z": 0, "distance": 2.0})
+    result = await prims["smelt"]("iron_ingot", 5)
+    assert "Smelted" in result
+    assert any(i["name"] == "iron_ingot" and i["count"] == 5 for i in bridge._inventory)
+    assert not any(i["name"] == "raw_iron" for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_smelt_no_furnace(bridge, prims):
+    bridge._add_to_inventory("raw_iron", 5)
+    with pytest.raises(RuntimeError, match="furnace"):
+        await prims["smelt"]("iron_ingot", 5)
+
+
+@pytest.mark.asyncio
+async def test_smelt_unknown_recipe(bridge, prims):
+    with pytest.raises(RuntimeError, match="Unknown smelting recipe"):
+        await prims["smelt"]("diamond", 1)
+
+
+@pytest.mark.asyncio
+async def test_smelt_no_input(bridge, prims):
+    bridge._nearby_blocks.append({"name": "furnace", "x": 2, "y": 64, "z": 0, "distance": 2.0})
+    with pytest.raises(RuntimeError, match="raw_iron"):
+        await prims["smelt"]("iron_ingot", 5)
 
 
 @pytest.mark.asyncio

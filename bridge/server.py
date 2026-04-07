@@ -134,11 +134,11 @@ async def handle_break(request: web.Request) -> web.Response:
 
 async def handle_collect(request: web.Request) -> web.Response:
     body = await request.json()
-    x, y, z = body.get("x", 0), body.get("y", 0), body.get("z", 0)
-    result = await _run(minescript_api.collect_items, x, y, z)
-    if result.get("collected"):
-        return web.json_response(_ok(result, f"Collected items near {x}, {y}, {z}"))
-    return web.json_response(_err(result.get("error", "Failed to collect items")))
+    radius = float(body.get("radius", 3))
+    result = await _run(minescript_api.collect_items, radius)
+    count = result.get("collected", 0)
+    msg = f"Collected {count} item(s)" if count else "No items to collect"
+    return web.json_response(_ok(result, msg))
 
 
 async def handle_attack(request: web.Request) -> web.Response:
@@ -162,6 +162,18 @@ async def handle_craft(request: web.Request) -> web.Response:
     if result.get("crafted", 0) > 0:
         return web.json_response(_ok(result, f"Crafted {count} {item}"))
     return web.json_response(_err(result.get("error", "Failed to craft")))
+
+
+async def handle_smelt(request: web.Request) -> web.Response:
+    body = await request.json()
+    item = body.get("item", "")
+    count = body.get("count", 1)
+    if not item:
+        return web.json_response(_err("Missing 'item' parameter"), status=400)
+    result = await _run(minescript_api.smelt_item, item, count)
+    if result.get("smelted", 0) > 0:
+        return web.json_response(_ok(result, f"Smelted {result['smelted']} {item}"))
+    return web.json_response(_err(result.get("error", "Failed to smelt")))
 
 
 async def handle_equip(request: web.Request) -> web.Response:
@@ -525,6 +537,7 @@ def create_app() -> web.Application:
     app.router.add_post("/collect", handle_collect)
     app.router.add_post("/attack", handle_attack)
     app.router.add_post("/craft", handle_craft)
+    app.router.add_post("/smelt", handle_smelt)
     app.router.add_post("/equip", handle_equip)
     app.router.add_post("/discard", handle_discard)
     app.router.add_post("/chat", handle_chat)

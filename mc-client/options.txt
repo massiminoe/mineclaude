@@ -12,3 +12,4 @@ particles:1
 renderClouds:fast
 entityShadows:true
 biomeBlendRadius:2
+tutorialStep:none

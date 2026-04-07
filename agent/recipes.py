@@ -1,4 +1,4 @@
-"""Crafting recipe table for essential survival items.
+"""Crafting and smelting recipe tables for essential survival items.
 
 Duplicated from bridge/recipes.py because bridge/ runs inside the MC container
 and agent/ is a separate installable package.  Keep both files in sync when
@@ -279,3 +279,45 @@ def get_required_ingredients(item: str, count: int = 1) -> dict[str, int] | None
 
     # Scale by number of crafts
     return {k: v * crafts_needed for k, v in ingredient_counts.items()}
+
+
+# ---------------------------------------------------------------------------
+# Smelting recipes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SmeltingRecipe:
+    output: str
+    input: str
+    output_count: int = 1
+
+
+SMELTING_RECIPES: dict[str, SmeltingRecipe] = {
+    # --- Ores ---
+    "iron_ingot": SmeltingRecipe(output="iron_ingot", input="raw_iron"),
+    "gold_ingot": SmeltingRecipe(output="gold_ingot", input="raw_gold"),
+    "copper_ingot": SmeltingRecipe(output="copper_ingot", input="raw_copper"),
+    # --- Blocks ---
+    "glass": SmeltingRecipe(output="glass", input="sand"),
+    "stone": SmeltingRecipe(output="stone", input="cobblestone"),
+    "smooth_stone": SmeltingRecipe(output="smooth_stone", input="stone"),
+    "brick": SmeltingRecipe(output="brick", input="clay_ball"),
+    "nether_brick": SmeltingRecipe(output="nether_brick", input="netherrack"),
+    # --- Charcoal ---
+    "charcoal": SmeltingRecipe(output="charcoal", input="oak_log"),  # any _log variant
+    # --- Food ---
+    "cooked_beef": SmeltingRecipe(output="cooked_beef", input="beef"),
+    "cooked_porkchop": SmeltingRecipe(output="cooked_porkchop", input="porkchop"),
+    "cooked_chicken": SmeltingRecipe(output="cooked_chicken", input="chicken"),
+    "cooked_mutton": SmeltingRecipe(output="cooked_mutton", input="mutton"),
+    "cooked_cod": SmeltingRecipe(output="cooked_cod", input="cod"),
+    "cooked_salmon": SmeltingRecipe(output="cooked_salmon", input="salmon"),
+    "dried_kelp": SmeltingRecipe(output="dried_kelp", input="kelp"),
+}
+
+
+def get_smelting_recipe(item: str) -> SmeltingRecipe | None:
+    """Look up a smelting recipe by output item name."""
+    item = item.replace("minecraft:", "")
+    return SMELTING_RECIPES.get(item)

@@ -54,7 +54,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `POST /follow` `{player}` — Baritone follow (`#follow player <name>`)
 - `POST /stop` — Baritone stop
 - `POST /chat` `{message}` — send chat via `/tellraw` (avoids signed chat issues)
-- `POST /place`, `/break`, `/craft`, `/equip`, `/discard` — MVP via server commands (`/give`, `/setblock`, etc.)
+- `POST /place`, `/break`, `/craft`, `/smelt`, `/equip`, `/discard` — MVP via server commands and container APIs
 - `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`)
 - `GET /video/stream` — MJPEG video stream of game view
 - `WS /events` — chat event stream
@@ -89,8 +89,8 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - Player-control APIs take `pressed: bool` arg: `player_press_attack(True/False)`, `player_press_use(True/False)`, etc.
 - `player_look_at(x, y, z)` exists — use it instead of manual yaw/pitch math
 - `player_inventory_select_slot(slot)` — selects hotbar slot (NOT `player_select_slot`)
-- `player_inventory_slot_to_hotbar(slot)` — exists but BROKEN on MC 1.21.5 (ServerboundPickItemPacket removed in 1.21.4)
-- `container_click`, `close_screen`, `player_press_inventory`, `open_inventory` — do NOT exist in v5.0b11
+- `player_inventory_slot_to_hotbar(slot)` — exists but BROKEN on MC 1.21.5 (ServerboundPickItemPacket removed in 1.21.4). Workaround: `/item replace` commands (see player_control.py)
+- Container APIs (from custom build with PR #40): `container_open(x,y,z)`, `container_close()`, `container_click_slot(slot,button,shift)`, `container_swap_slots(slot1,slot2)`, `container_get_items()`, `container_get_slot(slot)`, `container_get_info()`, `container_find_item(item_id)`
 - `GET /probe` endpoint — returns JSON of all available Minescript APIs and capabilities
 
 ## Known Workarounds
@@ -103,6 +103,8 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - **discard**: Real (select slot + press_drop). Works if item already in hotbar
 - **equip hand/offhand**: Real (inventory_select_slot / swap_hands). Works if item in hotbar
 - **equip armor**: Fallback only (/item replace) — no container_click API
-- **craft**: Simulated (/clear ingredients + /give output) — validates recipe and ingredients, no container_click/close_screen APIs
-- Items not in hotbar can't be moved there (player_inventory_slot_to_hotbar broken on MC 1.21.5)
+- **craft**: Simulated (/clear ingredients + /give output) — validates recipe and ingredients
+- **smelt**: Real furnace smelting via container APIs + /item replace block — opens furnace, inserts items, polls lit state, extracts output
+- **Hotbar movement**: Uses `/item replace ... from` commands (lossless, preserves NBT/durability) since `player_inventory_slot_to_hotbar` is broken on MC 1.21.5. Prefers empty hotbar slots; if full, uses a temp inventory slot for swap
+- **Custom Minescript build**: JAR built from `massiminoe/minescript@mc1.21.5-containers` (5.0b11 + container APIs from PR #40)
 - The `method` field in response dicts indicates "real" or "fallback" path

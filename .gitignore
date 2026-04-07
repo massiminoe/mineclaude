@@ -16,6 +16,7 @@ frontend/dist/
 
 # Superpowers brainstorm
 .superpowers/
+docs/
 
 # Git worktrees
 .worktrees/

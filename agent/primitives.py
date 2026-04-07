@@ -84,8 +84,8 @@ def make_primitives(
     async def breakBlockAt(x: int, y: int, z: int) -> str:
         return _check(await bridge.break_block(x, y, z))
 
-    async def collectItems(x: float, y: float, z: float) -> str:
-        return _check(await bridge.collect(x, y, z))
+    async def collectItems(radius: float = 3) -> str:
+        return _check(await bridge.collect(radius))
 
     async def attackNearest(mob_type: str) -> str:
         return _check(await bridge.attack(mob_type))
@@ -95,6 +95,9 @@ def make_primitives(
 
     async def craft(item: str, count: int = 1) -> str:
         return _check(await bridge.craft(item, count))
+
+    async def smelt(item: str, count: int = 1) -> str:
+        return _check(await bridge.smelt(item, count))
 
     async def equip(item: str, slot: str = "hand") -> str:
         return _check(await bridge.equip(item, slot))
@@ -155,6 +158,7 @@ def make_primitives(
         "attackNearest": attackNearest,
         "defendSelf": defendSelf,
         "craft": craft,
+        "smelt": smelt,
         "equip": equip,
         "discard": discard,
         "getStats": getStats,

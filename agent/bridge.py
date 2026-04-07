@@ -33,9 +33,10 @@ class BridgeClient(Protocol):
     async def stop(self) -> BridgeResponse: ...
     async def place(self, block: str, x: int, y: int, z: int, face: str = "top") -> BridgeResponse: ...
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
-    async def collect(self, x: float, y: float, z: float) -> BridgeResponse: ...
+    async def collect(self, radius: float = 3) -> BridgeResponse: ...
     async def attack(self, entity_id: str) -> BridgeResponse: ...
     async def craft(self, item: str, count: int = 1) -> BridgeResponse: ...
+    async def smelt(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse: ...
     async def discard(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
@@ -95,14 +96,17 @@ class RealBridgeClient:
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.post("/break", json={"x": x, "y": y, "z": z}))
 
-    async def collect(self, x: float, y: float, z: float) -> BridgeResponse:
-        return self._parse(await self._http.post("/collect", json={"x": x, "y": y, "z": z}))
+    async def collect(self, radius: float = 3) -> BridgeResponse:
+        return self._parse(await self._http.post("/collect", json={"radius": radius}))
 
     async def attack(self, entity_id: str) -> BridgeResponse:
         return self._parse(await self._http.post("/attack", json={"entity_id": entity_id}))
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
         return self._parse(await self._http.post("/craft", json={"item": item, "count": count}))
+
+    async def smelt(self, item: str, count: int = 1) -> BridgeResponse:
+        return self._parse(await self._http.post("/smelt", json={"item": item, "count": count}))
 
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         return self._parse(await self._http.post("/equip", json={"item": item, "slot": slot}))
@@ -232,23 +236,26 @@ class MockBridgeClient:
                 return BridgeResponse("success", f"Broke {b['name']} at {x}, {y}, {z}")
         return BridgeResponse("error", f"No block at {x}, {y}, {z}")
 
-    async def collect(self, x: float, y: float, z: float) -> BridgeResponse:
-        # Find closest item entity near the given position
-        best = None
-        best_dist = float("inf")
+    async def collect(self, radius: float = 3) -> BridgeResponse:
+        # Find all item entities within radius of the player and pick them up
+        px = self._position["x"]
+        py = self._position["y"]
+        pz = self._position["z"]
+        to_collect = []
         for e in self._nearby_entities:
             if e["type"] != "item":
                 continue
-            dist = math.sqrt((e["x"] - x) ** 2 + (e["y"] - y) ** 2 + (e["z"] - z) ** 2)
-            if dist < best_dist:
-                best_dist = dist
-                best = e
-        if best is None:
-            return BridgeResponse("error", "No items found nearby")
-        self._nearby_entities.remove(best)
-        self._add_to_inventory(best["name"], 1)
-        self._position = {"x": best["x"], "y": best["y"], "z": best["z"]}
-        return BridgeResponse("success", f"Collected {best['name']}")
+            dist = math.sqrt((e["x"] - px) ** 2 + (e["y"] - py) ** 2 + (e["z"] - pz) ** 2)
+            if dist <= radius:
+                to_collect.append(e)
+        for e in to_collect:
+            self._nearby_entities.remove(e)
+            self._add_to_inventory(e["name"], 1)
+            # Simulate walking to the item
+            self._position = {"x": e["x"], "y": e["y"], "z": e["z"]}
+        count = len(to_collect)
+        msg = f"Collected {count} item(s)" if count else "No items to collect"
+        return BridgeResponse("success", msg, {"collected": count})
 
     async def attack(self, entity_id: str) -> BridgeResponse:
         for e in self._nearby_entities:
@@ -299,6 +306,24 @@ class MockBridgeClient:
         self._add_to_inventory(item, total_output)
 
         return BridgeResponse("success", f"Crafted {total_output} {item}", {"crafted": total_output, "method": "simulated"})
+
+    async def smelt(self, item: str, count: int = 1) -> BridgeResponse:
+        from agent.recipes import get_smelting_recipe
+        recipe = get_smelting_recipe(item)
+        if recipe is None:
+            return BridgeResponse("error", f"Unknown smelting recipe: {item}", {"smelted": 0})
+        # Check furnace nearby
+        has_furnace = any(
+            b["name"] in ("furnace", "lit_furnace") and b["distance"] <= 4
+            for b in self._nearby_blocks
+        )
+        if not has_furnace:
+            return BridgeResponse("error", "No furnace within 4 blocks.", {"smelted": 0})
+        # Check input
+        if not self._remove_from_inventory(recipe.input, count):
+            return BridgeResponse("error", f"No {recipe.input} in inventory", {"smelted": 0})
+        self._add_to_inventory(item, count)
+        return BridgeResponse("success", f"Smelted {count} {item}", {"smelted": count, "output": item, "method": "real"})
 
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         for entry in self._inventory:
