@@ -23,6 +23,19 @@ export function useSocket() {
   const reconnectTimeout = useRef<number>(0);
   const backoff = useRef(RECONNECT_BASE);
 
+  const fetchState = useCallback(() => {
+    fetch("/api/state")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.conversation) setConversation(data.conversation);
+        if (data.queue) setQueue(data.queue);
+        if (data.game) setGameState(data.game);
+      })
+      .catch(() => {
+        // Agent might not be running yet
+      });
+  }, []);
+
   const connect = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/api/ws`;
@@ -33,6 +46,9 @@ export function useSocket() {
     ws.onopen = () => {
       setConnected(true);
       backoff.current = RECONNECT_BASE;
+      // Re-sync full state on every (re)connect so a stale page recovers
+      // automatically after the agent restarts.
+      fetchState();
     };
 
     ws.onclose = () => {
@@ -53,7 +69,7 @@ export function useSocket() {
         // ignore malformed messages
       }
     };
-  }, []);
+  }, [fetchState]);
 
   const handleMessage = useCallback(
     (type: string, data: Record<string, unknown>) => {
@@ -140,19 +156,8 @@ export function useSocket() {
     []
   );
 
-  // Fetch initial state and connect WebSocket
+  // Connect WebSocket — initial state is fetched in onopen via fetchState()
   useEffect(() => {
-    fetch("/api/state")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.conversation) setConversation(data.conversation);
-        if (data.queue) setQueue(data.queue);
-        if (data.game) setGameState(data.game);
-      })
-      .catch(() => {
-        // Agent might not be running yet
-      });
-
     connect();
 
     return () => {
