@@ -318,6 +318,59 @@ def pattern_to_slots(recipe: Recipe) -> dict[int, str]:
     return slots
 
 
+def pattern_to_table_slots(recipe: Recipe) -> dict[int, str]:
+    """Convert any recipe pattern to crafting-table 3x3 slot indices (1-9).
+
+    Always returns 3x3 numbering, regardless of recipe.needs_table.  2x2 patterns
+    land in the top-left of the 3x3 grid (slots 1, 2, 4, 5).  Vanilla MC's recipe
+    matcher trims empty rows/columns, so any sub-3x3 pattern positioned at the
+    top-left is recognized correctly.
+    """
+    if not recipe.pattern:
+        return {}
+    width = max(len(row) for row in recipe.pattern)
+    height = len(recipe.pattern)
+    if width > 3 or height > 3:
+        raise ValueError(
+            f"Recipe pattern {width}x{height} too large for 3x3 crafting grid"
+        )
+    slots: dict[int, str] = {}
+    for r, row in enumerate(recipe.pattern):
+        for c, ch in enumerate(row):
+            if ch != " " and ch in recipe.key:
+                slot = r * 3 + c + 1  # row-major, 1-indexed (top-left = 1)
+                slots[slot] = recipe.key[ch]
+    return slots
+
+
+def pattern_to_inventory_slots(recipe: Recipe) -> dict[int, str]:
+    """Convert a 2x2 recipe pattern to player-inventory crafter slot indices (1-4).
+
+    Used for crafting via the player inventory screen (no crafting table needed).
+    Raises ValueError for recipes that require a 3x3 grid.
+    """
+    if recipe.needs_table:
+        raise ValueError(
+            f"Recipe {recipe.output} needs a 3x3 crafting table, "
+            f"cannot fit in 2x2 inventory crafter"
+        )
+    if not recipe.pattern:
+        return {}
+    width = max(len(row) for row in recipe.pattern)
+    height = len(recipe.pattern)
+    if width > 2 or height > 2:
+        raise ValueError(
+            f"Recipe pattern {width}x{height} too large for 2x2 inventory crafter"
+        )
+    slots: dict[int, str] = {}
+    for r, row in enumerate(recipe.pattern):
+        for c, ch in enumerate(row):
+            if ch != " " and ch in recipe.key:
+                slot = r * 2 + c + 1  # row-major, 1-indexed (top-left = 1)
+                slots[slot] = recipe.key[ch]
+    return slots
+
+
 # ---------------------------------------------------------------------------
 # Smelting recipes
 # ---------------------------------------------------------------------------

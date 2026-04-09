@@ -21,6 +21,8 @@ import time
 
 import minescript
 
+from bridge.minescript_api import _ms
+
 logger = logging.getLogger("bridge")
 
 
@@ -28,13 +30,13 @@ def look_at_block(x: int, y: int, z: int) -> None:
     """Look at block center. Uses player_look_at if available, else manual math."""
     try:
         # player_look_at takes (x, y, z) world coordinates
-        minescript.player_look_at(x + 0.5, y + 0.5, z + 0.5)
+        _ms(minescript.player_look_at, x + 0.5, y + 0.5, z + 0.5)
         return
     except (AttributeError, TypeError):
         pass
 
     # Fallback: manual yaw/pitch calculation
-    pos = minescript.player_position()
+    pos = _ms(minescript.player_position)
     px, py, pz = pos[0], pos[1] + 1.62, pos[2]  # eye height
 
     dx = (x + 0.5) - px
@@ -44,18 +46,18 @@ def look_at_block(x: int, y: int, z: int) -> None:
 
     yaw = -math.degrees(math.atan2(dx, dz))
     pitch = -math.degrees(math.atan2(dy, dist_xz))
-    minescript.player_set_orientation(yaw, pitch)
+    _ms(minescript.player_set_orientation, yaw, pitch)
 
 
 def look_at_position(x: float, y: float, z: float) -> None:
     """Look at an arbitrary world position."""
     try:
-        minescript.player_look_at(x, y, z)
+        _ms(minescript.player_look_at, x, y, z)
         return
     except (AttributeError, TypeError):
         pass
 
-    pos = minescript.player_position()
+    pos = _ms(minescript.player_position)
     px, py, pz = pos[0], pos[1] + 1.62, pos[2]
 
     dx = x - px
@@ -65,13 +67,13 @@ def look_at_position(x: float, y: float, z: float) -> None:
 
     yaw = -math.degrees(math.atan2(dx, dz))
     pitch = -math.degrees(math.atan2(dy, dist_xz))
-    minescript.player_set_orientation(yaw, pitch)
+    _ms(minescript.player_set_orientation, yaw, pitch)
 
 
 def look_at_entity(entity_name: str) -> bool:
     """Find entity by name and look at it. Returns True if found."""
     try:
-        ents = minescript.entities()
+        ents = _ms(minescript.entities)
     except (AttributeError, TypeError):
         return False
 
@@ -95,7 +97,7 @@ def find_item_slot(item_name: str) -> int | None:
     - 40: offhand
     """
     try:
-        inv = minescript.player_inventory()
+        inv = _ms(minescript.player_inventory)
     except (AttributeError, TypeError):
         return None
 
@@ -115,7 +117,7 @@ def find_item_slot(item_name: str) -> int | None:
 def find_item_in_hotbar(item_name: str) -> int | None:
     """Find an item specifically in the hotbar (slots 0-8). Returns hotbar slot or None."""
     try:
-        inv = minescript.player_inventory()
+        inv = _ms(minescript.player_inventory)
     except (AttributeError, TypeError):
         return None
 
@@ -146,7 +148,7 @@ def _slot_to_item_name(mc_slot: int) -> str:
 def _find_empty_hotbar_slot() -> int | None:
     """Find an empty hotbar slot (0-8). Returns slot number or None."""
     try:
-        inv = minescript.player_inventory()
+        inv = _ms(minescript.player_inventory)
     except (AttributeError, TypeError):
         return None
 
@@ -167,7 +169,7 @@ def _find_empty_hotbar_slot() -> int | None:
 def _find_empty_inventory_slot() -> int | None:
     """Find any empty slot in main inventory (9-35). Returns slot number or None."""
     try:
-        inv = minescript.player_inventory()
+        inv = _ms(minescript.player_inventory)
     except (AttributeError, TypeError):
         return None
 
@@ -199,7 +201,7 @@ def move_item_to_hotbar(inv_slot: int, hotbar_slot: int = 0) -> bool:
     """
     if 0 <= inv_slot <= 8:
         # Already in hotbar
-        minescript.player_inventory_select_slot(inv_slot)
+        _ms(minescript.player_inventory_select_slot, inv_slot)
         return True
 
     if inv_slot < 9 or inv_slot > 35:
@@ -224,14 +226,14 @@ def move_item_to_hotbar(inv_slot: int, hotbar_slot: int = 0) -> bool:
                 return False
             temp_name = _slot_to_item_name(temp)
             # Save hotbar item to temp (copy preserves NBT)
-            minescript.execute(f"/item replace entity @s {temp_name} from entity @s {dst}")
+            _ms(minescript.execute, f"/item replace entity @s {temp_name} from entity @s {dst}")
 
         # Copy source item to hotbar
-        minescript.execute(f"/item replace entity @s {dst} from entity @s {src}")
+        _ms(minescript.execute, f"/item replace entity @s {dst} from entity @s {src}")
         # Clear source (from copies, doesn't move)
-        minescript.execute(f"/item replace entity @s {src} with minecraft:air")
+        _ms(minescript.execute, f"/item replace entity @s {src} with minecraft:air")
         time.sleep(0.05)
-        minescript.player_inventory_select_slot(hotbar_slot)
+        _ms(minescript.player_inventory_select_slot, hotbar_slot)
         return True
     except Exception as e:
         logger.warning(f"move_item_to_hotbar failed: {e}")
@@ -243,7 +245,7 @@ def select_item_in_hotbar(item_name: str) -> bool:
     # Check hotbar first
     hotbar_slot = find_item_in_hotbar(item_name)
     if hotbar_slot is not None:
-        minescript.player_inventory_select_slot(hotbar_slot)
+        _ms(minescript.player_inventory_select_slot, hotbar_slot)
         return True
 
     # Check full inventory
@@ -253,7 +255,7 @@ def select_item_in_hotbar(item_name: str) -> bool:
 
     # Move to hotbar slot 0 and select
     if move_item_to_hotbar(slot, 0):
-        minescript.player_inventory_select_slot(0)
+        _ms(minescript.player_inventory_select_slot, 0)
         return True
     return False
 
@@ -261,14 +263,14 @@ def select_item_in_hotbar(item_name: str) -> bool:
 def wait_for_block_change(x: int, y: int, z: int, timeout: float = 10.0) -> str | None:
     """Poll getblock() until value changes. Returns new block or None on timeout."""
     try:
-        original = minescript.getblock(x, y, z)
+        original = _ms(minescript.getblock, x, y, z)
     except Exception:
         return None
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            current = minescript.getblock(x, y, z)
+            current = _ms(minescript.getblock, x, y, z)
             if current != original:
                 return current
         except Exception:
@@ -279,7 +281,7 @@ def wait_for_block_change(x: int, y: int, z: int, timeout: float = 10.0) -> str 
 
 def is_within_reach(x: float, y: float, z: float, reach: float = 4.5) -> bool:
     """Check if coordinates are within player's reach distance."""
-    pos = minescript.player_position()
+    pos = _ms(minescript.player_position)
     px, py, pz = pos[0], pos[1], pos[2]
     dist = math.sqrt((x - px) ** 2 + (y - py) ** 2 + (z - pz) ** 2)
     return dist <= reach
@@ -287,7 +289,7 @@ def is_within_reach(x: float, y: float, z: float, reach: float = 4.5) -> bool:
 
 def get_player_distance(x: float, y: float, z: float) -> float:
     """Euclidean distance from player to coordinates."""
-    pos = minescript.player_position()
+    pos = _ms(minescript.player_position)
     px, py, pz = pos[0], pos[1], pos[2]
     return math.sqrt((x - px) ** 2 + (y - py) ** 2 + (z - pz) ** 2)
 
@@ -297,17 +299,17 @@ def navigate_near(x: float, y: float, z: float, reach: float = 3.5) -> bool:
     if is_within_reach(x, y, z, reach):
         return True
 
-    minescript.chat(f"#goto {int(x)} {int(y)} {int(z)}")
+    _ms(minescript.chat, f"#goto {int(x)} {int(y)} {int(z)}")
 
     # Wait for arrival with timeout
     deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
         time.sleep(0.5)
         if is_within_reach(x, y, z, reach):
-            minescript.chat("#stop")
+            _ms(minescript.chat, "#stop")
             time.sleep(0.2)
             return True
-    minescript.chat("#stop")
+    _ms(minescript.chat, "#stop")
     return False
 
 
@@ -317,7 +319,7 @@ def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
 
     def _scan_items(verbose: bool = False) -> list[tuple[float, float, float]]:
         try:
-            entities = minescript.entities(max_distance=float(radius))
+            entities = _ms(minescript.entities, max_distance=float(radius))
         except Exception as e:
             logger.warning(f"collect: minescript.entities() raised {type(e).__name__}: {e}")
             return []
@@ -367,7 +369,7 @@ def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
             break
 
         # Pick closest to player
-        pos = minescript.player_position()
+        pos = _ms(minescript.player_position)
         px, py, pz = pos[0], pos[1], pos[2]
         items.sort(key=lambda p: (p[0] - px) ** 2 + (p[1] - py) ** 2 + (p[2] - pz) ** 2)
         target = items[0]
@@ -385,13 +387,13 @@ def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
             walk_budget = min(3.0, overall_deadline - time.monotonic())
             if walk_budget <= 0:
                 break
-            minescript.chat(f"#goto {int(target[0])} {int(target[1])} {int(target[2])}")
+            _ms(minescript.chat, f"#goto {int(target[0])} {int(target[1])} {int(target[2])}")
             deadline = time.monotonic() + walk_budget
             while time.monotonic() < deadline:
                 time.sleep(0.25)
                 if is_within_reach(target[0], target[1], target[2], 1.5):
                     break
-            minescript.chat("#stop")
+            _ms(minescript.chat, "#stop")
             time.sleep(0.3)
 
         # Re-scan: anything we collected reduces the count
@@ -424,7 +426,7 @@ def find_adjacent_solid_block(x: int, y: int, z: int) -> tuple[int, int, int, st
     for (dx, dy, dz), face in neighbors:
         ax, ay, az = x + dx, y + dy, z + dz
         try:
-            block = minescript.getblock(ax, ay, az)
+            block = _ms(minescript.getblock, ax, ay, az)
             if block and "air" not in block:
                 return (ax, ay, az, face)
         except Exception:

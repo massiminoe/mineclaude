@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -19,6 +20,7 @@ from aiohttp import web
 import re
 
 from bridge import minescript_api, baritone, screenshot as screenshot_mod
+from bridge.minescript_api import _ms, _ms_lock
 
 logger = logging.getLogger("bridge")
 _log_handler = logging.FileHandler("/tmp/bridge.log")
@@ -26,7 +28,10 @@ _log_handler.setFormatter(logging.Formatter("[bridge] %(asctime)s %(message)s"))
 logger.addHandler(_log_handler)
 logger.setLevel(logging.INFO)
 
-_executor = ThreadPoolExecutor(max_workers=2)
+# Single worker — every minescript.* call goes through _ms_lock anyway, so
+# adding a second thread only increases contention and load on Minescript's
+# stdin channel (which races under sustained pressure).
+_executor = ThreadPoolExecutor(max_workers=1)
 _ws_clients: set[web.WebSocketResponse] = set()
 
 
@@ -200,9 +205,52 @@ async def handle_discard(request: web.Request) -> web.Response:
     return web.json_response(_err(result.get("error", "Failed to discard")))
 
 
+def _dump_open_menu_slots() -> dict:
+    """Dump container_get_info + every reported slot of the currently-open menu."""
+    import minescript
+    out: dict = {}
+    try:
+        out["screen_name"] = minescript.screen_name()
+    except Exception as e:
+        out["screen_name_error"] = str(e)
+    try:
+        info = minescript.container_get_info()
+        # ContainerInfo is a dataclass — extract its fields generically
+        info_dict: dict = {}
+        for attr in ("type", "title", "size", "rows", "cols"):
+            if hasattr(info, attr):
+                info_dict[attr] = getattr(info, attr)
+        out["container_info"] = info_dict or repr(info)
+    except Exception as e:
+        out["container_info_error"] = str(e)
+    try:
+        items = minescript.container_get_items()
+        slot_map: list[dict] = []
+        for ci in items:
+            slot = getattr(ci, "slot", None)
+            name = getattr(ci, "item", None)
+            count = getattr(ci, "count", None)
+            slot_map.append({"slot": slot, "item": name, "count": count})
+        out["slots"] = slot_map
+        out["slot_count"] = len(slot_map)
+    except Exception as e:
+        out["slots_error"] = str(e)
+    return out
+
+
 async def handle_probe(request: web.Request) -> web.Response:
-    """Run API probe and return results — tests which minescript APIs exist."""
+    """Run API probe and return results — tests which minescript APIs exist.
+
+    Optional query params for one-shot menu inspection (used to verify slot
+    layouts before relying on them in real-crafting code):
+
+      ?inventory=1            — open the player inventory screen and dump slots
+      ?craftingtable=x,y,z    — container_open() the table at those coords and dump
+    """
     import inspect
+
+    inv_probe = request.query.get("inventory", "").lower() in ("1", "true", "yes")
+    table_probe_raw = request.query.get("craftingtable", "")
 
     def _probe():
         import minescript
@@ -252,19 +300,19 @@ async def handle_probe(request: web.Request) -> web.Response:
 
         # Safe read-only tests
         try:
-            yaw, pitch = minescript.player_orientation()
+            yaw, pitch = _ms(minescript.player_orientation)
             results["tests"]["player_orientation()"] = f"ok: yaw={yaw:.1f}, pitch={pitch:.1f}"
         except Exception as e:
             results["tests"]["player_orientation()"] = str(e)
 
         try:
-            result = minescript.player_look_at(0.0, 64.0, 0.0)
+            result = _ms(minescript.player_look_at, 0.0, 64.0, 0.0)
             results["tests"]["player_look_at(0,64,0)"] = f"ok: {result}"
         except Exception as e:
             results["tests"]["player_look_at(0,64,0)"] = str(e)
 
         try:
-            minescript.player_inventory_select_slot(0)
+            _ms(minescript.player_inventory_select_slot, 0)
             results["tests"]["player_inventory_select_slot(0)"] = "ok"
         except Exception as e:
             results["tests"]["player_inventory_select_slot(0)"] = str(e)
@@ -279,6 +327,67 @@ async def handle_probe(request: web.Request) -> web.Response:
             "equip_item": ct.get("container_click", {}).get("exists"),
             "discard_item": pc.get("player_press_drop", {}).get("exists") and pc.get("player_select_slot", {}).get("exists"),
         }
+
+        # Optional: dump player inventory screen slot layout
+        if inv_probe:
+            inv_dump: dict = {}
+            opened_via = None
+            try:
+                if hasattr(minescript, "player_press_inventory"):
+                    minescript.player_press_inventory()
+                    opened_via = "player_press_inventory"
+                elif hasattr(minescript, "open_inventory"):
+                    minescript.open_inventory()
+                    opened_via = "open_inventory"
+                elif hasattr(minescript, "press_key_bind"):
+                    # Try the keybinding by name — MC's mapping is "key.inventory"
+                    try:
+                        minescript.press_key_bind("key.inventory", True)
+                        time.sleep(0.05)
+                        minescript.press_key_bind("key.inventory", False)
+                        opened_via = "press_key_bind('key.inventory')"
+                    except Exception as e:
+                        inv_dump["press_key_bind_error"] = str(e)
+                else:
+                    inv_dump["error"] = "no player_press_inventory, open_inventory, or press_key_bind API"
+            except Exception as e:
+                inv_dump["open_error"] = str(e)
+            inv_dump["opened_via"] = opened_via
+            time.sleep(0.5)
+            if "error" not in inv_dump:
+                inv_dump.update(_dump_open_menu_slots())
+                try:
+                    if hasattr(minescript, "close_screen"):
+                        minescript.close_screen()
+                    elif hasattr(minescript, "container_close"):
+                        minescript.container_close()
+                except Exception as e:
+                    inv_dump["close_error"] = str(e)
+            results["inventory_screen_probe"] = inv_dump
+
+        # Optional: dump crafting table slot layout
+        if table_probe_raw:
+            table_dump: dict = {"target": table_probe_raw}
+            try:
+                parts = [int(p.strip()) for p in table_probe_raw.split(",")]
+                if len(parts) != 3:
+                    raise ValueError("expected x,y,z")
+                tx, ty, tz = parts
+                table_dump["coords"] = {"x": tx, "y": ty, "z": tz}
+                try:
+                    minescript.container_open(tx, ty, tz)
+                except Exception as e:
+                    table_dump["open_error"] = str(e)
+                time.sleep(0.3)
+                if "open_error" not in table_dump:
+                    table_dump.update(_dump_open_menu_slots())
+                    try:
+                        minescript.container_close()
+                    except Exception as e:
+                        table_dump["close_error"] = str(e)
+            except Exception as e:
+                table_dump["parse_error"] = str(e)
+            results["crafting_table_probe"] = table_dump
 
         return results
 
@@ -411,7 +520,7 @@ async def death_monitor(app: web.Application) -> None:
 
     while True:
         try:
-            health = await loop.run_in_executor(_executor, minescript.player_health)
+            health = await loop.run_in_executor(_executor, _ms, minescript.player_health)
             is_dead = health <= 0
 
             if is_dead and not was_dead:
@@ -457,8 +566,9 @@ async def chat_event_poller(app: web.Application) -> None:
             pass  # timeout — no events
         return events
 
-    eq = minescript.EventQueue()
-    eq.register_chat_listener()
+    with _ms_lock:
+        eq = minescript.EventQueue()
+        eq.register_chat_listener()
     logger.info("Chat event listener registered")
 
     try:
@@ -494,8 +604,9 @@ async def chat_event_poller(app: web.Application) -> None:
     finally:
         # Unregister listeners on shutdown
         try:
-            for lid in eq.event_listener_ids:
-                minescript.unregister_event_listener(lid)
+            with _ms_lock:
+                for lid in eq.event_listener_ids:
+                    minescript.unregister_event_listener(lid)
         except Exception:
             pass
 
