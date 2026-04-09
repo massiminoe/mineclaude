@@ -164,8 +164,29 @@ async def handle_craft(request: web.Request) -> web.Response:
     if not item:
         return web.json_response(_err("Missing 'item' parameter"), status=400)
     result = await _run(minescript_api.craft_item, item, count)
-    if result.get("crafted", 0) > 0:
-        return web.json_response(_ok(result, f"Crafted {count} {item}"))
+    crafted = result.get("crafted", 0)
+    if crafted > 0:
+        # Report actual production (not requested count) so the agent can self-correct
+        # when its mental model of `count` was wrong. Include crafts run and ingredients
+        # consumed for clarity.
+        from bridge.recipes import get_recipe, get_required_ingredients
+        clean_item = item.replace("minecraft:", "")
+        recipe = get_recipe(clean_item)
+        msg = f"Crafted {crafted} {clean_item}"
+        if recipe is not None:
+            crafts_run = crafted // recipe.output_count
+            ingredients = get_required_ingredients(clean_item, crafted) or {}
+            used_str = ", ".join(f"{n} {ing}" for ing, n in ingredients.items())
+            detail_parts = []
+            if crafts_run > 1:
+                detail_parts.append(f"{crafts_run} crafts")
+            if used_str:
+                detail_parts.append(f"used {used_str}")
+            if detail_parts:
+                msg += f" ({', '.join(detail_parts)})"
+        if crafted < count:
+            msg += f" — wanted {count} but ran out of ingredients"
+        return web.json_response(_ok(result, msg))
     return web.json_response(_err(result.get("error", "Failed to craft")))
 
 
@@ -512,13 +533,22 @@ async def broadcast_event(event: dict) -> None:
 
 
 async def death_monitor(app: web.Application) -> None:
-    """Background task: detect player death (health <= 0) and broadcast events."""
+    """Background task: detect player death (health <= 0) and broadcast events.
+
+    Only polls while a WS client is connected — no listener means no reason
+    to burn an RPC. Polls at 5s to keep background RPC pressure low; each
+    poll contributes to the Minescript mod's stdout writer load, which has
+    a race we can trigger under sustained traffic.
+    """
     import minescript
 
     loop = asyncio.get_event_loop()
     was_dead = False
 
     while True:
+        if not _ws_clients:
+            await asyncio.sleep(5)
+            continue
         try:
             health = await loop.run_in_executor(_executor, _ms, minescript.player_health)
             is_dead = health <= 0
@@ -540,7 +570,7 @@ async def death_monitor(app: web.Application) -> None:
         except Exception as e:
             logger.debug(f"Death monitor error: {e}")
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(5)
 
 
 async def chat_event_poller(app: web.Application) -> None:

@@ -40,7 +40,7 @@ All primitives are async — use `await` for each call.
 - `await defendSelf()` — attack nearest hostile mob
 
 ### Inventory
-- `await craft(item, count=1)` — craft items if you have the ingredients (e.g. 'oak_planks' needs 'oak_log'). 3x3 recipes (tools, armor, furnace) require a crafting table within 4 blocks
+- `await craft(item, count=1)` — craft `count` of the OUTPUT item (NOT iterations or input count). E.g. `craft('spruce_planks', count=8)` makes 8 planks and consumes 2 spruce_log (1 log → 4 planks). Returns the actual amount produced — read it; it may differ from what you asked. 3x3 recipes (tools, armor, furnace) require a crafting table within 4 blocks
 - `await smelt(item, count=1)` — smelt items in a nearby furnace (e.g. 'raw_iron' → iron_ingot, 'sand' → glass). Requires a placed furnace within 4 blocks and fuel (coal, logs, planks) in inventory. Auto-selects fuel and waits for completion
 - `await equip(item, slot='hand')` — equip item to hand or armor slot
 - `await discard(item, count=1)` — drop items
