@@ -32,6 +32,26 @@ def _ms(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
 
+# MC runs at 20 TPS = 50 ms per tick. Inventory operations (key.inventory
+# toggles, container_click_slot, container_swap_slots, container_close) are
+# event-based: MC processes the event on its next tick. Sleeping for whole-tick
+# multiples between operations gives MC time to settle, prevents back-to-back
+# events from being coalesced, and makes the agent's actions visibly human in
+# the game window.
+MC_TICK_MS = 50
+
+
+def _tick_sleep(ticks: int = 1) -> None:
+    """Sleep for `ticks` MC game ticks (50 ms each).
+
+    Use after any inventory operation so MC has time to process the event
+    before the next call lands. Centralized so the cadence is tunable in one
+    place — adjusting MC_TICK_MS or the per-call tick count changes pacing
+    everywhere.
+    """
+    time.sleep(MC_TICK_MS * ticks / 1000.0)
+
+
 # ---------------------------------------------------------------------------
 # Read-only queries (unchanged)
 # ---------------------------------------------------------------------------
@@ -370,6 +390,9 @@ def _discard_real(item: str, count: int) -> dict:
     if not _has_api("player_press_drop", "player_inventory_select_slot"):
         raise AttributeError("Required APIs missing")
 
+    # Defensively close any lingering GUI — press_drop is captured by Screens.
+    _ensure_no_screen_open()
+
     # Find item and move to hotbar
     if not _select_item(item):
         return {"discarded": 0, "error": f"No {item} in inventory", "method": "real"}
@@ -378,9 +401,9 @@ def _discard_real(item: str, count: int) -> dict:
     dropped = 0
     for _ in range(count):
         _ms(minescript.player_press_drop, True)
-        time.sleep(0.05)
+        _tick_sleep(1)
         _ms(minescript.player_press_drop, False)
-        time.sleep(0.05)
+        _tick_sleep(1)
         dropped += 1
 
     # Verify by checking inventory
@@ -431,9 +454,9 @@ def _equip_real(item: str, slot: str) -> dict:
         if not _select_item(item):
             return {"equipped": False, "error": f"No {item} in inventory", "method": "real"}
         _ms(minescript.player_press_swap_hands, True)
-        time.sleep(0.05)
+        _tick_sleep(1)
         _ms(minescript.player_press_swap_hands, False)
-        time.sleep(0.1)
+        _tick_sleep(2)
         logger.info(f"equip: equipped {item} to offhand (real)")
         return {"equipped": True, "method": "real"}
 
@@ -457,7 +480,7 @@ def _equip_armor_real(item: str, slot: str) -> dict:
     open_err = _open_player_inventory_screen()
     if open_err is not None:
         return {"equipped": False, "error": open_err, "method": "real"}
-    time.sleep(0.3)
+    # _open_player_inventory_screen already settled 2 ticks; no extra sleep needed.
 
     try:
         # Locate the armor item in the player inventory portion of the menu
@@ -481,7 +504,7 @@ def _equip_armor_real(item: str, slot: str) -> dict:
             _ms(minescript.container_swap_slots, source_slot, target_slot)
         except Exception as e:
             return {"equipped": False, "error": f"swap_slots failed: {e}", "method": "real"}
-        time.sleep(0.1)
+        _tick_sleep(2)  # let MC process the swap before verifying
 
         # Verify
         try:
@@ -542,6 +565,9 @@ def break_block(x: int, y: int, z: int) -> dict:
 def _break_real(x: int, y: int, z: int) -> dict:
     if not _has_api("player_set_orientation", "player_press_attack"):
         raise AttributeError("Required APIs missing")
+
+    # Defensively close any lingering GUI — press_attack is captured by Screens.
+    _ensure_no_screen_open()
 
     # Check what's there. getblock can briefly lag chunk updates after a
     # neighboring block was just broken (observed: breaking a tree's y=68 log
@@ -653,6 +679,10 @@ def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
     if not _has_api("player_set_orientation", "player_press_use", "player_inventory_select_slot"):
         raise AttributeError("Required APIs missing")
 
+    # Defensively close any lingering GUI — input is captured by Screens
+    # and press_use would silently no-op against the world.
+    _ensure_no_screen_open()
+
     # Check if target position is air
     try:
         current = _ms(minescript.getblock, x, y, z)
@@ -689,18 +719,26 @@ def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
     _ms(minescript.player_press_use, False)
     time.sleep(0.15)
 
-    # Verify placement
+    # Verify placement. Three distinct outcomes:
+    #   - getblock raises → unknown, return tolerant True
+    #   - getblock returns the placed block → confirmed True
+    #   - getblock returns "air" → press_use definitively did nothing → False
     try:
         placed_block = _ms(minescript.getblock, x, y, z)
-        if placed_block and "air" not in placed_block:
-            logger.info(f"place: placed {block} at {x},{y},{z} (real)")
-            return {"placed": True, "method": "real"}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.info(f"place: placed {block} at {x},{y},{z} (real, verify errored: {e})")
+        return {"placed": True, "method": "real"}
 
-    # Placement might have succeeded even if verify failed
-    logger.info(f"place: placed {block} at {x},{y},{z} (real, unverified)")
-    return {"placed": True, "method": "real"}
+    if placed_block and "air" not in placed_block:
+        logger.info(f"place: placed {block} at {x},{y},{z} (real)")
+        return {"placed": True, "method": "real"}
+
+    logger.warning(f"place: press_use did not place {block} at {x},{y},{z} (still air)")
+    return {
+        "placed": False,
+        "error": "press_use did not place block (target still air); is a GUI open?",
+        "method": "real",
+    }
 
 
 def _place_fallback(block: str, x: int, y: int, z: int) -> dict:
@@ -730,6 +768,9 @@ def attack_entity(entity_id: str) -> dict:
 def _attack_real(entity_id: str) -> dict:
     if not _has_api("player_set_orientation", "player_press_attack"):
         raise AttributeError("Required APIs missing")
+
+    # Defensively close any lingering GUI — press_attack is captured by Screens.
+    _ensure_no_screen_open()
 
     # Find the entity
     try:
@@ -909,7 +950,7 @@ def _craft_via_table(recipe, crafts_needed: int, grid_slots: dict[int, str]) -> 
         _ms(minescript.container_open, tx, ty, tz)
     except Exception as e:
         return {"crafted": 0, "error": f"Failed to open crafting table: {e}", "method": "real"}
-    time.sleep(0.3)
+    _tick_sleep(2)  # let the crafting table screen settle before clicking
 
     try:
         crafted, err = _perform_crafts_in_open_menu(
@@ -922,6 +963,7 @@ def _craft_via_table(recipe, crafts_needed: int, grid_slots: dict[int, str]) -> 
         _cleanup_grid_into_inventory(list(grid_slots.keys()))
         try:
             _ms(minescript.container_close)
+            _tick_sleep(2)
         except Exception:
             pass
 
@@ -938,13 +980,32 @@ def _craft_via_table(recipe, crafts_needed: int, grid_slots: dict[int, str]) -> 
     return result
 
 
-def _open_player_inventory_screen() -> str | None:
-    """Open the player inventory screen.  Returns None on success, error string on failure.
+def _is_any_screen_open() -> bool:
+    """Return True if a Screen/container menu is currently open in MC.
 
-    The Minescript fork in use exposes neither `player_press_inventory` nor
-    `open_inventory`, but `press_key_bind('key.inventory', pressed)` works to
-    toggle the player inventory menu (verified via /probe?inventory=1).
+    Used to verify open/close operations actually took effect. Falls back
+    through the available APIs:
+      1. screen_name() — returns "" or None when no screen is open
+      2. container_get_info() — raises or returns None when no menu is open
+    Returns False if neither API is available (caller assumes closed).
     """
+    if _has_api("screen_name"):
+        try:
+            name = _ms(minescript.screen_name)
+            return bool(name)
+        except Exception:
+            pass
+    if _has_api("container_get_info"):
+        try:
+            info = _ms(minescript.container_get_info)
+            return info is not None
+        except Exception:
+            return False
+    return False
+
+
+def _try_open_once() -> str | None:
+    """Single best-effort attempt at opening the player inventory screen."""
     if _has_api("player_press_inventory"):
         try:
             _ms(minescript.player_press_inventory)
@@ -960,7 +1021,7 @@ def _open_player_inventory_screen() -> str | None:
     if _has_api("press_key_bind"):
         try:
             _ms(minescript.press_key_bind, "key.inventory", True)
-            time.sleep(0.05)
+            _tick_sleep(1)
             _ms(minescript.press_key_bind, "key.inventory", False)
             return None
         except Exception as e:
@@ -968,27 +1029,84 @@ def _open_player_inventory_screen() -> str | None:
     return "no API available to open player inventory screen"
 
 
-def _close_player_inventory_screen() -> None:
-    """Close the player inventory screen.  Best-effort, swallows errors."""
+def _open_player_inventory_screen() -> str | None:
+    """Open the player inventory screen, verify it's open, retry once if not.
+
+    Returns None on success, error string on failure. The Minescript fork in
+    use exposes neither `player_press_inventory` nor `open_inventory` — only
+    `press_key_bind('key.inventory', pressed)` works (verified via
+    /probe?inventory=1). All paths are tick-paced so MC has time to process
+    the event before the next container_* call lands.
+    """
+    for attempt in range(2):
+        err = _try_open_once()
+        if err and attempt == 0:
+            logger.warning(f"open: first attempt errored, will retry: {err}")
+            _tick_sleep(2)
+            continue
+        if err:
+            return err
+        _tick_sleep(2)  # let MC settle before any container_* call
+        if _is_any_screen_open():
+            return None
+        logger.warning(f"open: inventory screen not open after attempt {attempt + 1}, retrying")
+    return "player inventory screen failed to open after retries"
+
+
+def _try_close_once() -> None:
+    """Single best-effort attempt at closing whatever screen is currently open.
+
+    DO NOT use `press_key_bind("key.inventory")` here. MC's `Minecraft.tick()`
+    only calls `handleKeybinds()` when `screen == null`, so global keybind
+    events are NOT processed while any screen is open — the click sits in
+    `KeyMapping`'s click queue forever (or worse: gets consumed after we
+    successfully close via another path, immediately re-opening the inventory).
+
+    Priority: close_screen (vanilla, may not exist) → container_close (works
+    via `LocalPlayer.closeContainer()` regardless of screen state).
+    """
     try:
         if _has_api("close_screen"):
             _ms(minescript.close_screen)
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"close: close_screen failed: {e}")
     try:
-        # Toggling key.inventory closes it as well
-        if _has_api("press_key_bind"):
-            _ms(minescript.press_key_bind, "key.inventory", True)
-            time.sleep(0.05)
-            _ms(minescript.press_key_bind, "key.inventory", False)
+        if _has_api("container_close"):
+            _ms(minescript.container_close)
             return
-    except Exception:
-        pass
-    try:
-        _ms(minescript.container_close)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"close: container_close failed: {e}")
+    logger.warning("close: no working close API available (need close_screen or container_close)")
+
+
+def _close_player_inventory_screen() -> None:
+    """Close the player inventory screen, verify, retry once if still open.
+
+    Failures are logged at warning/error level (not silently swallowed) so
+    races are diagnosable in /tmp/bridge.log. Always returns — finally-block
+    callers depend on this not raising.
+    """
+    for attempt in range(2):
+        _try_close_once()
+        _tick_sleep(2)  # let MC process the toggle and screen close
+        if not _is_any_screen_open():
+            return
+        logger.warning(f"close: screen still open after attempt {attempt + 1}, retrying")
+    logger.error("close: failed to close player inventory screen after retries")
+
+
+def _ensure_no_screen_open() -> None:
+    """Defensively close any lingering screen before a world-interaction primitive.
+
+    No-op in the common case (no screen open). When a stuck prior operation
+    left a GUI active, this self-heals and logs a warning so the underlying
+    race stays diagnosable. Called from `_place_real`, `_break_real`,
+    `_attack_real`, and `_discard_real`.
+    """
+    if _is_any_screen_open():
+        logger.warning("ensure_no_screen: found a lingering open screen, closing defensively")
+        _close_player_inventory_screen()
 
 
 def _craft_via_inventory(recipe, crafts_needed: int, grid_slots: dict[int, str]) -> dict:
@@ -996,7 +1114,7 @@ def _craft_via_inventory(recipe, crafts_needed: int, grid_slots: dict[int, str])
     open_err = _open_player_inventory_screen()
     if open_err is not None:
         return {"crafted": 0, "error": open_err, "method": "real"}
-    time.sleep(0.3)
+    # _open_player_inventory_screen already settled 2 ticks; no extra sleep needed.
 
     try:
         crafted, err = _perform_crafts_in_open_menu(
@@ -1084,13 +1202,13 @@ def _perform_crafts_in_open_menu(
             try:
                 # 1. left-click source: pick up entire stack to cursor
                 _ms(minescript.container_click_slot, inv_slot, 0, False)
-                time.sleep(0.05)
+                _tick_sleep(1)
                 # 2. right-click grid slot: drop 1 from cursor
                 _ms(minescript.container_click_slot, grid_slot, 1, False)
-                time.sleep(0.05)
+                _tick_sleep(1)
                 # 3. left-click source: drop cursor stack back (re-stacks since same item)
                 _ms(minescript.container_click_slot, inv_slot, 0, False)
-                time.sleep(0.05)
+                _tick_sleep(1)
             except Exception as e:
                 return crafts_completed, f"Click failed placing {ingredient}: {e}"
             inv_pool[inv_slot][1] -= 1  # one item now lives in the grid
@@ -1120,7 +1238,7 @@ def _perform_crafts_in_open_menu(
             _ms(minescript.container_click_slot, 0, 0, True)  # shift-click extract
         except Exception as e:
             return crafts_completed, f"Failed to shift-click output: {e}"
-        time.sleep(0.1)
+        _tick_sleep(2)  # output extraction is the most consequential click — give it 2 ticks
         after = _get_inventory_counts().get(recipe.output, 0)
         delta = after - before
         if delta < recipe.output_count:
@@ -1146,7 +1264,7 @@ def _cleanup_grid_into_inventory(grid_slots: list[int]) -> None:
         for slot in grid_slots:
             try:
                 _ms(minescript.container_click_slot, slot, 0, True)  # shift-click
-                time.sleep(0.05)
+                _tick_sleep(1)
             except Exception:
                 pass
     except Exception:

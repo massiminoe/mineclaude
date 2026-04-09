@@ -55,6 +55,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `POST /stop` — Baritone stop
 - `POST /chat` `{message}` — send chat via `/tellraw` (avoids signed chat issues)
 - `POST /place`, `/break`, `/craft`, `/smelt`, `/equip`, `/discard` — MVP via server commands and container APIs
+- `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius of player
 - `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`)
 - `GET /video/stream` — MJPEG video stream of game view
 - `WS /events` — chat event stream
@@ -79,7 +80,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 ## Minescript v5.0 API Notes
 
 - `minescript.player()` returns `EntityData` dataclass, NOT a tuple — use `player_position()` for `[x, y, z]`
-- `minescript.entities()` returns `List[EntityData]` — access `.position`, `.name`, `.type`, `.health`
+- `minescript.entities()` returns `List[EntityData]` — access `.position`, `.name`, `.type`, `.health`. **`ent.type` format is `"entity.minecraft.zombie"`** (with dots) NOT `"minecraft:zombie"` (with colon). Use `_clean_entity_type()` in `minescript_api.py` to strip — `.replace("minecraft:", "")` is a no-op
 - `minescript.player_inventory()` returns `List[ItemStack]` — access `.item`, `.count`, `.slot`
 - `minescript.world_info()` returns `WorldInfo` dataclass — use `.day_ticks`, `.raining`, etc.
 - `minescript.player_biome()` does NOT exist in v5.0
@@ -99,11 +100,13 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - **Emojis**: MC can't render them — stripped to ASCII before sending, prompt tells Claude not to use them
 - **Bot opping**: `OPS` env var unreliable with offline-mode. RCON ops both bot and player in entrypoint after connection
 - **Bridge logging**: Must NOT use Python `logging` to stdout (Minescript routes it to MC chat → feedback loop). Logs to `/tmp/bridge.log`
-- **break/place/attack**: Real player actions (look_at + press_attack/press_use). Verified working in-game
+- **break/place/attack**: Real player actions (look_at + press_attack/press_use). Verified working in-game. Break does NOT auto-collect drops — agent must call `collectItems()` after. **place** verifies via `getblock` after `press_use`: confirmed-placed → success, verify-errored → tolerant success, still-air → honest `{"placed": False, "error": "...is a GUI open?"}`. **All world-interaction primitives** (`_place_real`, `_break_real`, `_attack_real`, `_discard_real`) call `_ensure_no_screen_open()` defensively at the top — input is captured by Screens, so any lingering inventory GUI would silently no-op the action
+- **collect (item pickup)**: MC requires walking within ~1 block of dropped item entities. `collect_nearby_items(radius)` in `player_control.py` scans `minescript.entities()` for `entity.minecraft.item` types within radius of player, walks to each via Baritone `#goto`. Idempotent — returns 0 (success) when nothing nearby. 18s overall time budget, max 4 iterations
 - **discard**: Real (select slot + press_drop). Works if item already in hotbar
 - **equip hand/offhand**: Real (inventory_select_slot / swap_hands). Works if item in hotbar
-- **equip armor**: Fallback only (/item replace) — no container_click API
-- **craft**: Simulated (/clear ingredients + /give output) — validates recipe and ingredients
+- **equip armor**: Real — opens player inventory screen via `press_key_bind('key.inventory', True/False)` (the fork lacks `player_press_inventory`), finds armor in inventory portion (slots 9-44 of `InventoryMenu`), uses `container_swap_slots(source, armor_slot)` to move it. Armor slot indices in `InventoryMenu`: head=5, chest=6, legs=7, feet=8. Fallback `/item replace entity @s armor.{slot}` retained as defensive backstop. Verified end-to-end with iron_helmet
+- **craft**: Real — opens a crafting menu via container APIs and clicks ingredients into the grid. 3x3 recipes use a nearby `crafting_table` block via `container_open(x,y,z)`. 2x2 recipes use the player's built-in 2x2 crafter via `press_key_bind('key.inventory')` (the fork lacks `player_press_inventory`/`open_inventory`). Click model per ingredient: **left-click source** to pick up entire stack, **right-click grid slot** to drop 1 from cursor, **left-click source** to drop cursor stack back (re-stacks since same item) — leaves cursor empty between placements so the same source can feed multiple grid slots. Shift-click slot 0 to extract output. Cleanup phase shift-clicks any leftover grid items back to inventory before closing (otherwise MC drops them as entities). Slot layouts: `CraftingMenu` (table) reports `player_slots=36, container_slots=10` with player inv at slots 10-45; `InventoryMenu` (E key) reports `player_slots=41, container_slots=5` with armor at 5-8, player inv at 9-44, offhand at 45. Both screens have title `"Crafting"` — distinguish by container_id/slot count if needed. **Both open and close are verified** via `_is_any_screen_open()` (uses `screen_name()` then `container_get_info()`) with one retry on failure — close failures previously left the inventory open which then silently no-op'd subsequent world actions. **All inventory clicks are paced to whole game ticks** via `_tick_sleep(n)` (`MC_TICK_MS = 50`) — gives MC time to process each event between calls and makes the agent's actions visibly human in the game window
+- **press_key_bind**: This Minescript fork's substitute for the missing `player_press_inventory`/`open_inventory` APIs. `press_key_bind("key.inventory", True/False)` works to **OPEN** the player inventory (when no screen is active) but does NOT work to close it. Reason: MC's `Minecraft.tick()` only calls `handleKeybinds()` when `screen == null`, so global keybind events are queued but never processed while a screen is open. Worse — the queued click would be consumed by the next `handleKeybinds()` call after a successful close via another path, **immediately re-opening the inventory**. So `_try_close_once()` deliberately avoids `press_key_bind` and uses `container_close` instead (which calls `LocalPlayer.closeContainer()` regardless of screen state). Tick-paced: 1 tick between keydown and keyup, 2 ticks settle after release
 - **smelt**: Real furnace smelting via container APIs + /item replace block — opens furnace, inserts items, polls lit state, extracts output
 - **Hotbar movement**: Uses `/item replace ... from` commands (lossless, preserves NBT/durability) since `player_inventory_slot_to_hotbar` is broken on MC 1.21.5. Prefers empty hotbar slots; if full, uses a temp inventory slot for swap
 - **Custom Minescript build**: JAR built from `massiminoe/minescript@mc1.21.5-containers` (5.0b11 + container APIs from PR #40)
