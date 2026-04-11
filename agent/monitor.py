@@ -11,6 +11,8 @@ from typing import Any
 
 from aiohttp import web
 
+from agent.plan import read_plan
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,6 +31,7 @@ class MonitorServer:
         self._app.router.add_get("/api/conversation", self._handle_conversation)
         self._app.router.add_get("/api/queue", self._handle_queue)
         self._app.router.add_get("/api/game", self._handle_game)
+        self._app.router.add_get("/api/plan", self._handle_plan)
         self._app.router.add_get("/api/ws", self._handle_ws)
         # Static files (production build) — added last so API routes take priority
         dist = Path(__file__).parent.parent / "frontend" / "dist"
@@ -41,6 +44,7 @@ class MonitorServer:
 
     def _register_hooks(self) -> None:
         self.agent.on("conversation:update", self._on_conversation_update)
+        self.agent.on("plan:update", self._on_plan_update)
         self.agent.queue.on("action:enqueued", self._on_action_event)
         self.agent.queue.on("action:started", self._on_action_event)
         self.agent.queue.on("action:completed", self._on_action_event)
@@ -64,6 +68,7 @@ class MonitorServer:
             "conversation": self.agent.messages,
             "queue": self.agent.queue.status(),
             "game": game,
+            "plan": read_plan(),
             "video_url": f"{bridge_url}/video/stream?fps=10&quality=50" if bridge_url else None,
         })
 
@@ -76,6 +81,9 @@ class MonitorServer:
     async def _handle_game(self, request: web.Request) -> web.Response:
         game = await self._get_game_state()
         return web.json_response(game)
+
+    async def _handle_plan(self, request: web.Request) -> web.Response:
+        return web.json_response({"plan": read_plan()})
 
     async def _handle_index(self, request: web.Request) -> web.FileResponse:
         dist = Path(__file__).parent.parent / "frontend" / "dist"
@@ -121,6 +129,9 @@ class MonitorServer:
 
     async def _on_conversation_update(self, event: str, messages: Any) -> None:
         await self._broadcast("conversation:update", {"messages": messages})
+
+    async def _on_plan_update(self, event: str, plan: Any) -> None:
+        await self._broadcast("plan:update", {"plan": plan if isinstance(plan, str) else ""})
 
     async def _on_action_event(self, event: str, action: Any, *_extra: Any) -> None:
         await self._broadcast(event.replace(":", "_"), {

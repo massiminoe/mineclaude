@@ -298,6 +298,7 @@ class Agent:
             elif name == "writePlan":
                 content = input_data.get("content", "")
                 lines = write_plan(content)
+                await self._emit("plan:update", content)
                 if lines == 0:
                     return "plan cleared"
                 return f"plan saved ({lines} lines)"

@@ -106,18 +106,41 @@ def get_player_status() -> dict:
 def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> list[dict]:
     """Scan blocks in a sphere around the player. Skip air.
 
-    Block names are stripped of the minecraft: namespace and state suffixes
-    (e.g. "minecraft:oak_log[axis=y]" -> "oak_log") so consumers can match
-    by base block name.
-
-    If block_types is provided, only blocks matching those names are returned.
+    Thin wrapper around scan_blocks_chunked that looks up the player's
+    current position. Used as a fallback path when WorldCache is empty and
+    directly by tests. Most production reads should go through WorldCache.
 
     Results are sorted by distance, closest first.
     """
     radius = min(radius, 32)
     pos = _ms(minescript.player_position)
     px, py, pz = int(pos[0]), int(pos[1]), int(pos[2])
-    blocks = []
+    return scan_blocks_chunked(px, py, pz, radius, block_types)
+
+
+def scan_blocks_chunked(
+    px: int,
+    py: int,
+    pz: int,
+    radius: int,
+    block_types: list[str] | None = None,
+) -> list[dict]:
+    """Scan blocks in a sphere around (px, py, pz). Skip air.
+
+    Block names are stripped of the minecraft: namespace and state suffixes
+    (e.g. "minecraft:oak_log[axis=y]" -> "oak_log") so consumers can match
+    by base block name.
+
+    If block_types is provided, only blocks matching those names are returned.
+
+    Uses chunked bulk loads via get_block_region with _tick_sleep pacing
+    between chunks to reduce RPC pipe pressure. Paces and lock-releases
+    allow command threads to interleave between chunks via _ms_lock.
+
+    Results are sorted by distance, closest first.
+    """
+    radius = min(radius, 32)
+    blocks: list[dict] = []
     radius_sq = radius * radius
     type_set = set(block_types) if block_types else None
 
@@ -152,6 +175,7 @@ def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> 
         if not hasattr(minescript, "get_block_region"):
             raise AttributeError("get_block_region missing")
 
+        scan_start = time.monotonic()
         for ox in range(-radius, radius + 1, CHUNK_SIDE):
             for oy in range(-radius, radius + 1, CHUNK_SIDE):
                 for oz in range(-radius, radius + 1, CHUNK_SIDE):
@@ -184,6 +208,11 @@ def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> 
                                         "x": bx, "y": by, "z": bz,
                                         "distance": round(math.sqrt(dist_sq), 1),
                                     })
+                    # Yield briefly between chunk RPCs to reduce pipe pressure
+                    # and let command threads interleave via _ms_lock.
+                    _tick_sleep(1)
+        scan_duration = time.monotonic() - scan_start
+        logger.info(f"scan: {len(blocks)} blocks in {scan_duration:.1f}s (radius={radius})")
         blocks.sort(key=lambda b: b["distance"])
         _verify_scan_blocks(blocks)
         return blocks
@@ -219,12 +248,11 @@ def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> 
 
 def _verify_scan_blocks(blocks: list[dict]) -> None:
     """Diagnostic: re-query each reported block via getblock and log any
-    mismatches. TEMPORARILY FORCED ON to investigate the phantom-log bug.
-    Doubles the RPC count per scan — revert the forced-on behavior once
-    root cause is understood.
+    mismatches. Gated behind BRIDGE_VERIFY_SCAN=1 env var — doubles the
+    RPC count per scan so only enable when debugging phantom blocks.
     """
-    # if os.environ.get("BRIDGE_VERIFY_SCAN") != "1":
-    #     return
+    if os.environ.get("BRIDGE_VERIFY_SCAN") != "1":
+        return
     mismatches = 0
     checked = 0
     for b in blocks:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +23,7 @@ import re
 from bridge import minescript_api, baritone, screenshot as screenshot_mod
 from bridge.minescript_api import _ms, _ms_lock
 from bridge.recipes import get_recipe, get_required_ingredients
+from bridge.world_cache import WorldCache
 
 logger = logging.getLogger("bridge")
 _log_handler = logging.FileHandler("/tmp/bridge.log")
@@ -34,6 +36,10 @@ logger.setLevel(logging.INFO)
 # stdin channel (which races under sustained pressure).
 _executor = ThreadPoolExecutor(max_workers=1)
 _ws_clients: set[web.WebSocketResponse] = set()
+
+# Background world state cache — populated by its own scanner thread, read
+# by GET handlers. See bridge/world_cache.py for the accuracy model.
+_world_cache: WorldCache = WorldCache()
 
 
 def _ok(data: dict | list | None = None, message: str = "ok") -> dict:
@@ -55,7 +61,11 @@ async def _run(fn, *args):
 # ---------------------------------------------------------------------------
 
 async def handle_status(request: web.Request) -> web.Response:
-    data = await _run(minescript_api.get_player_status)
+    # Fast path: cache (updated every 2s by scanner thread)
+    data = _world_cache.query_status()
+    if data is None:
+        # Cold start: scanner hasn't populated yet. Do a one-shot live read.
+        data = await _run(minescript_api.get_player_status)
     return web.json_response(_ok(data, "Status retrieved"))
 
 
@@ -63,13 +73,21 @@ async def handle_nearby_blocks(request: web.Request) -> web.Response:
     radius = int(request.query.get("r", 8))
     types_raw = request.query.get("types", "")
     block_types = [t.strip() for t in types_raw.split(",") if t.strip()] or None
-    blocks = await _run(minescript_api.get_nearby_blocks, radius, block_types)
+    # Fast path: cache (pure dict filter, no RPC)
+    blocks = _world_cache.query_blocks(radius, block_types)
+    if blocks is None:
+        # Cold start: scanner hasn't populated yet. Do a one-shot live scan.
+        blocks = await _run(minescript_api.get_nearby_blocks, radius, block_types)
     return web.json_response(_ok({"blocks": blocks}, f"Found {len(blocks)} blocks"))
 
 
 async def handle_nearby_entities(request: web.Request) -> web.Response:
     radius = int(request.query.get("r", 32))
-    entities = await _run(minescript_api.get_nearby_entities, radius)
+    # Fast path: cache (updated every 2s by scanner thread)
+    entities = _world_cache.query_entities(radius)
+    if entities is None:
+        # Cold start: scanner hasn't populated yet. Do a one-shot live read.
+        entities = await _run(minescript_api.get_nearby_entities, radius)
     return web.json_response(_ok({"entities": entities}, f"Found {len(entities)} entities"))
 
 
@@ -125,6 +143,8 @@ async def handle_place(request: web.Request) -> web.Response:
         return web.json_response(_err("Missing 'block' parameter"), status=400)
     result = await _run(minescript_api.place_block, block, x, y, z, face)
     if result.get("placed"):
+        # Write-through: update cache immediately so subsequent queries see the placement
+        _world_cache.on_block_placed(block, int(x), int(y), int(z))
         return web.json_response(_ok(result, f"Placed {block} at {x}, {y}, {z}"))
     return web.json_response(_err(result.get("error", "Failed to place block")))
 
@@ -134,6 +154,8 @@ async def handle_break(request: web.Request) -> web.Response:
     x, y, z = body.get("x", 0), body.get("y", 0), body.get("z", 0)
     result = await _run(minescript_api.break_block, x, y, z)
     if result.get("broken"):
+        # Write-through: remove from cache immediately so next query doesn't resurrect it
+        _world_cache.on_block_broken(int(x), int(y), int(z))
         return web.json_response(_ok(result, f"Broke block at {x}, {y}, {z}"))
     return web.json_response(_err(result.get("error", "Failed to break block")))
 
@@ -542,14 +564,10 @@ async def broadcast_event(event: dict) -> None:
 async def death_monitor(app: web.Application) -> None:
     """Background task: detect player death (health <= 0) and broadcast events.
 
-    Only polls while a WS client is connected — no listener means no reason
-    to burn an RPC. Polls at 5s to keep background RPC pressure low; each
-    poll contributes to the Minescript mod's stdout writer load, which has
-    a race we can trigger under sustained traffic.
+    Reads health from the WorldCache (updated every 2s by the scanner thread)
+    instead of polling via _executor. This eliminates the death monitor's
+    RPC load entirely — no more _ms calls on _executor every 5s.
     """
-    import minescript
-
-    loop = asyncio.get_event_loop()
     was_dead = False
 
     while True:
@@ -557,7 +575,11 @@ async def death_monitor(app: web.Application) -> None:
             await asyncio.sleep(5)
             continue
         try:
-            health = await loop.run_in_executor(_executor, _ms, minescript.player_health)
+            health = _world_cache.get_health()
+            if health is None:
+                # Cache not populated yet — skip this cycle
+                await asyncio.sleep(5)
+                continue
             is_dead = health <= 0
 
             if is_dead and not was_dead:
@@ -581,60 +603,65 @@ async def death_monitor(app: web.Application) -> None:
 
 
 async def chat_event_poller(app: web.Application) -> None:
-    """Background task: listen for Minescript chat events and broadcast to WS clients."""
+    """Background task: listen for Minescript chat events and broadcast to WS clients.
+
+    Chat events come from a Python queue.Queue (no Minescript RPC needed), so
+    polling runs on a dedicated daemon thread instead of _executor.  This keeps
+    the executor free for actual minescript.* RPC calls during heavy scans.
+    """
     import minescript
 
     loop = asyncio.get_event_loop()
+    chat_q: asyncio.Queue = asyncio.Queue()
 
-    def _poll_chat_queue(eq):
-        """Blocking call — runs in executor. Returns a batch of ChatEvents."""
-        events = []
-        try:
-            # Block up to 0.25s for the first event
-            event = eq.queue.get(timeout=0.25)
-            events.append(event)
-            # Drain any additional queued events without blocking
-            while not eq.queue.empty():
-                try:
-                    events.append(eq.queue.get_nowait())
-                except Exception:
-                    break
-        except Exception:
-            pass  # timeout — no events
-        return events
+    def _poll_loop(eq):
+        """Blocking loop on a dedicated thread. Pushes events into the async queue."""
+        while True:
+            try:
+                event = eq.queue.get(timeout=0.25)
+                loop.call_soon_threadsafe(chat_q.put_nowait, event)
+                while not eq.queue.empty():
+                    try:
+                        loop.call_soon_threadsafe(chat_q.put_nowait, eq.queue.get_nowait())
+                    except Exception:
+                        break
+            except Exception:
+                pass  # timeout — no events
 
     with _ms_lock:
         eq = minescript.EventQueue()
         eq.register_chat_listener()
     logger.info("Chat event listener registered")
 
+    thread = threading.Thread(target=_poll_loop, args=(eq,), daemon=True)
+    thread.start()
+
     try:
         while True:
             try:
-                events = await loop.run_in_executor(_executor, _poll_chat_queue, eq)
-                for ev in events:
-                    if isinstance(ev, dict):
-                        raw = ev.get("message", str(ev))
-                    elif hasattr(ev, "message"):
-                        raw = ev.message
-                    else:
-                        raw = str(ev)
-                    # Strip ANSI escape codes and MC formatting codes (§x)
-                    msg = re.sub(r"\x1b\[[0-9;]*m|§.", "", raw).strip()
-                    logger.debug(f"Chat event: {msg!r}")
-                    # Match player chat: optional prefixes like [Not Secure], then <Player> msg
-                    m = re.search(r"<(\w+)>\s*(.*)", msg)
-                    if not m:
-                        continue
-                    username = m.group(1)
-                    text = m.group(2).strip()
-                    # Skip messages starting with / (commands that leaked through)
-                    if text.startswith("/"):
-                        continue
-                    await broadcast_event({
-                        "type": "chat",
-                        "data": {"username": username, "message": text},
-                    })
+                ev = await chat_q.get()
+                if isinstance(ev, dict):
+                    raw = ev.get("message", str(ev))
+                elif hasattr(ev, "message"):
+                    raw = ev.message
+                else:
+                    raw = str(ev)
+                # Strip ANSI escape codes and MC formatting codes (§x)
+                msg = re.sub(r"\x1b\[[0-9;]*m|§.", "", raw).strip()
+                logger.debug(f"Chat event: {msg!r}")
+                # Match player chat: optional prefixes like [Not Secure], then <Player> msg
+                m = re.search(r"<(\w+)>\s*(.*)", msg)
+                if not m:
+                    continue
+                username = m.group(1)
+                text = m.group(2).strip()
+                # Skip messages starting with / (commands that leaked through)
+                if text.startswith("/"):
+                    continue
+                await broadcast_event({
+                    "type": "chat",
+                    "data": {"username": username, "message": text},
+                })
             except Exception as e:
                 logger.error(f"Chat poller error: {e}")
                 await asyncio.sleep(1)
@@ -649,6 +676,7 @@ async def chat_event_poller(app: web.Application) -> None:
 
 
 async def start_background_tasks(app: web.Application) -> None:
+    _world_cache.start()
     app["chat_poller"] = asyncio.create_task(chat_event_poller(app))
     app["death_monitor"] = asyncio.create_task(death_monitor(app))
 
