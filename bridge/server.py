@@ -21,6 +21,7 @@ import re
 
 from bridge import minescript_api, baritone, screenshot as screenshot_mod
 from bridge.minescript_api import _ms, _ms_lock
+from bridge.recipes import get_recipe, get_required_ingredients
 
 logger = logging.getLogger("bridge")
 _log_handler = logging.FileHandler("/tmp/bridge.log")
@@ -157,6 +158,32 @@ async def handle_attack(request: web.Request) -> web.Response:
     return web.json_response(_err(result.get("error", "Failed to attack")))
 
 
+def _format_craft_message(item: str, requested: int, crafted: int) -> str:
+    """Build the agent-facing success message for /craft.
+
+    Reports actual production (not the requested count) so the agent can
+    self-correct when its mental model of `count` was wrong, and lists crafts
+    run + ingredients consumed when known.
+    """
+    clean_item = item.replace("minecraft:", "")
+    msg = f"Crafted {crafted} {clean_item}"
+    recipe = get_recipe(clean_item)
+    if recipe is not None:
+        crafts_run = crafted // recipe.output_count
+        ingredients = get_required_ingredients(clean_item, crafted) or {}
+        used_str = ", ".join(f"{n} {ing}" for ing, n in ingredients.items())
+        detail_parts = []
+        if crafts_run > 1:
+            detail_parts.append(f"{crafts_run} crafts")
+        if used_str:
+            detail_parts.append(f"used {used_str}")
+        if detail_parts:
+            msg += f" ({', '.join(detail_parts)})"
+    if crafted < requested:
+        msg += f" — wanted {requested} but ran out of ingredients"
+    return msg
+
+
 async def handle_craft(request: web.Request) -> web.Response:
     body = await request.json()
     item = body.get("item", "")
@@ -166,27 +193,7 @@ async def handle_craft(request: web.Request) -> web.Response:
     result = await _run(minescript_api.craft_item, item, count)
     crafted = result.get("crafted", 0)
     if crafted > 0:
-        # Report actual production (not requested count) so the agent can self-correct
-        # when its mental model of `count` was wrong. Include crafts run and ingredients
-        # consumed for clarity.
-        from bridge.recipes import get_recipe, get_required_ingredients
-        clean_item = item.replace("minecraft:", "")
-        recipe = get_recipe(clean_item)
-        msg = f"Crafted {crafted} {clean_item}"
-        if recipe is not None:
-            crafts_run = crafted // recipe.output_count
-            ingredients = get_required_ingredients(clean_item, crafted) or {}
-            used_str = ", ".join(f"{n} {ing}" for ing, n in ingredients.items())
-            detail_parts = []
-            if crafts_run > 1:
-                detail_parts.append(f"{crafts_run} crafts")
-            if used_str:
-                detail_parts.append(f"used {used_str}")
-            if detail_parts:
-                msg += f" ({', '.join(detail_parts)})"
-        if crafted < count:
-            msg += f" — wanted {count} but ran out of ingredients"
-        return web.json_response(_ok(result, msg))
+        return web.json_response(_ok(result, _format_craft_message(item, count, crafted)))
     return web.json_response(_err(result.get("error", "Failed to craft")))
 
 

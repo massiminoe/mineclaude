@@ -83,6 +83,29 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Take a screenshot of your current first-person view. Returns the image for visual analysis. Use when you need to see what's around you, verify a build, check terrain, or when text-based block data isn't sufficient.",
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "writePlan",
+        "description": (
+            "Replace the contents of ./state/plan.md with the given content. "
+            "Use this for multi-step goals to track your approach across turns. "
+            "The plan is re-read from disk and injected into your context each turn "
+            "inside <plan_document> tags. This tool does not edit in place — emit "
+            "the full new file content each time. Pass an empty string to clear the plan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "Full new content of plan.md. Markdown recommended, no schema "
+                        "enforced. Empty string clears the plan."
+                    ),
+                }
+            },
+            "required": ["content"],
+        },
+    },
 ]
 
 

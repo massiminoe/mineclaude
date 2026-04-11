@@ -11,6 +11,7 @@ from agent.action_queue import ActionQueue
 from agent.bridge import BridgeClient
 from agent.claude import ClaudeClient
 from agent.primitives import make_primitives
+from agent.plan import read_plan, write_plan
 from agent.prompt import build_system_prompt, format_game_state
 from agent.sandbox import SandboxError, execute
 
@@ -149,6 +150,9 @@ class Agent:
                 }
             ],
         })
+
+        # Inject synthetic plan tool_use/tool_result pair (fresh from disk each turn)
+        self._inject_plan()
 
         await self._emit("conversation:update", self.messages)
 
@@ -291,6 +295,13 @@ class Agent:
                 await self.bridge.stop()
                 return "Stopped all actions and movement"
 
+            elif name == "writePlan":
+                content = input_data.get("content", "")
+                lines = write_plan(content)
+                if lines == 0:
+                    return "plan cleared"
+                return f"plan saved ({lines} lines)"
+
             elif name == "screenshot":
                 resp = await self.bridge.screenshot()
                 if resp.status != "success":
@@ -349,6 +360,39 @@ class Agent:
                 split_at = CHAT_MAX_LEN
             await self.bridge.chat(text[:split_at])
             text = text[split_at:].lstrip()
+
+    def _inject_plan(self) -> None:
+        """Inject the current plan document as a synthetic tool_use/tool_result pair.
+
+        Re-reads ./state/plan.md fresh from disk each call so the agent always
+        sees the latest plan (including any edits made by a previous writePlan
+        call, or by the user directly on disk).
+        """
+        plan_text = read_plan()
+        body = plan_text if plan_text else "(no active plan)"
+        wrapped = f"<plan_document>\n{body}\n</plan_document>"
+
+        self.messages.append({
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "plan_auto",
+                    "name": "plan",
+                    "input": {},
+                }
+            ],
+        })
+        self.messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "plan_auto",
+                    "content": wrapped,
+                }
+            ],
+        })
 
     def _trim_history(self, max_messages: int = 50) -> None:
         """Keep conversation history bounded."""

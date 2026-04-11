@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import threading
 import time
 
@@ -120,6 +121,27 @@ def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> 
     radius_sq = radius * radius
     type_set = set(block_types) if block_types else None
 
+    # Wait for chunks in the horizontal scan area to fully load before
+    # querying. Without this, get_block_region can return phantom data for
+    # partially-loaded chunks (observed: scan reports a log at a position
+    # that getblock a moment later says is air, right after container
+    # restart while chunks are still syncing).
+    if hasattr(minescript, "await_loaded_region"):
+        try:
+            _ms(
+                minescript.await_loaded_region,
+                px - radius, pz - radius,
+                px + radius, pz + radius,
+            )
+            logger.info(
+                f"scan: await_loaded_region({px - radius},{pz - radius}"
+                f",{px + radius},{pz + radius}) ok, player=({px},{py},{pz})"
+            )
+        except Exception as e:
+            logger.warning(f"scan: await_loaded_region failed: {type(e).__name__}: {e}")
+    else:
+        logger.warning("scan: minescript.await_loaded_region NOT AVAILABLE")
+
     # Chunked bulk loads via get_block_region. A single large region (e.g.
     # radius=32 → 274k blocks) produces multi-MB JSON on Minescript's stdin
     # pipe, which occasionally drops a byte mid-stream and crashes the mod's
@@ -163,6 +185,7 @@ def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> 
                                         "distance": round(math.sqrt(dist_sq), 1),
                                     })
         blocks.sort(key=lambda b: b["distance"])
+        _verify_scan_blocks(blocks)
         return blocks
     except (AttributeError, TypeError):
         pass
@@ -190,7 +213,34 @@ def get_nearby_blocks(radius: int = 8, block_types: list[str] | None = None) -> 
                     continue
 
     blocks.sort(key=lambda b: b["distance"])
+    _verify_scan_blocks(blocks)
     return blocks
+
+
+def _verify_scan_blocks(blocks: list[dict]) -> None:
+    """Diagnostic: re-query each reported block via getblock and log any
+    mismatches. TEMPORARILY FORCED ON to investigate the phantom-log bug.
+    Doubles the RPC count per scan — revert the forced-on behavior once
+    root cause is understood.
+    """
+    # if os.environ.get("BRIDGE_VERIFY_SCAN") != "1":
+    #     return
+    mismatches = 0
+    checked = 0
+    for b in blocks:
+        try:
+            live = _ms(minescript.getblock, b["x"], b["y"], b["z"])
+        except Exception as e:
+            logger.warning(f"scan-verify getblock error at ({b['x']},{b['y']},{b['z']}): {e}")
+            continue
+        checked += 1
+        if not live or "air" in live:
+            mismatches += 1
+            logger.warning(
+                f"scan-verify MISMATCH: reported {b['name']} at "
+                f"({b['x']},{b['y']},{b['z']}) but getblock says {live!r}"
+            )
+    logger.info(f"scan-verify: checked {checked} blocks, {mismatches} mismatches")
 
 
 def _clean_entity_type(raw) -> str:
@@ -390,7 +440,6 @@ def _discard_real(item: str, count: int) -> dict:
     if not _has_api("player_press_drop", "player_inventory_select_slot"):
         raise AttributeError("Required APIs missing")
 
-    # Defensively close any lingering GUI — press_drop is captured by Screens.
     _ensure_no_screen_open()
 
     # Find item and move to hotbar
@@ -480,8 +529,6 @@ def _equip_armor_real(item: str, slot: str) -> dict:
     open_err = _open_player_inventory_screen()
     if open_err is not None:
         return {"equipped": False, "error": open_err, "method": "real"}
-    # _open_player_inventory_screen already settled 2 ticks; no extra sleep needed.
-
     try:
         # Locate the armor item in the player inventory portion of the menu
         items = _ms(minescript.container_get_items)
@@ -522,7 +569,7 @@ def _equip_armor_real(item: str, slot: str) -> dict:
         logger.info(f"equip: equipped {item} to {slot} via armor slot {target_slot} (real)")
         return {"equipped": True, "item": item, "slot": slot, "method": "real"}
     finally:
-        _close_player_inventory_screen()
+        _close_open_screen()
 
 
 def _equip_fallback(item: str, slot: str) -> dict:
@@ -566,7 +613,6 @@ def _break_real(x: int, y: int, z: int) -> dict:
     if not _has_api("player_set_orientation", "player_press_attack"):
         raise AttributeError("Required APIs missing")
 
-    # Defensively close any lingering GUI — press_attack is captured by Screens.
     _ensure_no_screen_open()
 
     # Check what's there. getblock can briefly lag chunk updates after a
@@ -679,8 +725,6 @@ def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
     if not _has_api("player_set_orientation", "player_press_use", "player_inventory_select_slot"):
         raise AttributeError("Required APIs missing")
 
-    # Defensively close any lingering GUI — input is captured by Screens
-    # and press_use would silently no-op against the world.
     _ensure_no_screen_open()
 
     # Check if target position is air
@@ -769,7 +813,6 @@ def _attack_real(entity_id: str) -> dict:
     if not _has_api("player_set_orientation", "player_press_attack"):
         raise AttributeError("Required APIs missing")
 
-    # Defensively close any lingering GUI — press_attack is captured by Screens.
     _ensure_no_screen_open()
 
     # Find the entity
@@ -961,11 +1004,7 @@ def _craft_via_table(recipe, crafts_needed: int, grid_slots: dict[int, str]) -> 
         )
     finally:
         _cleanup_grid_into_inventory(list(grid_slots.keys()))
-        try:
-            _ms(minescript.container_close)
-            _tick_sleep(2)
-        except Exception:
-            pass
+        _close_open_screen()
 
     total_output = crafted * recipe.output_count
     if crafted == 0 and err:
@@ -1080,12 +1119,14 @@ def _try_close_once() -> None:
     logger.warning("close: no working close API available (need close_screen or container_close)")
 
 
-def _close_player_inventory_screen() -> None:
-    """Close the player inventory screen, verify, retry once if still open.
+def _close_open_screen() -> None:
+    """Close any open container menu (player inventory, crafting table, furnace…),
+    verify, retry once if still open.
 
-    Failures are logged at warning/error level (not silently swallowed) so
-    races are diagnosable in /tmp/bridge.log. Always returns — finally-block
-    callers depend on this not raising.
+    Works for any AbstractContainerMenu since `container_close` ultimately
+    calls `LocalPlayer.closeContainer()`. Failures are logged at warning/error
+    level (not silently swallowed) so races are diagnosable in /tmp/bridge.log.
+    Always returns — finally-block callers depend on this not raising.
     """
     for attempt in range(2):
         _try_close_once()
@@ -1093,7 +1134,7 @@ def _close_player_inventory_screen() -> None:
         if not _is_any_screen_open():
             return
         logger.warning(f"close: screen still open after attempt {attempt + 1}, retrying")
-    logger.error("close: failed to close player inventory screen after retries")
+    logger.error("close: failed to close screen after retries")
 
 
 def _ensure_no_screen_open() -> None:
@@ -1106,7 +1147,7 @@ def _ensure_no_screen_open() -> None:
     """
     if _is_any_screen_open():
         logger.warning("ensure_no_screen: found a lingering open screen, closing defensively")
-        _close_player_inventory_screen()
+        _close_open_screen()
 
 
 def _craft_via_inventory(recipe, crafts_needed: int, grid_slots: dict[int, str]) -> dict:
@@ -1114,7 +1155,6 @@ def _craft_via_inventory(recipe, crafts_needed: int, grid_slots: dict[int, str])
     open_err = _open_player_inventory_screen()
     if open_err is not None:
         return {"crafted": 0, "error": open_err, "method": "real"}
-    # _open_player_inventory_screen already settled 2 ticks; no extra sleep needed.
 
     try:
         crafted, err = _perform_crafts_in_open_menu(
@@ -1125,7 +1165,7 @@ def _craft_via_inventory(recipe, crafts_needed: int, grid_slots: dict[int, str])
         )
     finally:
         _cleanup_grid_into_inventory(list(grid_slots.keys()))
-        _close_player_inventory_screen()
+        _close_open_screen()
 
     total_output = crafted * recipe.output_count
     if crafted == 0 and err:
