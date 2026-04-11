@@ -130,7 +130,8 @@ You have a persistent plan document at ./state/plan.md, injected at the start of
 
 - For multi-step goals (e.g. "get a stone pickaxe"), call writePlan to lay out the steps before acting. This keeps you on track as the conversation scrolls and across failed attempts.
 - writePlan replaces the entire file — emit the full new content when updating. Call writePlan with an empty string to clear the plan when the goal is done.
-- Cross off or remove steps as you finish them. Rewrite the plan when the situation changes.
+- Format: start with `# Goal: <one-line goal>`, then a numbered or bulleted checklist where each step is `1. [ ] step text` (incomplete) or `1. [x] step text` (done). The monitor UI renders this as a live checklist — mark progress by flipping `[ ]` to `[x]`, do not delete completed steps mid-run.
+- Rewrite the plan (full replacement via writePlan) when the situation fundamentally changes — e.g. the goal shifts, or an approach fails and you need a new route.
 - Skip planning for trivial single-step tasks (greetings, one-off queries, "come here"). Plans are for work that spans multiple actions.
 
 ## How to Respond
