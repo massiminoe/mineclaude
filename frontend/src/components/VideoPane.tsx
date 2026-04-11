@@ -1,16 +1,15 @@
 import { useState, useRef, useEffect } from "react";
-import type { ConversationMessage, GameState } from "../types";
+import type { ConversationMessage } from "../types";
 import { ChatOverlay } from "./ChatOverlay";
 
 const BRIDGE_URL = "http://localhost:8080";
 const STREAM_URL = `${BRIDGE_URL}/video/stream?fps=10&quality=50`;
 
 interface Props {
-  gameState: GameState | null;
   conversation: ConversationMessage[];
 }
 
-export function VideoPane({ gameState, conversation }: Props) {
+export function VideoPane({ conversation }: Props) {
   const [streamStatus, setStreamStatus] = useState<
     "loading" | "connected" | "error"
   >("loading");

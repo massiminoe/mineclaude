@@ -18,6 +18,7 @@ export function useSocket() {
     recent: [],
   });
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [plan, setPlan] = useState<string>("");
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<number>(0);
@@ -30,6 +31,7 @@ export function useSocket() {
         if (data.conversation) setConversation(data.conversation);
         if (data.queue) setQueue(data.queue);
         if (data.game) setGameState(data.game);
+        if (data.plan !== undefined) setPlan(data.plan ?? "");
       })
       .catch(() => {
         // Agent might not be running yet
@@ -91,6 +93,9 @@ export function useSocket() {
           break;
         case "game:state":
           setGameState(data as unknown as GameState);
+          break;
+        case "plan:update":
+          setPlan((data.plan as string) ?? "");
           break;
       }
     },
@@ -170,5 +175,5 @@ export function useSocket() {
     };
   }, [connect]);
 
-  return { conversation, queue, gameState, connected };
+  return { conversation, queue, gameState, plan, connected };
 }

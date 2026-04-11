@@ -5,14 +5,14 @@ import { SidePanel } from "./components/SidePanel";
 import "./App.css";
 
 export default function App() {
-  const { conversation, queue, gameState, connected } = useSocket();
+  const { conversation, queue, gameState, plan, connected } = useSocket();
 
   return (
     <div className="app">
       <TopBar connected={connected} />
       <div className="main-content">
-        <VideoPane gameState={gameState} conversation={conversation} />
-        <SidePanel queue={queue} gameState={gameState} />
+        <VideoPane conversation={conversation} />
+        <SidePanel queue={queue} gameState={gameState} plan={plan} />
       </div>
     </div>
   );
