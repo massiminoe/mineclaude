@@ -34,6 +34,7 @@ services:
       # MONITOR_VIDEO_FILTER: "eq=gamma=2.0:brightness=0.08:contrast=1.15"
     ports:
       - "8080:8080"
+      - "8081:8081"
     volumes:
       - hmc-assets:/headlessmc/HeadlessMC/run/assets
     stdin_open: true

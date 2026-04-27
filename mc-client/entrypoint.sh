@@ -10,9 +10,23 @@ MODS_DIR="$GAME_DIR/mods"
 mkdir -p "$MODS_DIR"
 if ls /tmp/mods/*.jar 1>/dev/null 2>&1; then
     cp /tmp/mods/*.jar "$MODS_DIR/"
-    echo "Mods installed in $MODS_DIR:"
-    ls -la "$MODS_DIR/"
 fi
+# Mineclaude native bridge mod (built in stage 1 of the Dockerfile). Loom
+# also writes a -sources.jar alongside the remapped production jar; the
+# extglob filter below keeps only the latter so Fabric doesn't try to load
+# the sources artifact as a mod.
+if [ -d /tmp/mod-builder-libs ]; then
+    # Loom emits a remapped production jar plus -sources/-dev variants; only
+    # the production jar is loadable as a mod, so skip the others by suffix.
+    for jar in /tmp/mod-builder-libs/*.jar; do
+        case "$jar" in
+            *-sources.jar|*-dev.jar) continue ;;
+        esac
+        [ -e "$jar" ] && cp "$jar" "$MODS_DIR/"
+    done
+fi
+echo "Mods installed in $MODS_DIR:"
+ls -la "$MODS_DIR/"
 
 # Copy Minescript scripts to both possible locations
 # (Minescript may use /headlessmc/minescript/ or the game dir)

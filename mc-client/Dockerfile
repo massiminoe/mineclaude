@@ -1,3 +1,17 @@
+# --- Stage 1: build the mineclaude bridge mod (JDK 21 + gradle wrapper) ---
+FROM eclipse-temurin:21-jdk AS mod-builder
+
+WORKDIR /build
+# Cache-friendly layering: copy gradle config + wrapper first so the gradle
+# distribution download and dependency resolution are reused across
+# source-only changes.
+COPY mc-mod/gradlew mc-mod/settings.gradle.kts mc-mod/build.gradle.kts mc-mod/gradle.properties ./
+COPY mc-mod/gradle ./gradle
+RUN ./gradlew --no-daemon dependencies > /dev/null 2>&1 || true
+COPY mc-mod/src ./src
+RUN ./gradlew --no-daemon build -x test
+
+# --- Stage 2: HeadlessMC runtime image ------------------------------------
 FROM 3arthqu4ke/headlessmc:latest
 
 # Install Python 3 (required by Minescript for .py scripts) and screen (for CLI interaction)
@@ -23,6 +37,12 @@ RUN hmc download fabric:1.21.5
 # Copy mod JARs into the Fabric mods directory
 # The mods dir location depends on the MC instance path; we copy after launch dir is created
 COPY mc-client/mods/*.jar /tmp/mods/
+
+# Pull the freshly built mineclaude bridge mod from stage 1.
+# Loom emits the remapped production jar plus a sources jar; only the remapped
+# one is a runnable mod, so the entrypoint filters out -sources/-dev variants
+# before copying into the mods dir.
+COPY --from=mod-builder /build/build/libs/ /tmp/mod-builder-libs/
 
 # Install aiohttp for bridge HTTP+WS server, mcrcon for server commands
 RUN pip3 install --break-system-packages aiohttp mcrcon Pillow

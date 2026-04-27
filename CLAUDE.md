@@ -9,6 +9,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `docker compose down -v` — full clean restart (clears volumes, regenerates ops)
 - `mineclaude` — run the agent process (requires `.env` with `ANTHROPIC_API_KEY`)
 - `MOCK_BRIDGE=1 mineclaude` — test agent loop without MC server
+- `BRIDGE_URL_NATIVE=""` (env, prefix to `mineclaude`) — disable the native Fabric mod bridge (8081), routing every endpoint to the legacy Minescript bridge (8080). Default points at `http://localhost:8081`. Use to diagnose whether a bug is in the new mod vs. the agent
 - `NO_CLAUDE=1 mineclaude` — headless mode (no Claude); queue + bridge + monitor stay up so you can drive primitives manually from the frontend Console panel
 - `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
@@ -22,6 +23,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `frontend/` — React + TypeScript + Vite monitor UI
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
 - `mc-client/` — Dockerfile, entrypoint, mods, Minescript scripts
+- `mc-mod/` — Kotlin Fabric mod (`mineclaude-bridge`) progressively replacing the Minescript-backed Python bridge. Built in stage 1 of `mc-client/Dockerfile`. Listens on port 8081. See `docs/superpowers/specs/2026-04-27-native-mod-bridge-plan.md`
 - `docker-compose.yml` — `itzg/minecraft-server` + custom `mc-client/Dockerfile`
 
 ## Key Patterns
@@ -43,7 +45,8 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - Frontend: React + Vite dev server on port 5173, proxies `/api` to monitor
   - `cd frontend && npm run dev` — dev server
   - `cd frontend && npx vite build` — production build (served by monitor)
-- Bridge: aiohttp server on port 8080 inside mc-client container
+- Bridge: aiohttp server on port 8080 inside mc-client container (legacy, Minescript-backed)
+- Native bridge: JDK HttpServer on port 8081 inside mc-client container, served by the `mineclaude-bridge` Fabric mod (Kotlin). `agent.bridge.NATIVE_ENDPOINTS` controls per-endpoint routing — empty in Phase 0, populated as endpoints are ported
 - Bridge logs to `/tmp/bridge.log` inside container (NOT to MC chat, to avoid feedback loops)
 
 ## Bridge API

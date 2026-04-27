@@ -1,0 +1,12 @@
+# Gradle
+.gradle/
+build/
+.kotlin/
+
+# IntelliJ / IDE
+*.iml
+.idea/
+out/
+
+# Loom run dirs (only present after `./gradlew runClient`)
+run/

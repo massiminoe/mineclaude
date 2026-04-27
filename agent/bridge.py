@@ -45,19 +45,60 @@ class BridgeClient(Protocol):
     async def close(self) -> None: ...
 
 
+# Endpoints owned by the native Fabric mod (port 8081). Entries get added
+# per phase as the cutover lands; routing falls back to legacy when the
+# native bridge isn't configured (see _client_for + native_url=None).
+#
+# Phase 1: read-only endpoints. Parity verified by tests/e2e/test_native_parity.py.
+# Subsequent phases add writes / movement / containers — see
+# docs/superpowers/specs/2026-04-27-native-mod-bridge-plan.md.
+NATIVE_ENDPOINTS: frozenset[str] = frozenset(
+    {
+        "/status",
+        "/nearby/blocks",
+        "/nearby/entities",
+        # /probe intentionally not routed: the legacy and native bodies are
+        # different shapes (legacy dumps Minescript Python APIs; native
+        # identifies the bridge). Agent doesn't consume /probe today, so
+        # whichever bridge a curl hits is fine. Frontend or human probes
+        # explicitly choose a port.
+    }
+)
+
+
 class RealBridgeClient:
     """HTTP/WS client for the real bridge server."""
 
-    def __init__(self, base_url: str = "http://localhost:8080"):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8080",
+        native_url: str | None = "http://localhost:8081",
+    ):
         self.base_url = base_url.rstrip("/")
+        self.native_url = native_url.rstrip("/") if native_url else None
         self.ws_url = self.base_url.replace("http", "ws") + "/events"
         # 90s global timeout: must exceed bridge's longest per-request operation
         # (goto_and_wait defaults to 60s). A mismatch causes spurious ReadTimeout
         # on the client while the bridge executor is still running, blocking
         # subsequent requests. See plan: frolicking-spinning-biscuit.md Fix 2.
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=90.0)
+        self._native_http: httpx.AsyncClient | None = (
+            httpx.AsyncClient(base_url=self.native_url, timeout=90.0)
+            if self.native_url
+            else None
+        )
         self._ws = None
         self._ws_task = None
+
+    def _client_for(self, path: str) -> httpx.AsyncClient:
+        """Pick the legacy or native HTTP client based on NATIVE_ENDPOINTS.
+
+        Endpoints not yet ported live on the legacy Minescript bridge (8080);
+        ported endpoints route to the native Fabric mod (8081).
+        """
+        if self._native_http is not None and path in NATIVE_ENDPOINTS:
+            return self._native_http
+        return self._http
 
     def _parse(self, resp: httpx.Response) -> BridgeResponse:
         data = resp.json()
@@ -68,61 +109,61 @@ class RealBridgeClient:
         )
 
     async def get_status(self) -> BridgeResponse:
-        return self._parse(await self._http.get("/status"))
+        return self._parse(await self._client_for("/status").get("/status"))
 
     async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse:
         params: dict = {"r": radius}
         if block_types:
             params["types"] = ",".join(block_types)
-        return self._parse(await self._http.get("/nearby/blocks", params=params))
+        return self._parse(await self._client_for("/nearby/blocks").get("/nearby/blocks", params=params))
 
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse:
-        return self._parse(await self._http.get("/nearby/entities", params={"r": radius}))
+        return self._parse(await self._client_for("/nearby/entities").get("/nearby/entities", params={"r": radius}))
 
     async def goto(self, x: float, y: float, z: float) -> BridgeResponse:
-        return self._parse(await self._http.post("/goto", json={"x": x, "y": y, "z": z}))
+        return self._parse(await self._client_for("/goto").post("/goto", json={"x": x, "y": y, "z": z}))
 
     async def mine(self, block: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._http.post("/mine", json={"block": block, "count": count}))
+        return self._parse(await self._client_for("/mine").post("/mine", json={"block": block, "count": count}))
 
     async def follow(self, player: str, distance: int = 3) -> BridgeResponse:
-        return self._parse(await self._http.post("/follow", json={"player": player, "distance": distance}))
+        return self._parse(await self._client_for("/follow").post("/follow", json={"player": player, "distance": distance}))
 
     async def explore(self) -> BridgeResponse:
-        return self._parse(await self._http.post("/explore"))
+        return self._parse(await self._client_for("/explore").post("/explore"))
 
     async def stop(self) -> BridgeResponse:
-        return self._parse(await self._http.post("/stop"))
+        return self._parse(await self._client_for("/stop").post("/stop"))
 
     async def place(self, block: str, x: int, y: int, z: int, face: str = "top") -> BridgeResponse:
-        return self._parse(await self._http.post("/place", json={"block": block, "x": x, "y": y, "z": z, "face": face}))
+        return self._parse(await self._client_for("/place").post("/place", json={"block": block, "x": x, "y": y, "z": z, "face": face}))
 
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse:
-        return self._parse(await self._http.post("/break", json={"x": x, "y": y, "z": z}))
+        return self._parse(await self._client_for("/break").post("/break", json={"x": x, "y": y, "z": z}))
 
     async def collect(self, radius: float = 3) -> BridgeResponse:
-        return self._parse(await self._http.post("/collect", json={"radius": radius}))
+        return self._parse(await self._client_for("/collect").post("/collect", json={"radius": radius}))
 
     async def attack(self, entity_id: str) -> BridgeResponse:
-        return self._parse(await self._http.post("/attack", json={"entity_id": entity_id}))
+        return self._parse(await self._client_for("/attack").post("/attack", json={"entity_id": entity_id}))
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._http.post("/craft", json={"item": item, "count": count}))
+        return self._parse(await self._client_for("/craft").post("/craft", json={"item": item, "count": count}))
 
     async def smelt(self, item: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._http.post("/smelt", json={"item": item, "count": count}))
+        return self._parse(await self._client_for("/smelt").post("/smelt", json={"item": item, "count": count}))
 
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
-        return self._parse(await self._http.post("/equip", json={"item": item, "slot": slot}))
+        return self._parse(await self._client_for("/equip").post("/equip", json={"item": item, "slot": slot}))
 
     async def discard(self, item: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._http.post("/discard", json={"item": item, "count": count}))
+        return self._parse(await self._client_for("/discard").post("/discard", json={"item": item, "count": count}))
 
     async def chat(self, message: str) -> BridgeResponse:
-        return self._parse(await self._http.post("/chat", json={"message": message}))
+        return self._parse(await self._client_for("/chat").post("/chat", json={"message": message}))
 
     async def screenshot(self) -> BridgeResponse:
-        return self._parse(await self._http.get("/screenshot", params={"format": "jpeg", "quality": "80"}))
+        return self._parse(await self._client_for("/screenshot").get("/screenshot", params={"format": "jpeg", "quality": "80"}))
 
     async def events(self, callback) -> None:
         """Connect to WS event stream with reconnection backoff."""
@@ -145,6 +186,8 @@ class RealBridgeClient:
         if self._ws:
             await self._ws.close()
         await self._http.aclose()
+        if self._native_http is not None:
+            await self._native_http.aclose()
 
 
 class MockBridgeClient:
@@ -404,7 +447,11 @@ class MockBridgeClient:
         return True
 
 
-def create_bridge(mock: bool = False, base_url: str = "http://localhost:8080") -> BridgeClient:
+def create_bridge(
+    mock: bool = False,
+    base_url: str = "http://localhost:8080",
+    native_url: str | None = "http://localhost:8081",
+) -> BridgeClient:
     if mock:
         return MockBridgeClient()
-    return RealBridgeClient(base_url)
+    return RealBridgeClient(base_url, native_url=native_url)

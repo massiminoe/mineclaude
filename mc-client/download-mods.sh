@@ -29,6 +29,14 @@ echo "Downloading hmc-specifics 2.3.0 (Fabric 1.21.5)..."
 curl -L -o "$MODS_DIR/hmc-specifics-1.21.5-2.3.0-fabric-release.jar" \
     "https://github.com/3arthqu4ke/hmc-specifics/releases/download/2.3.0/hmc-specifics-1.21.5-2.3.0-fabric-release.jar"
 
+# fabric-language-kotlin: required at runtime by the mineclaude native bridge
+# mod (mc-mod/), which is written in Kotlin. The bridge mod itself is built
+# in-Docker by the multi-stage build; this dep is downloaded here because it
+# ships as a separate mod jar in the mods folder.
+echo "Downloading fabric-language-kotlin 1.13.11+kotlin.2.3.21 (Fabric 1.21.5)..."
+curl -L -o "$MODS_DIR/fabric-language-kotlin-1.13.11+kotlin.2.3.21.jar" \
+    "https://cdn.modrinth.com/data/Ha28R6CL/versions/2i87JpYj/fabric-language-kotlin-1.13.11%2Bkotlin.2.3.21.jar"
+
 echo ""
 echo "Downloaded mods:"
 ls -lh "$MODS_DIR"/*.jar

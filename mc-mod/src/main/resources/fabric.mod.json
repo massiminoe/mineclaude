@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "mineclaude_bridge",
+  "version": "${version}",
+  "name": "Mineclaude Bridge",
+  "description": "Native Fabric bridge that exposes the mineclaude HTTP/WS surface directly from the MC client.",
+  "authors": ["Massimino"],
+  "contact": {
+    "homepage": "https://github.com/mineclaude/mineclaude",
+    "sources": "https://github.com/mineclaude/mineclaude"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      {
+        "adapter": "kotlin",
+        "value": "com.mineclaude.bridge.MineclaudeBridgeClient"
+      }
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "fabric-language-kotlin": "*",
+    "minecraft": "${minecraft_version}",
+    "java": ">=21"
+  }
+}

@@ -71,6 +71,10 @@ def main() -> None:
     mock_bridge = os.environ.get("MOCK_BRIDGE", "").lower() in ("1", "true", "yes")
     no_claude = os.environ.get("NO_CLAUDE", "").lower() in ("1", "true", "yes")
     bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8080")
+    # Native Fabric mod (in-process to MC) — progressively takes over
+    # endpoints from the Minescript-backed Python bridge. Set to empty string
+    # to disable while the mod is being rebuilt or for parity testing.
+    native_bridge_url = os.environ.get("BRIDGE_URL_NATIVE", "http://localhost:8081") or None
     bot_name = os.environ.get("BOT_NAME", "Mineclaw")
     claude_model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -91,7 +95,7 @@ def main() -> None:
 
     monitor_port = int(os.environ.get("MONITOR_PORT", "5555"))
 
-    bridge = create_bridge(mock=mock_bridge, base_url=bridge_url)
+    bridge = create_bridge(mock=mock_bridge, base_url=bridge_url, native_url=native_bridge_url)
     claude = None if no_claude else ClaudeClient(model=claude_model, api_key=api_key)
     agent = Agent(bridge=bridge, claude=claude, bot_name=bot_name)
     monitor = MonitorServer(agent, port=monitor_port)
