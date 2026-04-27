@@ -240,23 +240,129 @@ def move_item_to_hotbar(inv_slot: int, hotbar_slot: int = 0) -> bool:
         return False
 
 
-def select_item_in_hotbar(item_name: str) -> bool:
-    """Find item, move to hotbar if needed, select it. Returns True on success."""
-    # Check hotbar first
-    hotbar_slot = find_item_in_hotbar(item_name)
-    if hotbar_slot is not None:
-        _ms(minescript.player_inventory_select_slot, hotbar_slot)
-        return True
+def _is_main_hand(item_name: str) -> bool:
+    """Return True if the item at Inventory.selected matches item_name.
 
-    # Check full inventory
-    slot = find_item_slot(item_name)
-    if slot is None:
+    Uses `player_inventory()`'s `selected` flag rather than
+    `player_hand_items()` — the latter reads a stale `LivingEntity.handItems`
+    cache that doesn't update when we set `Inventory.selected` directly via
+    `player_inventory_select_slot`. The inventory's `selected` field is the
+    same source MC's server-sync uses, so it's the correct ground truth.
+    """
+    try:
+        inv = _ms(minescript.player_inventory)
+    except (AttributeError, TypeError):
+        return False
+    target = item_name.replace("minecraft:", "")
+    for it in inv:
+        if it is None:
+            continue
+        if getattr(it, "selected", False):
+            name = (getattr(it, "item", "") or "").replace("minecraft:", "")
+            return name == target
+    return False
+
+
+def _currently_held_hotbar_slot() -> int | None:
+    """Return the hotbar slot whose ItemStack.selected flag is True, or None.
+
+    Source of truth for what MC thinks is held, independent of any packet
+    we may or may not have sent. Falls back to None if player_inventory
+    isn't available.
+    """
+    try:
+        inv = _ms(minescript.player_inventory)
+    except (AttributeError, TypeError):
+        return None
+    for item in inv:
+        if item is None:
+            continue
+        if getattr(item, "selected", False):
+            s = getattr(item, "slot", None)
+            if s is not None and 0 <= s <= 8:
+                return s
+    return None
+
+
+def _swap_hotbar_slots(src: int, dst: int) -> bool:
+    """Lossless swap of two hotbar slots via /item replace.
+
+    Used as a fallback when player_inventory_select_slot no-ops — if we
+    can't change which slot is held, we move the item we want INTO the
+    currently-held slot instead.
+    """
+    if src == dst:
+        return True
+    src_name = _slot_to_item_name(src)
+    dst_name = _slot_to_item_name(dst)
+    temp = _find_empty_inventory_slot()
+    if temp is None:
+        logger.warning("_swap_hotbar_slots: inventory full, cannot swap")
+        return False
+    temp_name = _slot_to_item_name(temp)
+    try:
+        # Stash dst into temp, copy src over dst, restore temp into src, clear temp
+        _ms(minescript.execute, f"/item replace entity @s {temp_name} from entity @s {dst_name}")
+        _ms(minescript.execute, f"/item replace entity @s {dst_name} from entity @s {src_name}")
+        _ms(minescript.execute, f"/item replace entity @s {src_name} from entity @s {temp_name}")
+        _ms(minescript.execute, f"/item replace entity @s {temp_name} with minecraft:air")
+        time.sleep(0.05)
+        return True
+    except Exception as e:
+        logger.warning(f"_swap_hotbar_slots: {e}")
         return False
 
-    # Move to hotbar slot 0 and select
-    if move_item_to_hotbar(slot, 0):
-        _ms(minescript.player_inventory_select_slot, 0)
+
+def select_item_in_hotbar(item_name: str) -> bool:
+    """Find item, move to hotbar if needed, select it. Returns True on success.
+
+    Verifies via player_hand_items() that the selection actually took effect.
+    `player_inventory_select_slot` is unreliable on MC 1.21.5 (same family
+    of broken APIs as `player_inventory_slot_to_hotbar`). On verification
+    failure, falls back to `/item replace` to swap the target item into
+    the currently-held slot — bypasses the broken packet path entirely.
+    """
+    # Check hotbar first
+    hotbar_slot = find_item_in_hotbar(item_name)
+    if hotbar_slot is None:
+        slot = find_item_slot(item_name)
+        if slot is None:
+            return False
+        if not move_item_to_hotbar(slot, 0):
+            return False
+        hotbar_slot = 0
+
+    # Primary path: native select_slot API
+    for attempt in range(2):
+        _ms(minescript.player_inventory_select_slot, hotbar_slot)
+        time.sleep(0.1)
+        if _is_main_hand(item_name):
+            return True
+        logger.warning(
+            f"select_slot: hotbar {hotbar_slot} select did not take effect "
+            f"(attempt {attempt + 1})"
+        )
+
+    # Fallback: swap the item INTO whatever slot is currently held
+    held = _currently_held_hotbar_slot()
+    if held is None:
+        logger.error(f"select_slot: can't determine held slot, giving up on {item_name}")
+        return False
+    if held == hotbar_slot:
+        logger.error(
+            f"select_slot: {item_name} is in held slot {held} but hand doesn't show it "
+            f"(client/server desync?)"
+        )
+        return False
+    logger.info(
+        f"select_slot: falling back to /item replace swap "
+        f"(move {item_name} from hotbar {hotbar_slot} into held slot {held})"
+    )
+    if not _swap_hotbar_slots(hotbar_slot, held):
+        return False
+    if _is_main_hand(item_name):
         return True
+    logger.error(f"select_slot: swap fallback did not result in {item_name} held")
     return False
 
 
@@ -301,8 +407,11 @@ def navigate_near(x: float, y: float, z: float, reach: float = 3.5) -> bool:
 
     _ms(minescript.chat, f"#goto {int(x)} {int(y)} {int(z)}")
 
-    # Wait for arrival with timeout
-    deadline = time.monotonic() + 30.0
+    # Wait for arrival with timeout. 15s cap — if Baritone can't reach the
+    # target in that window it's almost always because of an obstruction
+    # (leaves blocking tree-top logs, walled-off ore, etc.); waiting longer
+    # just burns the Claude iteration budget on a guaranteed-failure path.
+    deadline = time.monotonic() + 15.0
     while time.monotonic() < deadline:
         time.sleep(0.5)
         if is_within_reach(x, y, z, reach):
@@ -317,36 +426,44 @@ def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
     """Walk to and pick up all dropped item entities within radius of player.
     Returns count of items collected (entities that disappeared)."""
 
-    def _scan_items(verbose: bool = False) -> list[tuple[float, float, float]]:
+    def _player_pos() -> tuple[float, float, float]:
         try:
-            entities = _ms(minescript.entities, max_distance=float(radius))
+            pos = _ms(minescript.player_position)
+            return pos[0], pos[1], pos[2]
+        except Exception:
+            return 0.0, 0.0, 0.0
+
+    def _scan_items(scan_radius: float, verbose: bool = False) -> list[tuple[float, float, float, str, float]]:
+        """Return list of (x, y, z, name, dist_from_player) for item entities."""
+        px, py, pz = _player_pos()
+        try:
+            entities = _ms(minescript.entities, max_distance=float(scan_radius))
         except Exception as e:
             logger.warning(f"collect: minescript.entities() raised {type(e).__name__}: {e}")
             return []
 
         if verbose:
-            type_summary = [str(getattr(e, "type", "?")) for e in entities[:10]]
             logger.info(
-                f"collect: scan returned {len(entities)} entities; "
-                f"first types: {type_summary}"
+                f"collect: scan radius={scan_radius:.1f} player=({px:.1f},{py:.1f},{pz:.1f}) "
+                f"returned {len(entities)} entities"
             )
 
         items = []
         for ent in entities:
             type_str = str(getattr(ent, "type", ""))
-            # Minescript v5.0 format: "entity.minecraft.item"
             if not type_str.endswith(".item") and type_str != "item":
                 continue
             try:
                 ex, ey, ez = ent.position
             except Exception:
                 continue
+            dist = math.sqrt((ex - px) ** 2 + (ey - py) ** 2 + (ez - pz) ** 2)
+            name_str = str(getattr(ent, "name", ""))
             if verbose:
-                name_str = str(getattr(ent, "name", ""))
                 logger.info(
-                    f"collect:   item entity name={name_str!r} type={type_str!r} pos=({ex:.1f},{ey:.1f},{ez:.1f})"
+                    f"collect:   item name={name_str!r} pos=({ex:.1f},{ey:.1f},{ez:.1f}) dist={dist:.2f}"
                 )
-            items.append((ex, ey, ez))
+            items.append((ex, ey, ez, name_str, dist))
         return items
 
     # Total time budget — must stay well under the 30s bridge HTTP timeout
@@ -362,22 +479,44 @@ def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
             break
 
         # Verbose logging on first iteration so we can diagnose empty results
-        items = _scan_items(verbose=(iteration == 0))
+        items = _scan_items(radius, verbose=(iteration == 0))
         if not items:
             if iteration == 0:
-                logger.info(f"collect: no item entities found within radius={radius}")
+                px, py, pz = _player_pos()
+                logger.info(
+                    f"collect: no item entities within radius={radius} "
+                    f"(player at {px:.1f},{py:.1f},{pz:.1f})"
+                )
+                # Diagnostic wider scan — tells us whether drops exist just
+                # out of reach (common after Baritone pathed away from a drop
+                # mid-break) vs genuinely no drops spawned.
+                wide_radius = radius * 4
+                wide = _scan_items(wide_radius, verbose=False)
+                if wide:
+                    preview = [
+                        f"{name}@({x:.1f},{y:.1f},{z:.1f}) d={d:.1f}"
+                        for x, y, z, name, d in sorted(wide, key=lambda it: it[4])[:5]
+                    ]
+                    logger.info(
+                        f"collect: wider scan r={wide_radius} found {len(wide)} item(s) "
+                        f"outside collect radius — top 5: {preview}"
+                    )
+                else:
+                    logger.info(
+                        f"collect: wider scan r={wide_radius} also empty — "
+                        f"no drops spawned or they despawned"
+                    )
             break
 
-        # Pick closest to player
-        pos = _ms(minescript.player_position)
-        px, py, pz = pos[0], pos[1], pos[2]
-        items.sort(key=lambda p: (p[0] - px) ** 2 + (p[1] - py) ** 2 + (p[2] - pz) ** 2)
+        # Already sorted internally by dist via _scan_items? No — _scan_items
+        # returns in entity scan order. Sort by distance field for closest-first.
+        items.sort(key=lambda it: it[4])
         target = items[0]
         before_count = len(items)
 
         logger.info(
-            f"collect: targeting item at {target[0]:.1f},{target[1]:.1f},{target[2]:.1f} "
-            f"({before_count} item(s) in range)"
+            f"collect: targeting {target[3]!r} at ({target[0]:.1f},{target[1]:.1f},{target[2]:.1f}) "
+            f"dist={target[4]:.2f} ({before_count} item(s) in range)"
         )
 
         # If already in pickup range, just wait briefly for auto-collect
@@ -396,11 +535,11 @@ def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
             _ms(minescript.chat, "#stop")
             time.sleep(0.3)
 
-        # Re-scan: anything we collected reduces the count
-        after = _scan_items()
+        # Re-scan at the same radius; anything we collected reduces the count
+        after = _scan_items(radius)
         delta = before_count - len(after)
         if delta <= 0:
-            logger.info("collect: no progress, stopping")
+            logger.info(f"collect: no progress (before={before_count}, after={len(after)}), stopping")
             break
         collected += delta
 

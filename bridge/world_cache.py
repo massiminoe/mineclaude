@@ -30,12 +30,15 @@ from bridge import minescript_api
 
 logger = logging.getLogger("bridge")
 
-# Full re-scan cadence (seconds) when the player is stationary
-BLOCK_SCAN_INTERVAL = 10.0
+# Full re-scan cadence (seconds) when the player is stationary. Bumped
+# from the original 10s → 20s to roughly halve background pipe traffic:
+# the Java-side stdout-writer race fires under sustained RPC pressure,
+# and the scanner is by far the largest producer of that pressure.
+BLOCK_SCAN_INTERVAL = 20.0
 
 # Movement threshold — re-scan immediately if player has moved this far
-# from the last scan center
-MOVEMENT_RESCAN_THRESHOLD = 8.0
+# from the last scan center. Bumped 8 → 12 for the same reason.
+MOVEMENT_RESCAN_THRESHOLD = 12.0
 
 # Status/entity poll cadence (seconds) — these are single cheap RPCs
 STATUS_POLL_INTERVAL = 2.0
@@ -48,6 +51,21 @@ LOOP_TICK = 0.5
 # Scan radius used for the background block cache. Agent queries at
 # smaller radii are served by filtering this cache.
 DEFAULT_SCAN_RADIUS = 32
+
+
+def _executor_busy_count() -> int:
+    """Read bridge.server._executor_busy via lazy import.
+
+    Lazy because `bridge.server` imports `WorldCache` from this module at
+    load time, so a top-level `from bridge import server` would be
+    circular. Lookup is a plain getattr with a default of 0, so it's
+    safe to call even before server.py has finished loading.
+    """
+    try:
+        from bridge import server as _server  # local import to break cycle
+    except ImportError:
+        return 0
+    return getattr(_server, "_executor_busy", 0)
 
 
 @dataclass
@@ -135,8 +153,20 @@ class WorldCache:
                         needs_rescan = True
 
                 if needs_rescan:
-                    self._rescan_blocks(px, py, pz)
-                    self._last_block_scan = time.monotonic()
+                    # Don't drum the Minescript pipe with a 64-chunk scan
+                    # while a foreground command is holding the executor
+                    # thread — that's the write pattern that most reliably
+                    # triggers the Java-side stdout-writer race. Skip this
+                    # iteration; _last_block_scan stays pinned so we'll
+                    # re-check on the next LOOP_TICK and scan as soon as
+                    # the executor is idle.
+                    if _executor_busy_count() > 0:
+                        logger.debug(
+                            "WorldCache: skipping rescan — executor busy"
+                        )
+                    else:
+                        self._rescan_blocks(px, py, pz)
+                        self._last_block_scan = time.monotonic()
 
             except Exception as e:
                 logger.error(f"WorldCache scan loop error: {type(e).__name__}: {e}")
@@ -312,6 +342,46 @@ class WorldCache:
         with self._lock:
             key = (int(x), int(y), int(z))
             self._blocks[key] = CachedBlock(name=clean, x=key[0], y=key[1], z=key[2])
+
+    # ------------------------------------------------------------------
+    # Invalidation (called by POST handlers after mutations the cache
+    # can't predict directly — e.g. crafting modifies inventory, Baritone
+    # commands move the player asynchronously)
+    # ------------------------------------------------------------------
+
+    def invalidate_status(self) -> None:
+        """Force the scanner to re-poll player status on its next tick."""
+        with self._lock:
+            self._last_status_update = 0.0
+
+    def invalidate_entities(self) -> None:
+        """Force the scanner to re-poll entities on its next tick."""
+        with self._lock:
+            self._last_entity_update = 0.0
+
+    def invalidate_blocks(self) -> None:
+        """Force a full block re-scan on the scanner's next tick."""
+        with self._lock:
+            self._blocks_populated = False
+            self._scan_center = None
+            self._last_block_scan = 0.0
+
+    def force_refresh_status(self) -> None:
+        """Synchronously re-poll player status right now.
+
+        Used after mutations that change inventory/position so the very next
+        query sees fresh data without waiting for the 2s scanner tick. Must
+        be called through the bridge's _run() executor — this function
+        issues a Minescript RPC internally.
+        """
+        try:
+            data = minescript_api.get_player_status()
+        except Exception as e:
+            logger.warning(f"WorldCache: force refresh status failed: {e}")
+            return
+        with self._lock:
+            self._status = data
+            self._last_status_update = time.monotonic()
 
     # ------------------------------------------------------------------
     # Diagnostics

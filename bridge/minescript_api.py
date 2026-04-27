@@ -27,10 +27,102 @@ logger = logging.getLogger("bridge")
 _ms_lock = threading.Lock()
 
 
+class RPCTimeout(Exception):
+    """Raised when a Minescript RPC response is dropped and wait() times out.
+
+    Triggered by the Minescript mod's stdout-writer race: two Java-side writes
+    interleave into a single line on Python's stdin, the reader's json.loads
+    raises JSONDecodeError, and the whole line (including this call's
+    response) is dropped on the floor. The reader thread itself survives via
+    its try/except/continue at minescript_runtime.py:366, so new RPC calls
+    still work — but the waiting FutureValue for the dropped response would
+    hang forever unless we bound the wait. This exception is that bound:
+    we time out, send cancelfn! to Java so it can clean up the in-flight
+    call, release _ms_lock, and raise. The next _ms() call through the lock
+    succeeds normally.
+    """
+
+
+# Per-RPC timeout budget (seconds). Just above the observed worst-case for a
+# full 64-chunk scan at radius=32 (~5s end-to-end, ~100ms per chunk) and well
+# below the agent-side httpx client timeout (30s), so a wedge surfaces as a
+# clean RPCTimeout inside the agent's own timeout window instead of as a
+# generic ReadTimeout with no context.
+RPC_TIMEOUT_S = 15.0
+
+
+# RPC diagnostics — read by GET /health for observability. Plain module
+# globals written only from inside _ms(); the GIL makes the individual
+# writes atomic enough for monitoring, and we don't need perfect consistency
+# across the fields (health endpoint tolerates slightly stale reads).
+_rpc_timeouts_total: int = 0
+_last_rpc_timeout_ts: float = 0.0
+_last_rpc_timeout_fn: str = ""
+_last_rpc_start_ts: float = 0.0
+_last_rpc_end_ts: float = 0.0
+_last_rpc_fn: str = ""
+_last_rpc_thread: str = ""
+
+
 def _ms(fn, *args, **kwargs):
-    """Call a minescript.* function under the global RPC lock."""
+    """Call a minescript.* function under the RPC lock with a hard timeout.
+
+    For ScriptFunction callables (every minescript.* function that waits for
+    a response — player_position, getblock, get_block_region, container_*,
+    press_key_bind, player_press_*, etc.) we route through
+    `fn.as_async(*args, **kwargs).wait(timeout=RPC_TIMEOUT_S)` instead of the
+    normal `fn(*args)` path. The normal path goes through
+    await_script_function (minescript_runtime.py:282) which calls
+    FutureValue.wait() with no timeout argument and blocks forever if the
+    response packet is dropped by the reader's JSONDecodeError recovery.
+
+    On timeout we call FutureValue.cancel(), which sends `cancelfn! <fcid>`
+    to Java via the native cancel_handler so the mod can clean up its own
+    state, then release _ms_lock (via the `with` exit) and raise RPCTimeout.
+    The Minescript reader thread is still alive (line 366 of
+    minescript_runtime.py catches json.JSONDecodeError and continues its
+    readline loop), so the very next _ms() caller acquires the lock and
+    drives a fresh RPC through the same still-functioning channel.
+
+    For NoReturnScriptFunction callables (execute, chat) and bare callables
+    used by tests, there is nothing to wait on, so we fall through to a
+    direct call under the lock with no timeout path.
+    """
+    global _rpc_timeouts_total, _last_rpc_timeout_ts, _last_rpc_timeout_fn
+    global _last_rpc_start_ts, _last_rpc_end_ts, _last_rpc_fn, _last_rpc_thread
     with _ms_lock:
-        return fn(*args, **kwargs)
+        fn_name = getattr(fn, "name", None) or getattr(fn, "__name__", repr(fn))
+        _last_rpc_start_ts = time.monotonic()
+        _last_rpc_fn = fn_name
+        _last_rpc_thread = threading.current_thread().name
+        try:
+            if hasattr(fn, "as_async"):
+                future = fn.as_async(*args, **kwargs)
+                try:
+                    return future.wait(timeout=RPC_TIMEOUT_S)
+                except TimeoutError:
+                    _rpc_timeouts_total += 1
+                    _last_rpc_timeout_ts = time.monotonic()
+                    _last_rpc_timeout_fn = fn_name
+                    logger.error(
+                        f"_ms: RPC timeout after {RPC_TIMEOUT_S:.0f}s in {fn_name} "
+                        f"(thread={_last_rpc_thread}) — Minescript stdout-writer "
+                        f"race; total timeouts={_rpc_timeouts_total}"
+                    )
+                    try:
+                        future.cancel()  # sends cancelfn! <fcid> to Java
+                    except Exception as cancel_err:
+                        logger.warning(
+                            f"_ms: cancel after timeout failed: {cancel_err}"
+                        )
+                    raise RPCTimeout(
+                        f"{fn_name} RPC response dropped "
+                        f"(timeout after {RPC_TIMEOUT_S:.0f}s)"
+                    )
+            # NoReturnScriptFunction or bare callable — nothing to wait on
+            return fn(*args, **kwargs)
+        finally:
+            _last_rpc_end_ts = time.monotonic()
 
 
 # MC runs at 20 TPS = 50 ms per tick. Inventory operations (key.inventory
@@ -449,19 +541,18 @@ def _find_item_slot(item_name: str) -> int | None:
 # ---------------------------------------------------------------------------
 
 def discard_item(item: str, count: int = 1) -> dict:
-    """Discard items from inventory.
+    """Discard items from inventory via real player actions only.
 
-    Real: select item in hotbar, press drop key.
-    Fallback: /clear command.
+    No op-command fallback — if the real path fails, that's what the agent
+    sees. The bot plays by player rules.
     """
     try:
         return _discard_real(item, count)
-    except AttributeError:
-        logger.info(f"discard: API not available, using fallback for {item}")
-        return _discard_fallback(item, count)
+    except AttributeError as e:
+        return {"discarded": 0, "error": f"required Minescript APIs missing: {e}", "method": "real"}
     except Exception as e:
-        logger.warning(f"discard: real impl failed ({e}), using fallback")
-        return _discard_fallback(item, count)
+        logger.warning(f"discard: {e}")
+        return {"discarded": 0, "error": str(e), "method": "real"}
 
 
 def _discard_real(item: str, count: int) -> dict:
@@ -472,7 +563,12 @@ def _discard_real(item: str, count: int) -> dict:
 
     # Find item and move to hotbar
     if not _select_item(item):
-        return {"discarded": 0, "error": f"No {item} in inventory", "method": "real"}
+        err = (
+            f"select_slot did not take effect for {item}"
+            if _find_item_slot(item) is not None
+            else f"No {item} in inventory"
+        )
+        return {"discarded": 0, "error": err, "method": "real"}
 
     # Drop items one at a time
     dropped = 0
@@ -487,14 +583,6 @@ def _discard_real(item: str, count: int) -> dict:
     remaining_slot = _find_item_slot(item)
     logger.info(f"discard: dropped {dropped} {item} (real)")
     return {"discarded": dropped, "method": "real"}
-
-
-def _discard_fallback(item: str, count: int) -> dict:
-    try:
-        _ms(minescript.execute, f"/clear @s minecraft:{item} {count}")
-        return {"discarded": count, "method": "fallback"}
-    except Exception as e:
-        return {"discarded": 0, "error": str(e), "method": "fallback"}
 
 
 def equip_item(item: str, slot: str = "hand") -> dict:
@@ -520,7 +608,12 @@ def _equip_real(item: str, slot: str) -> dict:
         if not _has_api("player_inventory_select_slot"):
             raise AttributeError("player_inventory_select_slot missing")
         if not _select_item(item):
-            return {"equipped": False, "error": f"No {item} in inventory", "method": "real"}
+            err = (
+                f"select_slot did not take effect for {item}"
+                if _find_item_slot(item) is not None
+                else f"No {item} in inventory"
+            )
+            return {"equipped": False, "error": err, "method": "real"}
         logger.info(f"equip: equipped {item} to hand (real)")
         return {"equipped": True, "method": "real"}
 
@@ -529,7 +622,12 @@ def _equip_real(item: str, slot: str) -> dict:
         if not _has_api("player_inventory_select_slot", "player_press_swap_hands"):
             raise AttributeError("APIs missing for offhand equip")
         if not _select_item(item):
-            return {"equipped": False, "error": f"No {item} in inventory", "method": "real"}
+            err = (
+                f"select_slot did not take effect for {item}"
+                if _find_item_slot(item) is not None
+                else f"No {item} in inventory"
+            )
+            return {"equipped": False, "error": err, "method": "real"}
         _ms(minescript.player_press_swap_hands, True)
         _tick_sleep(1)
         _ms(minescript.player_press_swap_hands, False)
@@ -622,22 +720,44 @@ def _equip_fallback(item: str, slot: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def break_block(x: int, y: int, z: int) -> dict:
-    """Break a block at coordinates.
+    """Break a block at coordinates via real player actions only.
 
-    Real: look at block, hold attack until broken.
-    Fallback: /setblock ... air destroy.
+    No op-command fallback — if Baritone can't navigate within reach, or
+    the swing times out, the agent gets an honest error rather than a
+    `/setblock air destroy` cheat.
     """
     try:
         return _break_real(x, y, z)
-    except AttributeError:
-        logger.info(f"break: API not available, using fallback at {x},{y},{z}")
-        return _break_fallback(x, y, z)
+    except AttributeError as e:
+        return {"broken": False, "error": f"required Minescript APIs missing: {e}", "method": "real"}
     except Exception as e:
-        logger.warning(f"break: real impl failed ({e}), using fallback")
-        return _break_fallback(x, y, z)
+        logger.warning(f"break: {e}")
+        return {"broken": False, "error": str(e), "method": "real"}
 
 
-def _break_real(x: int, y: int, z: int) -> dict:
+# Block types _break_real will NOT auto-clear when they occlude the target.
+# Containers and functional blocks could have game-state consequences
+# (dropping chest contents, breaking a bed the player needs, etc.) —
+# defer to the agent to decide. Naturally-placed terrain is fair game.
+_OCCLUDER_DENYLIST = frozenset({
+    "chest", "trapped_chest", "ender_chest", "barrel", "shulker_box",
+    "furnace", "blast_furnace", "smoker", "crafting_table", "loom",
+    "anvil", "chipped_anvil", "damaged_anvil",
+    "bed", "white_bed", "orange_bed", "magenta_bed", "light_blue_bed",
+    "yellow_bed", "lime_bed", "pink_bed", "gray_bed", "light_gray_bed",
+    "cyan_bed", "purple_bed", "blue_bed", "brown_bed", "green_bed",
+    "red_bed", "black_bed",
+    "door", "oak_door", "iron_door", "spruce_door", "birch_door",
+    "jungle_door", "acacia_door", "dark_oak_door", "mangrove_door",
+    "sign", "wall_sign", "hanging_sign",
+    "lectern", "bookshelf", "enchanting_table", "beacon",
+    "brewing_stand", "cauldron", "hopper", "dispenser", "dropper",
+    "observer", "note_block", "jukebox", "conduit",
+    "spawner", "end_portal_frame",
+})
+
+
+def _break_real(x: int, y: int, z: int, _occluder_depth: int = 0) -> dict:
     if not _has_api("player_set_orientation", "player_press_attack"):
         raise AttributeError("Required APIs missing")
 
@@ -658,8 +778,17 @@ def _break_real(x: int, y: int, z: int) -> dict:
         except Exception:
             name = "unknown"
     if not name or "air" in name:
-        logger.info(f"break: no block at {x},{y},{z} (got {name!r})")
-        return {"broken": False, "error": "No block at position", "method": "real"}
+        # Idempotent: the block is already gone (Baritone may have broken it
+        # during navigation, or a prior action cleared it). Agent intent
+        # "this block should be gone" is already satisfied — treat as a
+        # successful no-op rather than an error.
+        logger.info(f"break: target already air at {x},{y},{z} (no-op)")
+        return {
+            "broken": True,
+            "already_gone": True,
+            "block": "air",
+            "method": "no-op",
+        }
 
     # Check player is close enough (fail fast instead of 15s timeout)
     from bridge.player_control import get_player_distance
@@ -679,6 +808,47 @@ def _break_real(x: int, y: int, z: int) -> dict:
     # Look at the block
     _look_at_block(x, y, z)
     time.sleep(0.1)
+
+    # Verify the crosshair is actually on the intended target. MC's eye-ray
+    # can intersect a nearer block first (angle too shallow, object in the
+    # way), in which case press_attack would mine the *wrong* block and
+    # getblock(target) would never change — a silent 15s timeout. When we
+    # detect an occluder, auto-clear it (recursively, with a depth cap) and
+    # retry. This is what a human does: see dirt in the way, break dirt,
+    # break stone. Only bubble up an error if the occluder is a container
+    # or other block the agent should decide about, or if recursion hits
+    # the depth cap.
+    try:
+        targeted = _ms(minescript.player_get_targeted_block)
+    except Exception:
+        targeted = None
+    if targeted is not None:
+        tpos = tuple(getattr(targeted, "position", ()) or ())
+        if tpos and tpos != (int(x), int(y), int(z)):
+            occluder_type = str(getattr(targeted, "type", "unknown")).split("[")[0].replace("minecraft:", "")
+            tx, ty, tz = tpos
+            if occluder_type in _OCCLUDER_DENYLIST:
+                raise Exception(
+                    f"Crosshair is on {occluder_type} at ({tx}, {ty}, {tz}), not target "
+                    f"({x}, {y}, {z}). Won't auto-break {occluder_type} (container/functional "
+                    f"block) — agent should decide whether to break it."
+                )
+            if _occluder_depth >= 2:
+                raise Exception(
+                    f"Crosshair is on {occluder_type} at ({tx}, {ty}, {tz}), not target "
+                    f"({x}, {y}, {z}). Reached auto-occluder-clear depth limit (2) — target "
+                    f"appears deeply buried, try a different approach."
+                )
+            logger.info(
+                f"break: auto-clearing occluder {occluder_type} at ({tx},{ty},{tz}) "
+                f"to reach target ({x},{y},{z}) [depth={_occluder_depth}]"
+            )
+            _break_real(tx, ty, tz, _occluder_depth + 1)
+            # Re-aim at the true target and re-check; fall through to attack
+            # loop. A fresh getblock is not needed — the target block state
+            # can't have changed just because we broke a neighbor.
+            _look_at_block(x, y, z)
+            time.sleep(0.1)
 
     # Hold attack to mine — press and hold, periodically check if block broke.
     # We sleep 0.25s between iterations and only poll getblock every 3rd
@@ -713,19 +883,6 @@ def _break_real(x: int, y: int, z: int) -> dict:
     raise Exception(f"Timed out breaking {original_block}")
 
 
-def _break_fallback(x: int, y: int, z: int) -> dict:
-    try:
-        name = _ms(minescript.getblock, x, y, z)
-        _ms(minescript.execute, f"/setblock {x} {y} {z} minecraft:air destroy")
-        return {
-            "broken": True,
-            "block": name.replace("minecraft:", "") if name else "unknown",
-            "method": "fallback",
-        }
-    except Exception as e:
-        return {"broken": False, "error": str(e), "method": "fallback"}
-
-
 def collect_items(radius: float = 3.0) -> dict:
     """Walk to and pick up dropped item entities near the player."""
     from bridge.player_control import collect_nearby_items
@@ -734,19 +891,19 @@ def collect_items(radius: float = 3.0) -> dict:
 
 
 def place_block(block: str, x: int, y: int, z: int, face: str = "top") -> dict:
-    """Place a block at coordinates.
+    """Place a block at coordinates via real player actions only.
 
-    Real: select block in hotbar, look at adjacent face, right-click.
-    Fallback: /setblock command.
+    No op-command fallback — if the bot can't reach the placement site,
+    or the press_use doesn't register (GUI open, etc.), the agent gets
+    an honest error rather than a `/setblock` cheat.
     """
     try:
         return _place_real(block, x, y, z, face)
-    except AttributeError:
-        logger.info(f"place: API not available, using fallback for {block}")
-        return _place_fallback(block, x, y, z)
+    except AttributeError as e:
+        return {"placed": False, "error": f"required Minescript APIs missing: {e}", "method": "real"}
     except Exception as e:
-        logger.warning(f"place: real impl failed ({e}), using fallback")
-        return _place_fallback(block, x, y, z)
+        logger.warning(f"place: {e}")
+        return {"placed": False, "error": str(e), "method": "real"}
 
 
 def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
@@ -765,7 +922,12 @@ def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
 
     # Find block in inventory and select it
     if not _select_item(block):
-        return {"placed": False, "error": f"No {block} in inventory", "method": "real"}
+        err = (
+            f"select_slot did not take effect for {block}"
+            if _find_item_slot(block) is not None
+            else f"No {block} in inventory"
+        )
+        return {"placed": False, "error": err, "method": "real"}
 
     # Navigate within reach if needed
     if not _is_within_reach(x, y, z):
@@ -792,49 +954,41 @@ def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
     time.sleep(0.15)
 
     # Verify placement. Three distinct outcomes:
-    #   - getblock raises → unknown, return tolerant True
-    #   - getblock returns the placed block → confirmed True
+    #   - getblock raises → unknown, return tolerant True (verified=False)
+    #   - getblock returns the placed block → confirmed True (verified=True)
     #   - getblock returns "air" → press_use definitively did nothing → False
     try:
         placed_block = _ms(minescript.getblock, x, y, z)
     except Exception as e:
         logger.info(f"place: placed {block} at {x},{y},{z} (real, verify errored: {e})")
-        return {"placed": True, "method": "real"}
+        return {"placed": True, "method": "real", "verified": False, "verify_error": str(e)}
 
     if placed_block and "air" not in placed_block:
         logger.info(f"place: placed {block} at {x},{y},{z} (real)")
-        return {"placed": True, "method": "real"}
+        return {"placed": True, "method": "real", "verified": True}
 
     logger.warning(f"place: press_use did not place {block} at {x},{y},{z} (still air)")
     return {
         "placed": False,
         "error": "press_use did not place block (target still air); is a GUI open?",
         "method": "real",
+        "verified": True,
     }
 
 
-def _place_fallback(block: str, x: int, y: int, z: int) -> dict:
-    try:
-        _ms(minescript.execute, f"/setblock {x} {y} {z} minecraft:{block}")
-        return {"placed": True, "method": "fallback"}
-    except Exception as e:
-        return {"placed": False, "error": str(e), "method": "fallback"}
-
-
 def attack_entity(entity_id: str) -> dict:
-    """Attack an entity.
+    """Attack an entity via real player actions only.
 
-    Real: look at entity, left-click.
-    Fallback: /damage command.
+    No op-command fallback — if the bot isn't in range or can't face the
+    entity, the agent gets an honest error rather than a `/damage` cheat.
     """
     try:
         return _attack_real(entity_id)
-    except AttributeError:
-        logger.info(f"attack: API not available, using fallback for {entity_id}")
-        return _attack_fallback(entity_id)
+    except AttributeError as e:
+        return {"attacked": False, "error": f"required Minescript APIs missing: {e}", "method": "real"}
     except Exception as e:
-        logger.warning(f"attack: real impl failed ({e}), using fallback")
-        return _attack_fallback(entity_id)
+        logger.warning(f"attack: {e}")
+        return {"attacked": False, "error": str(e), "method": "real"}
 
 
 def _attack_real(entity_id: str) -> dict:
@@ -881,14 +1035,6 @@ def _attack_real(entity_id: str) -> dict:
 
     logger.info(f"attack: attacked {entity_id} (real)")
     return {"attacked": True, "method": "real"}
-
-
-def _attack_fallback(entity_id: str) -> dict:
-    try:
-        _ms(minescript.execute, f"/damage @e[name={entity_id},limit=1,sort=nearest] 5")
-        return {"attacked": True, "method": "fallback"}
-    except Exception as e:
-        return {"attacked": False, "error": str(e), "method": "fallback"}
 
 
 # ---------------------------------------------------------------------------
@@ -939,6 +1085,17 @@ _CRAFTING_TABLE_INV_RANGE = (10, 45)  # inclusive on both ends
 _INVENTORY_MENU_INV_RANGE = (9, 44)
 _INVENTORY_MENU_ARMOR_SLOTS = {"head": 5, "chest": 6, "legs": 7, "feet": 8}
 
+# FurnaceMenu (vanilla, 39 slots total):
+#   slot 0      = input / ingredient
+#   slot 1      = fuel
+#   slot 2      = result / output
+#   slots 3-29  = player inventory main (3 rows x 9 cols)
+#   slots 30-38 = hotbar
+_FURNACE_INV_RANGE = (3, 38)
+_FURNACE_INPUT_SLOT = 0
+_FURNACE_FUEL_SLOT = 1
+_FURNACE_OUTPUT_SLOT = 2
+
 
 def craft_item(item: str, count: int = 1) -> dict:
     """Craft items by opening a real crafting menu and clicking ingredients into place.
@@ -953,6 +1110,23 @@ def craft_item(item: str, count: int = 1) -> dict:
     except Exception as e:
         logger.warning(f"craft: real craft failed: {e}")
         return {"crafted": 0, "error": str(e), "method": "real"}
+
+
+def _format_ingredient(name: str, count: int) -> str:
+    """Format an ingredient for error messages, hinting at variants.
+
+    `oak_planks` in a recipe key actually matches any `*_planks`, but the
+    literal name makes the agent think oak is required. Surface the
+    generic suffix instead so Claude sees `3x planks` and can reconcile
+    against `spruce_planks` in its inventory.
+    """
+    from bridge.recipes import VARIANT_SUFFIXES
+
+    suffix = VARIANT_SUFFIXES.get(name)
+    if suffix:
+        generic = suffix.lstrip("_")
+        return f"{count}x {generic} (any variant)"
+    return f"{count}x {name}"
 
 
 def _craft_real(item: str, count: int) -> dict:
@@ -983,7 +1157,7 @@ def _craft_real(item: str, count: int) -> dict:
     have = _get_inventory_counts()
     resolved = resolve_ingredients(required, have)
     if resolved is None:
-        need_str = ", ".join(f"{v}x {k}" for k, v in required.items())
+        need_str = ", ".join(_format_ingredient(k, v) for k, v in required.items())
         have_str = ", ".join(f"{v}x {k}" for k, v in have.items()) if have else "nothing"
         return {
             "crafted": 0,
@@ -1003,14 +1177,18 @@ def _craft_real(item: str, count: int) -> dict:
 
 def _craft_via_table(recipe, crafts_needed: int, grid_slots: dict[int, str]) -> dict:
     """Open a nearby crafting_table block and run crafts_needed iterations."""
-    table_blocks = get_nearby_blocks(radius=4, block_types=["crafting_table"])
+    # Scan at baritone's nav range, not a tight reach radius. The old radius=4
+    # was a vestigial policy check from the simulated-crafting era that
+    # second-guessed the real reach enforcement (_navigate_near + container_open)
+    # below. See plan: frolicking-spinning-biscuit.md Fix 3.
+    table_blocks = get_nearby_blocks(radius=16, block_types=["crafting_table"])
     if not table_blocks:
         return {
             "crafted": 0,
-            "error": f"Cannot craft {recipe.output}: requires a crafting table within 4 blocks.",
+            "error": f"Cannot craft {recipe.output}: no crafting table nearby. Place one first.",
             "method": "real",
         }
-    tb = table_blocks[0]
+    tb = table_blocks[0]  # scanner pre-sorts by distance
     tx, ty, tz = tb["x"], tb["y"], tb["z"]
 
     if not _is_within_reach(tx, ty, tz):
@@ -1344,15 +1522,103 @@ def _cleanup_grid_into_inventory(grid_slots: list[int]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def smelt_item(item: str, count: int = 1) -> dict:
-    """Smelt items in a nearby furnace using container APIs.
+def _insert_stack_into_container_slot(
+    item_name: str,
+    amount: int,
+    container_slot: int,
+    inv_slot_range: tuple[int, int],
+    matches=None,
+) -> tuple[int, str | None]:
+    """Move `amount` units of `item_name` from player inventory into a
+    single container slot using real container clicks.
 
-    Opens the furnace GUI, inserts input + fuel, waits for smelting,
-    then extracts the output. Requires a placed furnace within 4 blocks.
+    Click model per source stack (mirrors _perform_crafts_in_open_menu):
+      1. left-click source  — pick up entire stack to cursor
+      2. right-click dest N times (N = min(stack_count, remaining)) — deposit 1 each
+      3. left-click source  — drop remainder back; re-stacks since same item.
+         Skipped if step 2 drained the cursor.
+
+    `matches(required, available)` is an optional variant-aware comparator
+    (required == recipe ingredient, available == inventory item name).  Defaults
+    to exact match after stripping the `minecraft:` prefix.
+
+    Returns (placed, error_or_None).  Attempts up to 4 source stacks so a
+    request split across multiple slots (e.g. partial stacks) still succeeds.
+    """
+    if amount <= 0:
+        return 0, None
+    inv_lo, inv_hi = inv_slot_range
+    match_fn = matches or (lambda need, have: need == have)
+    placed = 0
+    remaining = amount
+
+    for _attempt in range(4):
+        if remaining <= 0:
+            return placed, None
+        try:
+            items = _ms(minescript.container_get_items)
+        except Exception as e:
+            return placed, f"container_get_items failed: {e}"
+
+        inv_slot = None
+        stack_count = 0
+        for ci in items:
+            slot = getattr(ci, "slot", None)
+            name = (getattr(ci, "item", "") or "").replace("minecraft:", "")
+            count = getattr(ci, "count", 0)
+            if slot is None or count <= 0 or not name:
+                continue
+            if slot < inv_lo or slot > inv_hi:
+                continue
+            if match_fn(item_name, name):
+                inv_slot = slot
+                stack_count = count
+                break
+        if inv_slot is None:
+            return placed, (
+                f"No more {item_name} in inventory (inv slots {inv_lo}-{inv_hi}); "
+                f"placed {placed}/{amount}"
+            )
+
+        try:
+            _ms(minescript.container_click_slot, inv_slot, 0, False)  # pick up
+            _tick_sleep(1)
+        except Exception as e:
+            return placed, f"pickup click failed: {e}"
+
+        n = min(stack_count, remaining)
+        try:
+            for _ in range(n):
+                _ms(minescript.container_click_slot, container_slot, 1, False)  # right-click deposit
+                _tick_sleep(1)
+        except Exception as e:
+            return placed, f"deposit click failed after {placed} placed: {e}"
+        placed += n
+        remaining -= n
+
+        if n < stack_count:
+            try:
+                _ms(minescript.container_click_slot, inv_slot, 0, False)  # drop remainder back
+                _tick_sleep(1)
+            except Exception as e:
+                return placed, f"re-stack click failed after {placed} placed: {e}"
+
+    if remaining > 0:
+        return placed, f"Could not place all {amount} {item_name}; placed {placed}"
+    return placed, None
+
+
+def smelt_item(item: str, count: int = 1) -> dict:
+    """Smelt items in a nearby furnace using real container clicks.
+
+    Opens the furnace menu, left-/right-clicks input and fuel into the
+    input (slot 0) and fuel (slot 1) slots, polls the block's `lit` state
+    until smelting completes, then shift-clicks the result (slot 2) back
+    into the player inventory.  Verifies the extraction via a before/after
+    inventory snapshot.
     """
     from bridge.recipes import (
-        get_smelting_recipe, get_fuel_value,
-        _matches_smelting_input, SMELTING_VARIANT_SUFFIXES,
+        get_smelting_recipe, get_fuel_value, _matches_smelting_input,
     )
 
     item = item.replace("minecraft:", "")
@@ -1362,15 +1628,13 @@ def smelt_item(item: str, count: int = 1) -> dict:
 
     count = min(count, 64)  # furnace slots cap at 64
 
-    # Find a furnace nearby
-    furnace_blocks = get_nearby_blocks(radius=4, block_types=["furnace", "lit_furnace"])
+    furnace_blocks = get_nearby_blocks(radius=16, block_types=["furnace", "lit_furnace"])
     if not furnace_blocks:
-        return {"smelted": 0, "error": "No furnace within 4 blocks. Place one first.", "method": "real"}
+        return {"smelted": 0, "error": "No furnace nearby. Place one first.", "method": "real"}
 
     fb = furnace_blocks[0]
     fx, fy, fz = fb["x"], fb["y"], fb["z"]
 
-    # Check player has input items (with variant matching)
     have = _get_inventory_counts()
     input_item = recipe.input
     actual_input = None
@@ -1379,15 +1643,10 @@ def smelt_item(item: str, count: int = 1) -> dict:
             actual_input = inv_item
             break
     if actual_input is None:
-        return {
-            "smelted": 0,
-            "error": f"No {input_item} in inventory.",
-            "method": "real",
-        }
+        return {"smelted": 0, "error": f"No {input_item} in inventory.", "method": "real"}
     available_input = have.get(actual_input, 0)
     smelt_count = min(count, available_input)
 
-    # Find fuel in inventory
     actual_fuel = None
     fuel_value = 0
     for inv_item, inv_count in have.items():
@@ -1402,95 +1661,93 @@ def smelt_item(item: str, count: int = 1) -> dict:
     fuel_needed = math.ceil(smelt_count / fuel_value)
     fuel_available = have.get(actual_fuel, 0)
     if fuel_available < fuel_needed:
-        # Smelt as many as fuel allows
         smelt_count = int(fuel_available * fuel_value)
         fuel_needed = fuel_available
         if smelt_count <= 0:
             return {"smelted": 0, "error": "Not enough fuel.", "method": "real"}
 
-    # Navigate within reach
     from bridge.player_control import navigate_near
     if not _is_within_reach(fx, fy, fz):
         if not navigate_near(fx, fy, fz, reach=3.5):
             return {"smelted": 0, "error": "Could not reach furnace.", "method": "real"}
 
-    # Open furnace
     try:
         _ms(minescript.container_open, fx, fy, fz)
     except Exception as e:
         return {"smelted": 0, "error": f"Failed to open furnace: {e}", "method": "real"}
-    time.sleep(0.3)
+    _tick_sleep(2)  # let the furnace screen settle before clicking
+    if not _is_any_screen_open():
+        return {"smelted": 0, "error": "Furnace menu did not open.", "method": "real"}
 
-    # Extract any existing output first (preserve items)
+    before_output = _get_inventory_counts().get(recipe.output, 0)
+    delta = 0
+    err: str | None = None
+
     try:
-        existing = _ms(minescript.container_get_items)
-        if existing:
-            # Shift-click output slot (slot 2) to extract to player inventory
-            output_item = None
-            for ci in existing:
-                slot = getattr(ci, "slot", None)
-                if slot == 2:
-                    output_item = ci
-                    break
-            if output_item is not None:
-                _ms(minescript.container_click_slot, 2, 0, True)  # shift-click
-                time.sleep(0.1)
-    except Exception:
-        pass
-
-    # Insert input items via /clear from player + /item replace into furnace
-    # Using commands is more reliable than clicking slots when item locations vary
-    _ms(minescript.execute, f"/clear @s minecraft:{actual_input} {smelt_count}")
-    # Put items directly into furnace input slot (container slot 0)
-    # We need to close first to use /item replace block, then reopen
-    try:
-        _ms(minescript.container_close)
-    except Exception:
-        pass
-    time.sleep(0.1)
-
-    _ms(
-        minescript.execute,
-        f"/item replace block {fx} {fy} {fz} container.0 "
-        f"with minecraft:{actual_input} {smelt_count}",
-    )
-    # Insert fuel into furnace fuel slot (container slot 1)
-    _ms(minescript.execute, f"/clear @s minecraft:{actual_fuel} {fuel_needed}")
-    _ms(
-        minescript.execute,
-        f"/item replace block {fx} {fy} {fz} container.1 "
-        f"with minecraft:{actual_fuel} {fuel_needed}",
-    )
-
-    # Wait for smelting: poll getblock for lit=false
-    # Each item takes ~10 seconds (200 ticks)
-    smelt_time = smelt_count * 10 + 5  # buffer
-    deadline = time.monotonic() + smelt_time
-    time.sleep(2)  # initial wait for furnace to light
-
-    while time.monotonic() < deadline:
+        # Preserve any pre-existing output by shift-clicking it into player inv first.
         try:
-            block_state = _ms(minescript.getblock, fx, fy, fz)
-            if block_state and "lit=false" in block_state:
-                # Furnace stopped — smelting complete (or out of fuel)
-                break
+            existing = _ms(minescript.container_get_items)
+            for ci in existing or []:
+                if getattr(ci, "slot", None) == _FURNACE_OUTPUT_SLOT:
+                    name = (getattr(ci, "item", "") or "").replace("minecraft:", "")
+                    if name:
+                        _ms(minescript.container_click_slot, _FURNACE_OUTPUT_SLOT, 0, True)
+                        _tick_sleep(2)
+                    break
         except Exception:
             pass
-        time.sleep(2)
 
-    time.sleep(0.5)
+        placed_input, ierr = _insert_stack_into_container_slot(
+            actual_input, smelt_count, _FURNACE_INPUT_SLOT,
+            _FURNACE_INV_RANGE, matches=_matches_smelting_input,
+        )
+        if placed_input < smelt_count:
+            err = ierr or f"Only placed {placed_input}/{smelt_count} {actual_input} in input slot"
+            return {"smelted": 0, "error": err, "method": "real"}
 
-    # Extract output: /item replace from furnace output to player
-    _ms(
-        minescript.execute,
-        f"/item replace entity @s container.0 "
-        f"from block {fx} {fy} {fz} container.2",
+        placed_fuel, ferr = _insert_stack_into_container_slot(
+            actual_fuel, fuel_needed, _FURNACE_FUEL_SLOT,
+            _FURNACE_INV_RANGE,
+        )
+        if placed_fuel < fuel_needed:
+            err = ferr or f"Only placed {placed_fuel}/{fuel_needed} {actual_fuel} in fuel slot"
+            return {"smelted": 0, "error": err, "method": "real"}
+
+        # Wait for smelting: poll getblock for lit=false.
+        # Each item takes ~10 game seconds (200 ticks); the +5s buffer covers
+        # ignition latency and the 2s polling granularity.  Container APIs
+        # remain usable while the menu is open, so no close/reopen dance.
+        smelt_time = smelt_count * 10 + 5
+        deadline = time.monotonic() + smelt_time
+        time.sleep(2)  # let the furnace light
+        while time.monotonic() < deadline:
+            try:
+                block_state = _ms(minescript.getblock, fx, fy, fz)
+                if block_state and "lit=false" in block_state:
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+        time.sleep(0.5)  # let the final tick's output item settle into slot 2
+
+        # Extract output via shift-click; verify via inventory delta.
+        try:
+            _ms(minescript.container_click_slot, _FURNACE_OUTPUT_SLOT, 0, True)
+            _tick_sleep(2)
+        except Exception as e:
+            err = f"Failed to shift-click output: {e}"
+            return {"smelted": 0, "error": err, "method": "real"}
+
+        after_output = _get_inventory_counts().get(recipe.output, 0)
+        delta = after_output - before_output
+        if delta <= 0:
+            err = "Output extraction yielded nothing (inventory full?)"
+            return {"smelted": 0, "error": err, "method": "real"}
+    finally:
+        _close_open_screen()
+
+    logger.info(
+        f"smelt: smelted {delta} {recipe.output} from {actual_input} with "
+        f"{fuel_needed}x {actual_fuel} ({smelt_count} requested)"
     )
-    # Clear furnace output slot
-    _ms(
-        minescript.execute,
-        f"/item replace block {fx} {fy} {fz} container.2 with minecraft:air",
-    )
-
-    logger.info(f"smelt: smelted {smelt_count} {item} from {actual_input} with {actual_fuel} fuel")
-    return {"smelted": smelt_count, "output": item, "fuel_used": fuel_needed, "method": "real"}
+    return {"smelted": delta, "output": recipe.output, "fuel_used": fuel_needed, "method": "real"}

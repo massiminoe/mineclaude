@@ -2,8 +2,22 @@
 
 import pytest
 
-from agent.bridge import MockBridgeClient
-from agent.primitives import make_primitives
+from agent.bridge import BridgeResponse, MockBridgeClient
+from agent.primitives import _check, make_primitives
+
+
+def test_check_returns_message_on_success():
+    assert _check(BridgeResponse("success", "did the thing")) == "did the thing"
+
+
+def test_check_raises_on_error():
+    with pytest.raises(RuntimeError, match="nope"):
+        _check(BridgeResponse("error", "nope"))
+
+
+def test_check_prefixes_partial():
+    """Partial successes must be surfaced so Claude sees '[partial]' in tool results."""
+    assert _check(BridgeResponse("partial", "crafted 5 of 10")) == "[partial] crafted 5 of 10"
 
 
 @pytest.fixture

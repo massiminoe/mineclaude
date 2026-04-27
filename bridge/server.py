@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 import traceback
@@ -21,7 +22,8 @@ from aiohttp import web
 import re
 
 from bridge import minescript_api, baritone, screenshot as screenshot_mod
-from bridge.minescript_api import _ms, _ms_lock
+from bridge.minescript_api import _ms, _ms_lock, RPCTimeout
+from bridge.mutation_log import log_mutation, get_mutations
 from bridge.recipes import get_recipe, get_required_ingredients
 from bridge.world_cache import WorldCache
 
@@ -41,6 +43,16 @@ _ws_clients: set[web.WebSocketResponse] = set()
 # by GET handlers. See bridge/world_cache.py for the accuracy model.
 _world_cache: WorldCache = WorldCache()
 
+# Count of in-flight `_run()` calls (i.e. commands currently holding the
+# executor thread). Read by the WorldCache scanner so it can skip its
+# chunked block re-scan while a foreground command is running — this
+# keeps the scanner and the executor from drumming the Minescript stdin
+# pipe simultaneously, which is where the Java-side stdout-writer race
+# fires most reliably. Protected by a plain Lock because `+= 1` isn't
+# atomic and we need consistent reads from the scanner thread.
+_executor_busy: int = 0
+_executor_busy_lock = threading.Lock()
+
 
 def _ok(data: dict | list | None = None, message: str = "ok") -> dict:
     return {"status": "success", "message": message, "data": data or {}}
@@ -50,15 +62,100 @@ def _err(message: str) -> dict:
     return {"status": "error", "message": message, "data": {}}
 
 
+def _partial(data: dict | list | None = None, message: str = "partial") -> dict:
+    """Response for operations that partially succeeded.
+
+    Use when the agent asked for N but we delivered M<N, or when an action
+    completed but couldn't be verified. The agent-side tool dispatcher turns
+    this into a `[status=partial ...]` header so Claude can react rather than
+    falsely assume full success.
+    """
+    return {"status": "partial", "message": message, "data": data or {}}
+
+
 async def _run(fn, *args):
-    """Run a blocking function in the thread pool."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, partial(fn, *args))
+    """Run a blocking function in the thread pool.
+
+    Tracks `_executor_busy` so the WorldCache scanner can yield to
+    foreground commands. Any `RPCTimeout` raised inside `fn` propagates
+    out — the `@web.middleware` catches it and returns a clean 503.
+    """
+    global _executor_busy
+    with _executor_busy_lock:
+        _executor_busy += 1
+    try:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(_executor, partial(fn, *args))
+    finally:
+        with _executor_busy_lock:
+            _executor_busy -= 1
+
+
+@web.middleware
+async def rpc_timeout_middleware(request: web.Request, handler):
+    """Translate RPCTimeout from any handler into a 503 with a clean body.
+
+    RPCTimeout means the Minescript stdout-writer race dropped a response
+    packet and our _ms() wait timed out. The channel should be healthy for
+    the next call, but this one's toast. Return 503 so the agent's
+    BridgeClient can surface it distinctly from a generic 500/traceback.
+    """
+    try:
+        return await handler(request)
+    except RPCTimeout as e:
+        logger.error(f"RPCTimeout during {request.method} {request.path}: {e}")
+        return web.json_response(
+            _err(f"Minescript RPC dropped response: {e}"),
+            status=503,
+        )
 
 
 # ---------------------------------------------------------------------------
 # HTTP route handlers
 # ---------------------------------------------------------------------------
+
+async def handle_health(request: web.Request) -> web.Response:
+    """Diagnostic snapshot of the Minescript RPC channel state.
+
+    Returns 200 + healthy body when no RPC is obviously stuck, 503 when a
+    single _ms() call has been in flight longer than 2 × RPC_TIMEOUT_S
+    (which shouldn't happen in the healthy state — _ms itself would have
+    timed out and raised RPCTimeout by then — so 503 here means something
+    bypassed the normal wrapper or the wrapper itself is broken).
+
+    Exposes the RPC timeout counter so the frontend/agent can see how
+    often the stdout-writer race is firing without having to scrape logs.
+    Never touches _ms_lock, so it's always answerable even when the
+    executor path is wedged.
+    """
+    now = time.monotonic()
+    start = minescript_api._last_rpc_start_ts
+    end = minescript_api._last_rpc_end_ts
+    busy = (start > end) if start else False
+    in_flight_s = (now - start) if busy else 0.0
+    stuck = in_flight_s > (minescript_api.RPC_TIMEOUT_S * 2)
+
+    last_timeout_ts = minescript_api._last_rpc_timeout_ts
+    last_timeout_ago = (now - last_timeout_ts) if last_timeout_ts else None
+
+    data = {
+        "rpc_timeouts_total": minescript_api._rpc_timeouts_total,
+        "last_timeout_fn": minescript_api._last_rpc_timeout_fn or None,
+        "last_timeout_s_ago": round(last_timeout_ago, 1) if last_timeout_ago is not None else None,
+        "current_rpc_fn": minescript_api._last_rpc_fn or None,
+        "current_rpc_thread": minescript_api._last_rpc_thread or None,
+        "current_rpc_in_flight_s": round(in_flight_s, 2),
+        "executor_busy": _executor_busy,
+        "stuck": stuck,
+    }
+
+    if stuck:
+        return web.json_response(
+            {"status": "error", "message": "RPC channel stuck", "data": data},
+            status=503,
+        )
+    return web.json_response(_ok(data, "healthy"))
+
 
 async def handle_status(request: web.Request) -> web.Response:
     # Fast path: cache (updated every 2s by scanner thread)
@@ -91,16 +188,21 @@ async def handle_nearby_entities(request: web.Request) -> web.Response:
     return web.json_response(_ok({"entities": entities}, f"Found {len(entities)} entities"))
 
 
+@log_mutation
 async def handle_goto(request: web.Request) -> web.Response:
     body = await request.json()
     x, y, z = body.get("x", 0), body.get("y", 0), body.get("z", 0)
     timeout = body.get("timeout", 60)
     result = await _run(minescript_api.goto_and_wait, x, y, z, timeout)
+    # Position and surrounding blocks have changed — force both to re-scan.
+    _world_cache.invalidate_blocks()
+    _world_cache.invalidate_status()
     if result.get("arrived"):
         return web.json_response(_ok(result, f"Arrived at {x}, {y}, {z}"))
-    return web.json_response(_ok(result, result.get("error", f"Failed to reach {x}, {y}, {z}")))
+    return web.json_response(_err(result.get("error", f"Failed to reach {x}, {y}, {z}")))
 
 
+@log_mutation
 async def handle_mine(request: web.Request) -> web.Response:
     body = await request.json()
     block = body.get("block", "")
@@ -109,9 +211,15 @@ async def handle_mine(request: web.Request) -> web.Response:
         return web.json_response(_err("Missing 'block' parameter"), status=400)
     cmd = baritone.mine(block, count)
     await _run(minescript_api.send_chat, cmd)
+    # Baritone is async — it will break blocks and move the player in the
+    # background. Invalidate so the scanner picks up the changes ASAP rather
+    # than serving 20s-stale data while Baritone is working.
+    _world_cache.invalidate_blocks()
+    _world_cache.invalidate_status()
     return web.json_response(_ok({"command": cmd}, f"Mining {count} {block}" if count else f"Mining {block}"))
 
 
+@log_mutation
 async def handle_follow(request: web.Request) -> web.Response:
     body = await request.json()
     player = body.get("player", "")
@@ -119,6 +227,8 @@ async def handle_follow(request: web.Request) -> web.Response:
         return web.json_response(_err("Missing 'player' parameter"), status=400)
     cmd = baritone.follow(player)
     await _run(minescript_api.send_chat, cmd)
+    _world_cache.invalidate_blocks()
+    _world_cache.invalidate_status()
     return web.json_response(_ok({"command": cmd}, f"Following {player}"))
 
 
@@ -134,6 +244,7 @@ async def handle_stop(request: web.Request) -> web.Response:
     return web.json_response(_ok({"command": cmd}, "Stopped"))
 
 
+@log_mutation
 async def handle_place(request: web.Request) -> web.Response:
     body = await request.json()
     block = body.get("block", "")
@@ -143,41 +254,87 @@ async def handle_place(request: web.Request) -> web.Response:
         return web.json_response(_err("Missing 'block' parameter"), status=400)
     result = await _run(minescript_api.place_block, block, x, y, z, face)
     if result.get("placed"):
-        # Write-through: update cache immediately so subsequent queries see the placement
+        # Write-through: block cache updated instantly, status force-refreshed
+        # synchronously so the inventory decrement lands before the next query.
         _world_cache.on_block_placed(block, int(x), int(y), int(z))
-        return web.json_response(_ok(result, f"Placed {block} at {x}, {y}, {z}"))
+        await _run(_world_cache.force_refresh_status)
+        msg = f"Placed {block} at {x}, {y}, {z}"
+        # Tolerant success (getblock verify errored) → agent should know this
+        # placement isn't confirmed, so tag it as partial.
+        if result.get("verified") is False:
+            return web.json_response(_partial(result, msg + " (unverified)"))
+        return web.json_response(_ok(result, msg))
     return web.json_response(_err(result.get("error", "Failed to place block")))
 
 
+@log_mutation
 async def handle_break(request: web.Request) -> web.Response:
     body = await request.json()
     x, y, z = body.get("x", 0), body.get("y", 0), body.get("z", 0)
     result = await _run(minescript_api.break_block, x, y, z)
     if result.get("broken"):
-        # Write-through: remove from cache immediately so next query doesn't resurrect it
+        # Idempotent no-op (block was already air): cache may still think the
+        # block is present from a stale scan, so clear it. No durability or
+        # drops to account for — skip force_refresh_status.
+        if result.get("already_gone"):
+            _world_cache.on_block_broken(int(x), int(y), int(z))
+            return web.json_response(_ok(
+                result,
+                f"Block at {x}, {y}, {z} was already air (no-op)",
+            ))
+        # Write-through removes the block; force_refresh_status picks up tool
+        # durability loss; entities cache refresh picks up the dropped item.
         _world_cache.on_block_broken(int(x), int(y), int(z))
+        _world_cache.invalidate_entities()
+        await _run(_world_cache.force_refresh_status)
         return web.json_response(_ok(result, f"Broke block at {x}, {y}, {z}"))
     return web.json_response(_err(result.get("error", "Failed to break block")))
 
 
+@log_mutation
 async def handle_collect(request: web.Request) -> web.Response:
     body = await request.json()
     radius = float(body.get("radius", 3))
     result = await _run(minescript_api.collect_items, radius)
     count = result.get("collected", 0)
+    # Picked-up items mutate inventory (status) and remove item entities.
+    # Force-refresh status synchronously — `/collect` also captures auto-pickups
+    # that happened during Baritone travel for preceding breaks, which didn't
+    # fire force_refresh at the moment of pickup. Without this, the cache can
+    # be 2s behind (next scanner tick) and the next iteration's gameState
+    # underreports inventory — Claude then re-does work it already completed.
+    _world_cache.invalidate_entities()
+    await _run(_world_cache.force_refresh_status)
     msg = f"Collected {count} item(s)" if count else "No items to collect"
     return web.json_response(_ok(result, msg))
 
 
+@log_mutation
 async def handle_attack(request: web.Request) -> web.Response:
     body = await request.json()
     entity_id = body.get("entity_id", "")
     if not entity_id:
         return web.json_response(_err("Missing 'entity_id' parameter"), status=400)
     result = await _run(minescript_api.attack_entity, entity_id)
+    # Entity health changed (and we may have damaged a tool → durability).
+    _world_cache.invalidate_entities()
+    _world_cache.invalidate_status()
     if result.get("attacked"):
         return web.json_response(_ok(result, f"Attacked {entity_id}"))
     return web.json_response(_err(result.get("error", "Failed to attack")))
+
+
+def _display_ingredient(name: str) -> str:
+    """Collapse a canonical ingredient name to its generic form.
+
+    Recipes key on a single representative variant (e.g. `oak_planks`), but
+    actually accept any variant with the matching suffix. Reporting "used 3
+    oak_planks" when the bot actually consumed spruce_planks is misleading,
+    so we display the generic (`planks`) when the ingredient is variant-keyed.
+    """
+    from bridge.recipes import VARIANT_SUFFIXES
+    suffix = VARIANT_SUFFIXES.get(name)
+    return suffix.lstrip("_") if suffix else name
 
 
 def _format_craft_message(item: str, requested: int, crafted: int) -> str:
@@ -193,7 +350,7 @@ def _format_craft_message(item: str, requested: int, crafted: int) -> str:
     if recipe is not None:
         crafts_run = crafted // recipe.output_count
         ingredients = get_required_ingredients(clean_item, crafted) or {}
-        used_str = ", ".join(f"{n} {ing}" for ing, n in ingredients.items())
+        used_str = ", ".join(f"{n} {_display_ingredient(ing)}" for ing, n in ingredients.items())
         detail_parts = []
         if crafts_run > 1:
             detail_parts.append(f"{crafts_run} crafts")
@@ -206,6 +363,7 @@ def _format_craft_message(item: str, requested: int, crafted: int) -> str:
     return msg
 
 
+@log_mutation
 async def handle_craft(request: web.Request) -> web.Response:
     body = await request.json()
     item = body.get("item", "")
@@ -213,12 +371,20 @@ async def handle_craft(request: web.Request) -> web.Response:
     if not item:
         return web.json_response(_err("Missing 'item' parameter"), status=400)
     result = await _run(minescript_api.craft_item, item, count)
+    # Force-refresh status synchronously so the very next inventory/status
+    # query (likely Claude's next iteration) sees the crafted output.
+    await _run(_world_cache.force_refresh_status)
     crafted = result.get("crafted", 0)
-    if crafted > 0:
-        return web.json_response(_ok(result, _format_craft_message(item, count, crafted)))
-    return web.json_response(_err(result.get("error", "Failed to craft")))
+    enriched = {**result, "requested": count, "actual": crafted}
+    if crafted == 0:
+        return web.json_response(_err(result.get("error", "Failed to craft")))
+    msg = _format_craft_message(item, count, crafted)
+    if crafted < count:
+        return web.json_response(_partial(enriched, msg))
+    return web.json_response(_ok(enriched, msg))
 
 
+@log_mutation
 async def handle_smelt(request: web.Request) -> web.Response:
     body = await request.json()
     item = body.get("item", "")
@@ -226,11 +392,18 @@ async def handle_smelt(request: web.Request) -> web.Response:
     if not item:
         return web.json_response(_err("Missing 'item' parameter"), status=400)
     result = await _run(minescript_api.smelt_item, item, count)
-    if result.get("smelted", 0) > 0:
-        return web.json_response(_ok(result, f"Smelted {result['smelted']} {item}"))
-    return web.json_response(_err(result.get("error", "Failed to smelt")))
+    await _run(_world_cache.force_refresh_status)
+    smelted = result.get("smelted", 0)
+    enriched = {**result, "requested": count, "actual": smelted}
+    if smelted == 0:
+        return web.json_response(_err(result.get("error", "Failed to smelt")))
+    msg = f"Smelted {smelted} {item}"
+    if smelted < count:
+        return web.json_response(_partial(enriched, msg + f" (wanted {count})"))
+    return web.json_response(_ok(enriched, msg))
 
 
+@log_mutation
 async def handle_equip(request: web.Request) -> web.Response:
     body = await request.json()
     item = body.get("item", "")
@@ -238,11 +411,13 @@ async def handle_equip(request: web.Request) -> web.Response:
     if not item:
         return web.json_response(_err("Missing 'item' parameter"), status=400)
     result = await _run(minescript_api.equip_item, item, slot)
+    await _run(_world_cache.force_refresh_status)
     if result.get("equipped"):
         return web.json_response(_ok(result, f"Equipped {item} to {slot}"))
     return web.json_response(_err(result.get("error", "Failed to equip")))
 
 
+@log_mutation
 async def handle_discard(request: web.Request) -> web.Response:
     body = await request.json()
     item = body.get("item", "")
@@ -250,6 +425,7 @@ async def handle_discard(request: web.Request) -> web.Response:
     if not item:
         return web.json_response(_err("Missing 'item' parameter"), status=400)
     result = await _run(minescript_api.discard_item, item, count)
+    await _run(_world_cache.force_refresh_status)
     if result.get("discarded", 0) > 0:
         return web.json_response(_ok(result, f"Discarded {count} {item}"))
     return web.json_response(_err(result.get("error", "Failed to discard")))
@@ -468,9 +644,23 @@ async def handle_screenshot(request: web.Request) -> web.Response:
 
 
 async def handle_video_stream(request: web.Request) -> web.StreamResponse:
-    """MJPEG video stream via persistent ffmpeg x11grab process."""
+    """MJPEG video stream via persistent ffmpeg x11grab process.
+
+    Applies an ffmpeg `eq` filter to lift shadows so the monitor view stays
+    usable when the bot is mining underground without torches. This is
+    deliberately only on the stream path — the agent's `/screenshot`
+    endpoint in bridge/screenshot.py stays untouched so Claude's vision
+    tool still sees authentic game lighting. Tunable at runtime via the
+    `MONITOR_VIDEO_FILTER` env var; set it to an empty string to disable.
+    """
     fps = min(int(request.query.get("fps", 10)), 15)
     quality = int(request.query.get("quality", 5))  # ffmpeg q:v scale: 2=best, 31=worst
+
+    video_filter = os.environ.get(
+        "MONITOR_VIDEO_FILTER",
+        "eq=gamma=2.0:brightness=0.08:contrast=1.15",
+    )
+    vf_args = ["-vf", video_filter] if video_filter else []
 
     response = web.StreamResponse()
     response.content_type = "multipart/x-mixed-replace; boundary=frame"
@@ -481,6 +671,7 @@ async def handle_video_stream(request: web.Request) -> web.StreamResponse:
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg",
         "-f", "x11grab", "-r", str(fps), "-video_size", "854x480", "-i", ":99",
+        *vf_args,
         "-vcodec", "mjpeg", "-q:v", str(quality), "-f", "mjpeg", "pipe:1",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
     )
@@ -518,6 +709,21 @@ async def handle_video_stream(request: web.Request) -> web.StreamResponse:
         await proc.wait()
         logger.info("Video stream client disconnected, ffmpeg killed")
     return response
+
+
+async def handle_mutations(request: web.Request) -> web.Response:
+    """Return recent entries from the bridge mutation log."""
+    since_raw = request.query.get("since", "")
+    try:
+        since_ts = float(since_raw) if since_raw else None
+    except ValueError:
+        since_ts = None
+    try:
+        limit = min(int(request.query.get("limit", 100)), 1000)
+    except ValueError:
+        limit = 100
+    entries = get_mutations(since=since_ts, limit=limit)
+    return web.json_response(_ok({"mutations": entries}, f"{len(entries)} entries"))
 
 
 async def handle_chat(request: web.Request) -> web.Response:
@@ -695,12 +901,14 @@ async def cleanup_background_tasks(app: web.Application) -> None:
 # ---------------------------------------------------------------------------
 
 def create_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[rpc_timeout_middleware])
 
     # GET routes
     app.router.add_get("/status", handle_status)
     app.router.add_get("/nearby/blocks", handle_nearby_blocks)
     app.router.add_get("/nearby/entities", handle_nearby_entities)
+    app.router.add_get("/health", handle_health)
+    app.router.add_get("/mutations", handle_mutations)
 
     # POST routes
     app.router.add_post("/goto", handle_goto)

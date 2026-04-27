@@ -28,6 +28,10 @@ services:
     environment:
       DISPLAY: ":99"
       LIBGL_ALWAYS_SOFTWARE: "1"
+      # Monitor-only video filter — brightens the /video/stream feed so dark
+      # caves stay visible. Does NOT affect /screenshot (agent vision). Set
+      # to "" to disable, or tweak gamma/brightness/contrast to taste.
+      # MONITOR_VIDEO_FILTER: "eq=gamma=2.0:brightness=0.08:contrast=1.15"
     ports:
       - "8080:8080"
     volumes:
