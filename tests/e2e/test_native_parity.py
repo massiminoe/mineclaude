@@ -194,14 +194,26 @@ def test_equip_native_missing_item():
     assert "item" in body["message"].lower()
 
 
-def test_equip_native_armor_rejected():
-    """Phase 2 native /equip is hand/offhand only. Armor slots return an
-    error directing the caller to the legacy bridge — this is what keeps
-    /equip off NATIVE_ENDPOINTS for now."""
+def test_equip_native_armor_no_item():
+    """Phase 2b native /equip handles armor slots, but the empty bot
+    has no helmet. The shape we lock in: 200 + status:"error" + message
+    mentioning the missing item — NOT a 500 (would mean the route
+    itself crashed) and NOT 'armor not supported' (would mean Phase 2b
+    didn't land)."""
     code, body = _post(f"{NATIVE}/equip", {"item": "iron_helmet", "slot": "head"})
-    assert code == 200  # API-level success; semantic failure in body
+    assert code == 200, body
     assert body["status"] == "error"
-    assert "armor" in body["message"].lower() or "head" in body["message"]
+    msg = body["message"].lower()
+    assert "iron_helmet" in body["message"] or "no" in msg or "inventory" in msg
+    assert "not yet support" not in msg, "Phase 2b should support armor slots"
+
+
+def test_equip_native_unknown_slot():
+    """Unknown slot strings should fail cleanly, not crash."""
+    code, body = _post(f"{NATIVE}/equip", {"item": "stone", "slot": "left_pocket"})
+    assert code == 200, body
+    assert body["status"] == "error"
+    assert "left_pocket" in body["message"]
 
 
 def test_equip_native_unknown_item():

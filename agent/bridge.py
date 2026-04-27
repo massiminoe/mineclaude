@@ -62,11 +62,14 @@ NATIVE_ENDPOINTS: frozenset[str] = frozenset(
         # Minescript) can intercept; `/`-prefixed via sendChatCommand;
         # plain text wrapped in /tellraw to dodge signed-chat disconnect.
         "/chat",
-        # /equip and /discard intentionally NOT routed yet. The native
-        # impls exist (mc-mod EquipRoute / DiscardRoute) but are hotbar-only;
-        # routing them would regress the legacy `/item replace` shuffle for
-        # non-hotbar inventory items. Phase 2b will land that helper and
-        # flip these on.
+        # Phase 2b — inventory-touching writes. The native impls now use
+        # `interactionManager.clickSlot` (PICKUP / SWAP) instead of the
+        # broken `player_inventory_slot_to_hotbar` API path, so they can
+        # handle non-hotbar items (slow path stages into the hotbar, drops
+        # / equips, then SWAPs back to preserve layout) and armor slots
+        # (pickup-then-place into PSH 5..8 with server-side validation).
+        "/equip",
+        "/discard",
         # /probe intentionally not routed: the legacy and native bodies are
         # different shapes (legacy dumps Minescript Python APIs; native
         # identifies the bridge). Agent doesn't consume /probe today, so

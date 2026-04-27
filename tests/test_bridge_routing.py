@@ -37,14 +37,13 @@ def test_routed_endpoint_uses_native(client: RealBridgeClient):
         assert client._client_for("/place") is client._http
 
 
-def test_phase2_routing_reflects_chat_only():
-    """/chat is routed in Phase 2; /equip and /discard intentionally are
-    NOT yet — locks in the Phase 2 cut so a regression here surfaces
-    before it hits a live session. Update this test when Phase 2b lands
-    the inventory-move helper and flips equip/discard on."""
+def test_phase2b_routing_includes_equip_and_discard():
+    """Phase 2b lands the inventory-move helper (clickSlot SWAP / PICKUP)
+    so /equip armor + non-hotbar /discard work natively without the
+    legacy /item replace shuffle. All Phase 2 + 2b writes now route."""
     assert "/chat" in bridge_mod.NATIVE_ENDPOINTS
-    assert "/equip" not in bridge_mod.NATIVE_ENDPOINTS
-    assert "/discard" not in bridge_mod.NATIVE_ENDPOINTS
+    assert "/equip" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/discard" in bridge_mod.NATIVE_ENDPOINTS
 
 
 def test_no_native_url_falls_back_to_legacy():

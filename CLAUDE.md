@@ -46,7 +46,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
   - `cd frontend && npm run dev` — dev server
   - `cd frontend && npx vite build` — production build (served by monitor)
 - Bridge: aiohttp server on port 8080 inside mc-client container (legacy, Minescript-backed)
-- Native bridge: JDK HttpServer on port 8081 inside mc-client container, served by the `mineclaude-bridge` Fabric mod (Kotlin). `agent.bridge.NATIVE_ENDPOINTS` controls per-endpoint routing — empty in Phase 0, populated as endpoints are ported. Currently routed: `/status`, `/nearby/blocks`, `/nearby/entities`, `/chat`. Native `/equip` and `/discard` exist on :8081 but stay off the routed set (hotbar-only; Phase 2b adds the inventory-move helper)
+- Native bridge: JDK HttpServer on port 8081 inside mc-client container, served by the `mineclaude-bridge` Fabric mod (Kotlin). `agent.bridge.NATIVE_ENDPOINTS` controls per-endpoint routing — empty in Phase 0, populated as endpoints are ported. Currently routed: `/status`, `/nearby/blocks`, `/nearby/entities`, `/chat`, `/equip`, `/discard`. Inventory writes use `interactionManager.clickSlot` (PICKUP/SWAP) so they cover non-hotbar items + armor without the legacy `/item replace` shuffle
 - Bridge logs to `/tmp/bridge.log` inside container (NOT to MC chat, to avoid feedback loops)
 
 ## Bridge API
