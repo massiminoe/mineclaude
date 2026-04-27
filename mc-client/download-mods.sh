@@ -10,9 +10,16 @@ echo "Downloading Baritone v1.14.0 (Fabric 1.21.5)..."
 curl -L -o "$MODS_DIR/baritone-api-fabric-1.14.0.jar" \
     "https://github.com/cabaletta/baritone/releases/download/v1.14.0/baritone-api-fabric-1.14.0.jar"
 
-echo "Downloading Minescript 5.0b11 (Fabric 1.21.5)..."
-curl -L -o "$MODS_DIR/minescript-fabric-1.21.5-5.0b11.jar" \
-    "https://cdn.modrinth.com/data/KcpXWngB/versions/7s2EWsqH/minescript-fabric-1.21.5-5.0b11.jar"
+# Minescript: we ship a patched custom build, NOT the upstream Modrinth JAR.
+# The fork lives at massiminoe/minescript@mc1.21.5-containers and adds:
+#   - PR #40 container_* APIs
+#   - A1 length-prefixed RPC framing (eliminates the stdout-writer race)
+# The JAR is committed in mods/ alongside this script. To rebuild:
+#   git clone -b mc1.21.5-containers git@github.com:massiminoe/minescript.git
+#   cd minescript
+#   NO_MINESCRIPT_FORGE_BUILD=1 NO_MINESCRIPT_NEOFORGE_BUILD=1 ./gradlew :fabric:build -x test
+#   cp fabric/build/libs/minescript-fabric-1.21.5-5.0b11.jar <repo>/mc-client/mods/
+echo "Minescript: using patched custom build already in mods/ (do not pull from Modrinth)."
 
 echo "Downloading Fabric API 0.128.2 (Fabric 1.21.5)..."
 curl -L -o "$MODS_DIR/fabric-api-0.128.2+1.21.5.jar" \

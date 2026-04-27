@@ -30,19 +30,21 @@ from bridge import minescript_api
 
 logger = logging.getLogger("bridge")
 
-# Full re-scan cadence (seconds) when the player is stationary. Bumped
-# from the original 10s → 20s to roughly halve background pipe traffic:
-# the Java-side stdout-writer race fires under sustained RPC pressure,
-# and the scanner is by far the largest producer of that pressure.
-BLOCK_SCAN_INTERVAL = 20.0
+# Full re-scan cadence (seconds) when the player is stationary. After A1
+# framing eliminated the RPC race, restored from 20s → 10s for tighter
+# freshness on dropped items and other passive block changes.
+BLOCK_SCAN_INTERVAL = 10.0
 
 # Movement threshold — re-scan immediately if player has moved this far
-# from the last scan center. Bumped 8 → 12 for the same reason.
-MOVEMENT_RESCAN_THRESHOLD = 12.0
+# from the last scan center. Restored from 12 → 8 for the same reason.
+MOVEMENT_RESCAN_THRESHOLD = 8.0
 
-# Status/entity poll cadence (seconds) — these are single cheap RPCs
-STATUS_POLL_INTERVAL = 2.0
-ENTITY_POLL_INTERVAL = 2.0
+# Status/entity poll cadence (seconds) — single cheap RPCs each. With
+# framing in place the channel handles >>1 Hz polling cleanly; tightened
+# from 2s so inventory/health changes propagate within ~500 ms of the
+# next scanner tick.
+STATUS_POLL_INTERVAL = 0.5
+ENTITY_POLL_INTERVAL = 1.0
 
 # Scanner loop tick (seconds) — how often the loop wakes up to check
 # whether any update is due

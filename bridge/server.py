@@ -45,11 +45,10 @@ _world_cache: WorldCache = WorldCache()
 
 # Count of in-flight `_run()` calls (i.e. commands currently holding the
 # executor thread). Read by the WorldCache scanner so it can skip its
-# chunked block re-scan while a foreground command is running — this
-# keeps the scanner and the executor from drumming the Minescript stdin
-# pipe simultaneously, which is where the Java-side stdout-writer race
-# fires most reliably. Protected by a plain Lock because `+= 1` isn't
-# atomic and we need consistent reads from the scanner thread.
+# chunked block re-scan while a foreground command is running — keeps the
+# big scan from queueing up behind a user command and adding tail latency.
+# Protected by a plain Lock because `+= 1` isn't atomic and we need
+# consistent reads from the scanner thread.
 _executor_busy: int = 0
 _executor_busy_lock = threading.Lock()
 
@@ -95,17 +94,17 @@ async def _run(fn, *args):
 async def rpc_timeout_middleware(request: web.Request, handler):
     """Translate RPCTimeout from any handler into a 503 with a clean body.
 
-    RPCTimeout means the Minescript stdout-writer race dropped a response
-    packet and our _ms() wait timed out. The channel should be healthy for
-    the next call, but this one's toast. Return 503 so the agent's
-    BridgeClient can surface it distinctly from a generic 500/traceback.
+    With A1 framing in place RPCTimeout indicates a genuine Java-side wedge
+    (mod hang, MC freeze, GC pause beyond budget) — rare and worth
+    investigating. 503 lets the agent's BridgeClient surface it distinctly
+    from a generic 500/traceback.
     """
     try:
         return await handler(request)
     except RPCTimeout as e:
         logger.error(f"RPCTimeout during {request.method} {request.path}: {e}")
         return web.json_response(
-            _err(f"Minescript RPC dropped response: {e}"),
+            _err(f"Minescript RPC timed out: {e}"),
             status=503,
         )
 
@@ -123,8 +122,9 @@ async def handle_health(request: web.Request) -> web.Response:
     timed out and raised RPCTimeout by then — so 503 here means something
     bypassed the normal wrapper or the wrapper itself is broken).
 
-    Exposes the RPC timeout counter so the frontend/agent can see how
-    often the stdout-writer race is firing without having to scrape logs.
+    Exposes the RPC timeout counter for at-a-glance observability. With A1
+    framing the counter should stay at 0 in normal operation; any nonzero
+    value points at a real Java-side wedge worth investigating.
     Never touches _ms_lock, so it's always answerable even when the
     executor path is wedged.
     """

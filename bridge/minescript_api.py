@@ -20,35 +20,29 @@ import minescript
 
 logger = logging.getLogger("bridge")
 
-# Minescript's stdin/stdout JSON-RPC channel is not thread-safe — concurrent
-# calls from different executor threads interleave their messages and produce
-# JSONDecodeError "Extra data" output in MC chat. Serialize all minescript.*
-# calls through this lock.
+# Even with A1 framing in place we still serialize minescript.* calls through
+# this lock — multi-call sequences in primitives (e.g. craft, smelt) rely on
+# their reads and writes hitting the mod in the order issued, and the lock is
+# the cheapest way to guarantee that without coordinating through the mod.
 _ms_lock = threading.Lock()
 
 
 class RPCTimeout(Exception):
-    """Raised when a Minescript RPC response is dropped and wait() times out.
+    """Raised when an RPC call exceeds RPC_TIMEOUT_S without a response.
 
-    Triggered by the Minescript mod's stdout-writer race: two Java-side writes
-    interleave into a single line on Python's stdin, the reader's json.loads
-    raises JSONDecodeError, and the whole line (including this call's
-    response) is dropped on the floor. The reader thread itself survives via
-    its try/except/continue at minescript_runtime.py:366, so new RPC calls
-    still work — but the waiting FutureValue for the dropped response would
-    hang forever unless we bound the wait. This exception is that bound:
-    we time out, send cancelfn! to Java so it can clean up the in-flight
-    call, release _ms_lock, and raise. The next _ms() call through the lock
-    succeeds normally.
+    Pre-A1 this fired regularly, as a recovery hatch for the framed-pipe
+    race that dropped response lines. Post-A1 it is a backstop for genuine
+    Java-side wedges (mod hang, MC freeze, GC pause longer than the
+    budget). Surfaces as 503 from the bridge so the agent and frontend can
+    distinguish it from generic 5xx.
     """
 
 
-# Per-RPC timeout budget (seconds). Just above the observed worst-case for a
-# full 64-chunk scan at radius=32 (~5s end-to-end, ~100ms per chunk) and well
-# below the agent-side httpx client timeout (30s), so a wedge surfaces as a
-# clean RPCTimeout inside the agent's own timeout window instead of as a
-# generic ReadTimeout with no context.
-RPC_TIMEOUT_S = 15.0
+# Hard ceiling on a single RPC. With framing we expect this to never fire;
+# 30s is generous enough to cover worst-case block-region scans plus any
+# transient scheduler hiccup, and matches the agent-side httpx timeout so
+# the bridge surfaces a structured 503 before the client reads-times-out.
+RPC_TIMEOUT_S = 30.0
 
 
 # RPC diagnostics — read by GET /health for observability. Plain module
@@ -67,26 +61,15 @@ _last_rpc_thread: str = ""
 def _ms(fn, *args, **kwargs):
     """Call a minescript.* function under the RPC lock with a hard timeout.
 
-    For ScriptFunction callables (every minescript.* function that waits for
-    a response — player_position, getblock, get_block_region, container_*,
-    press_key_bind, player_press_*, etc.) we route through
-    `fn.as_async(*args, **kwargs).wait(timeout=RPC_TIMEOUT_S)` instead of the
-    normal `fn(*args)` path. The normal path goes through
-    await_script_function (minescript_runtime.py:282) which calls
-    FutureValue.wait() with no timeout argument and blocks forever if the
-    response packet is dropped by the reader's JSONDecodeError recovery.
+    For ScriptFunction callables we go through
+    `fn.as_async(*args).wait(timeout=RPC_TIMEOUT_S)` rather than the plain
+    `fn(*args)` path. The plain path uses `FutureValue.wait()` with no
+    timeout (minescript_runtime.py) and would block forever if the Java
+    side wedged. The bounded wait keeps the bridge answerable; with A1
+    framing it is expected to never fire.
 
-    On timeout we call FutureValue.cancel(), which sends `cancelfn! <fcid>`
-    to Java via the native cancel_handler so the mod can clean up its own
-    state, then release _ms_lock (via the `with` exit) and raise RPCTimeout.
-    The Minescript reader thread is still alive (line 366 of
-    minescript_runtime.py catches json.JSONDecodeError and continues its
-    readline loop), so the very next _ms() caller acquires the lock and
-    drives a fresh RPC through the same still-functioning channel.
-
-    For NoReturnScriptFunction callables (execute, chat) and bare callables
-    used by tests, there is nothing to wait on, so we fall through to a
-    direct call under the lock with no timeout path.
+    For NoReturnScriptFunction (execute, chat) and bare callables used by
+    tests, there is nothing to wait on — fall through to a direct call.
     """
     global _rpc_timeouts_total, _last_rpc_timeout_ts, _last_rpc_timeout_fn
     global _last_rpc_start_ts, _last_rpc_end_ts, _last_rpc_fn, _last_rpc_thread
@@ -97,27 +80,18 @@ def _ms(fn, *args, **kwargs):
         _last_rpc_thread = threading.current_thread().name
         try:
             if hasattr(fn, "as_async"):
-                future = fn.as_async(*args, **kwargs)
                 try:
-                    return future.wait(timeout=RPC_TIMEOUT_S)
+                    return fn.as_async(*args, **kwargs).wait(timeout=RPC_TIMEOUT_S)
                 except TimeoutError:
                     _rpc_timeouts_total += 1
                     _last_rpc_timeout_ts = time.monotonic()
                     _last_rpc_timeout_fn = fn_name
                     logger.error(
                         f"_ms: RPC timeout after {RPC_TIMEOUT_S:.0f}s in {fn_name} "
-                        f"(thread={_last_rpc_thread}) — Minescript stdout-writer "
-                        f"race; total timeouts={_rpc_timeouts_total}"
+                        f"(thread={_last_rpc_thread}); total timeouts={_rpc_timeouts_total}"
                     )
-                    try:
-                        future.cancel()  # sends cancelfn! <fcid> to Java
-                    except Exception as cancel_err:
-                        logger.warning(
-                            f"_ms: cancel after timeout failed: {cancel_err}"
-                        )
                     raise RPCTimeout(
-                        f"{fn_name} RPC response dropped "
-                        f"(timeout after {RPC_TIMEOUT_S:.0f}s)"
+                        f"{fn_name} RPC timed out after {RPC_TIMEOUT_S:.0f}s"
                     )
             # NoReturnScriptFunction or bare callable — nothing to wait on
             return fn(*args, **kwargs)
@@ -851,10 +825,9 @@ def _break_real(x: int, y: int, z: int, _occluder_depth: int = 0) -> dict:
             time.sleep(0.1)
 
     # Hold attack to mine — press and hold, periodically check if block broke.
-    # We sleep 0.25s between iterations and only poll getblock every 3rd
-    # iteration (~0.75s cadence) to reduce RPC traffic on Minescript's stdin
-    # channel. Sustained high-frequency polling was observed to race the mod's
-    # stdout writer and crash its JSON parser with "Extra data" errors.
+    # 0.25s between iterations, getblock poll every 3rd iter (~0.75s cadence).
+    # Pace is set so we observe the break within one MC tick of completion;
+    # tighter polling has no benefit and just burns RPCs.
     original_block = name
     _ms(minescript.player_press_attack, True)
     deadline = time.monotonic() + 15.0
