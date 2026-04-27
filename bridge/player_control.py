@@ -386,10 +386,36 @@ def wait_for_block_change(x: int, y: int, z: int, timeout: float = 10.0) -> str 
 
 
 def is_within_reach(x: float, y: float, z: float, reach: float = 4.5) -> bool:
-    """Check if coordinates are within player's reach distance."""
+    """Check if coordinates are within player's reach distance from foot.
+
+    Use this for entity/item distance checks (item drops sit at foot height,
+    so eye-based math systematically over-rejects them). For block targets
+    use is_block_within_reach instead — MC's block-interaction range is
+    measured from eye to ray-hit, not foot to corner.
+    """
     pos = _ms(minescript.player_position)
     px, py, pz = pos[0], pos[1], pos[2]
     dist = math.sqrt((x - px) ** 2 + (y - py) ** 2 + (z - pz) ** 2)
+    return dist <= reach
+
+
+# Standing eye height in MC (1.62 blocks above feet). Sneak/swim modes lower
+# this; we don't sneak/swim so the constant is fine.
+_EYE_HEIGHT = 1.62
+
+
+def is_block_within_reach(x: int, y: int, z: int, reach: float = 4.5) -> bool:
+    """Check if a block is within the player's block-interaction range.
+
+    Mirrors MC's own check: eye position to block center, against the 4.5
+    block-interaction range. Using foot Y (a 1.62 vertical offset) makes
+    upward targets look further than they really are — a tree trunk's top
+    log is the canonical case where this matters.
+    """
+    pos = _ms(minescript.player_position)
+    px, py, pz = pos[0], pos[1] + _EYE_HEIGHT, pos[2]
+    cx, cy, cz = x + 0.5, y + 0.5, z + 0.5
+    dist = math.sqrt((cx - px) ** 2 + (cy - py) ** 2 + (cz - pz) ** 2)
     return dist <= reach
 
 

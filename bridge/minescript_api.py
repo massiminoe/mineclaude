@@ -500,6 +500,11 @@ def _is_within_reach(x: float, y: float, z: float, reach: float = 4.5) -> bool:
     return is_within_reach(x, y, z, reach)
 
 
+def _is_block_within_reach(x: int, y: int, z: int, reach: float = 4.5) -> bool:
+    from bridge.player_control import is_block_within_reach
+    return is_block_within_reach(x, y, z, reach)
+
+
 def _navigate_near(x: float, y: float, z: float, reach: float = 3.5) -> bool:
     from bridge.player_control import navigate_near
     return navigate_near(x, y, z, reach)
@@ -767,7 +772,7 @@ def _break_real(x: int, y: int, z: int, _occluder_depth: int = 0) -> dict:
     # Navigate within reach if needed. _navigate_near has its own 15s cap,
     # so unreachable targets fail in bounded time without a pre-check here.
     # Symmetric with _place_real, which also self-navigates from any distance.
-    if not _is_within_reach(x, y, z):
+    if not _is_block_within_reach(x, y, z):
         if not _navigate_near(x, y, z, reach=3.5):
             raise Exception("Could not navigate within reach")
 
@@ -898,7 +903,7 @@ def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
         return {"placed": False, "error": err, "method": "real"}
 
     # Navigate within reach if needed
-    if not _is_within_reach(x, y, z):
+    if not _is_block_within_reach(x, y, z):
         if not _navigate_near(x, y, z, reach=3.5):
             raise Exception("Could not navigate within reach")
 
@@ -1159,7 +1164,7 @@ def _craft_via_table(recipe, crafts_needed: int, grid_slots: dict[int, str]) -> 
     tb = table_blocks[0]  # scanner pre-sorts by distance
     tx, ty, tz = tb["x"], tb["y"], tb["z"]
 
-    if not _is_within_reach(tx, ty, tz):
+    if not _is_block_within_reach(tx, ty, tz):
         if not _navigate_near(tx, ty, tz, reach=3.5):
             return {"crafted": 0, "error": "Could not reach crafting table.", "method": "real"}
 
@@ -1635,7 +1640,7 @@ def smelt_item(item: str, count: int = 1) -> dict:
             return {"smelted": 0, "error": "Not enough fuel.", "method": "real"}
 
     from bridge.player_control import navigate_near
-    if not _is_within_reach(fx, fy, fz):
+    if not _is_block_within_reach(fx, fy, fz):
         if not navigate_near(fx, fy, fz, reach=3.5):
             return {"smelted": 0, "error": "Could not reach furnace.", "method": "real"}
 
