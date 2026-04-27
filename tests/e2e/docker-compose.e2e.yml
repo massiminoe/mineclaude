@@ -1,0 +1,12 @@
+services:
+  mc-server:
+    environment:
+      # Deterministic world so assertions about nearby blocks remain stable.
+      SEED: "-4077293573215000000"
+      LEVEL_TYPE: "minecraft:normal"
+      DIFFICULTY: "peaceful"
+      GAMEMODE: "survival"
+    ports:
+      # Expose RCON so the harness can teleport the player, give items, and
+      # set up scenario state without relying on agent actions.
+      - "25575:25575"

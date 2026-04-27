@@ -32,3 +32,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "e2e: end-to-end tests that spin up the full docker-compose stack (slow, opt-in via --run-e2e)",
+]
