@@ -57,6 +57,16 @@ NATIVE_ENDPOINTS: frozenset[str] = frozenset(
         "/status",
         "/nearby/blocks",
         "/nearby/entities",
+        # Phase 2 — simple write. Native /chat preserves legacy semantics:
+        # `#`/`\` go through sendChatMessage so client-side hooks (Baritone,
+        # Minescript) can intercept; `/`-prefixed via sendChatCommand;
+        # plain text wrapped in /tellraw to dodge signed-chat disconnect.
+        "/chat",
+        # /equip and /discard intentionally NOT routed yet. The native
+        # impls exist (mc-mod EquipRoute / DiscardRoute) but are hotbar-only;
+        # routing them would regress the legacy `/item replace` shuffle for
+        # non-hotbar inventory items. Phase 2b will land that helper and
+        # flip these on.
         # /probe intentionally not routed: the legacy and native bodies are
         # different shapes (legacy dumps Minescript Python APIs; native
         # identifies the bridge). Agent doesn't consume /probe today, so

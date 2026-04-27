@@ -22,6 +22,12 @@ class MineclaudeBridgeClient : ClientModInitializer {
         PlayerStatusRoutes.register(bridge)
         NearbyRoutes.register(bridge)
         ProbeRoute.register(bridge)
+        // Phase 2 simple writes. /chat ships routed; /equip and /discard
+        // ship implemented but unrouted (legacy still owns them) until
+        // Phase 2b adds the inventory-move helper.
+        ChatRoute.register(bridge)
+        EquipRoute.register(bridge)
+        DiscardRoute.register(bridge)
 
         bridge.start()
 

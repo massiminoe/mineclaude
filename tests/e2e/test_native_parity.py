@@ -23,8 +23,10 @@ A persistent diff outside these tolerances is a port bug.
 
 from __future__ import annotations
 
-import urllib.request
 import json
+import urllib.error
+import urllib.request
+
 import pytest
 
 LEGACY = "http://localhost:8080"
@@ -33,6 +35,20 @@ NATIVE = "http://localhost:8081"
 
 def _fetch(url: str) -> dict:
     return json.loads(urllib.request.urlopen(url, timeout=10).read())
+
+
+def _post(url: str, body: dict) -> tuple[int, dict]:
+    """POST JSON, return (status_code, parsed body). Surfaces 4xx as the
+    body too — we want to assert error shapes, not just success cases."""
+    payload = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
 
 
 pytestmark = pytest.mark.e2e
@@ -123,4 +139,96 @@ def test_probe_identifies_native_mod():
     assert "/status" in p["ported"]
     assert "/nearby/blocks" in p["ported"]
     assert "/nearby/entities" in p["ported"]
+    # Phase 2 routes appear in the native-side ported list even though the
+    # agent only routes /chat (equip/discard ride along for diagnostics).
+    assert "/chat" in p["ported"]
+    assert "/equip" in p["ported"]
+    assert "/discard" in p["ported"]
     assert p["capabilities"]["tick_thread_executor"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — write endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_chat_native_plain_message():
+    """A plain message lands as `/tellraw` from the bot. Native must
+    accept it without crashing the connection (signed-chat trap) and
+    return the legacy success shape."""
+    code, body = _post(f"{NATIVE}/chat", {"message": "phase2 native chat hello"})
+    assert code == 200, body
+    assert body["status"] == "success"
+    assert body["message"] == "Sent: phase2 native chat hello"
+
+
+def test_chat_native_slash_command():
+    code, body = _post(f"{NATIVE}/chat", {"message": "/say native chat slash"})
+    assert code == 200, body
+    assert body["status"] == "success"
+
+
+def test_chat_native_baritone_prefix():
+    """`#stop` is a no-op when Baritone isn't pathing — but it must round-trip
+    through sendChatMessage so the Baritone hook can observe and intercept it
+    before it ships as a player chat packet."""
+    code, body = _post(f"{NATIVE}/chat", {"message": "#stop"})
+    assert code == 200, body
+    assert body["status"] == "success"
+
+
+def test_chat_native_missing_message():
+    code, body = _post(f"{NATIVE}/chat", {})
+    assert code == 400
+    assert body["status"] == "error"
+    assert "message" in body["message"].lower()
+
+
+def test_equip_native_missing_item():
+    """Native /equip is implemented but not yet routed; we hit :8081
+    directly to verify the impl. Empty `item` must return the same 400
+    shape as legacy."""
+    code, body = _post(f"{NATIVE}/equip", {"slot": "hand"})
+    assert code == 400
+    assert body["status"] == "error"
+    assert "item" in body["message"].lower()
+
+
+def test_equip_native_armor_rejected():
+    """Phase 2 native /equip is hand/offhand only. Armor slots return an
+    error directing the caller to the legacy bridge — this is what keeps
+    /equip off NATIVE_ENDPOINTS for now."""
+    code, body = _post(f"{NATIVE}/equip", {"item": "iron_helmet", "slot": "head"})
+    assert code == 200  # API-level success; semantic failure in body
+    assert body["status"] == "error"
+    assert "armor" in body["message"].lower() or "head" in body["message"]
+
+
+def test_equip_native_unknown_item():
+    """Item the player doesn't have should fail with a clear message and
+    NOT crash the tick thread."""
+    code, body = _post(
+        f"{NATIVE}/equip", {"item": "definitely_not_a_real_item_zzz", "slot": "hand"}
+    )
+    assert code == 200
+    assert body["status"] == "error"
+
+
+def test_discard_native_missing_item():
+    code, body = _post(f"{NATIVE}/discard", {"count": 1})
+    assert code == 400
+    assert body["status"] == "error"
+
+
+def test_discard_native_unknown_item():
+    code, body = _post(
+        f"{NATIVE}/discard", {"item": "definitely_not_a_real_item_zzz", "count": 1}
+    )
+    assert code == 200
+    assert body["status"] == "error"
+
+
+def test_discard_native_invalid_count():
+    code, body = _post(f"{NATIVE}/discard", {"item": "stone", "count": 0})
+    assert code == 400
+    assert body["status"] == "error"

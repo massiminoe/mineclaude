@@ -87,7 +87,10 @@ class HttpBridge(private val host: String, private val port: Int) {
             } catch (t: Throwable) {
                 lastErrorTs.set(System.currentTimeMillis())
                 log.error("handler threw on {} {}", exchange.requestMethod, exchange.requestURI, t)
-                write(exchange, err(t.message ?: t.javaClass.simpleName))
+                // Unexpected: a handler raised. 500 is correct here so
+                // the agent sees it as an infrastructure failure rather
+                // than a semantic one.
+                write(exchange, err(t.message ?: t.javaClass.simpleName, status = 500))
             } finally {
                 exchange.close()
             }
@@ -112,7 +115,16 @@ class HttpBridge(private val host: String, private val port: Int) {
         fun ok(data: Any? = null, message: String = "ok") =
             BridgeResponse("success", message, data ?: emptyMap<String, Any>(), 200)
 
-        fun err(message: String, status: Int = 500) =
+        /**
+         * Semantic error: the request was syntactically fine but the
+         * handler couldn't fulfill it (item not in inventory, action
+         * couldn't run, etc). Returns HTTP 200 with `status:"error"` —
+         * matches the legacy bridge's `_err()` helper, which agents
+         * already know how to read. For framing-level failures (bad JSON,
+         * missing required params) pass `status = 400`; for unexpected
+         * exceptions thrown by a handler the dispatcher emits 500.
+         */
+        fun err(message: String, status: Int = 200) =
             BridgeResponse("error", message, emptyMap<String, Any>(), status)
 
         @Suppress("unused") // wired in later phases
