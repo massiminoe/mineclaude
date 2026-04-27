@@ -34,6 +34,8 @@ class MonitorServer:
         self._app.router.add_get("/api/game", self._handle_game)
         self._app.router.add_get("/api/plan", self._handle_plan)
         self._app.router.add_get("/api/ws", self._handle_ws)
+        self._app.router.add_post("/api/console/run", self._handle_console_run)
+        self._app.router.add_post("/api/console/cancel", self._handle_console_cancel)
         # Static files (production build) — added last so API routes take priority
         dist = Path(__file__).parent.parent / "frontend" / "dist"
         if dist.is_dir():
@@ -85,6 +87,21 @@ class MonitorServer:
 
     async def _handle_plan(self, request: web.Request) -> web.Response:
         return web.json_response({"plan": read_plan()})
+
+    async def _handle_console_run(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        code = body.get("code") if isinstance(body, dict) else None
+        if not isinstance(code, str) or not code.strip():
+            return web.json_response({"error": "missing 'code' string"}, status=400)
+        action = await self.agent.queue.enqueue(code)
+        return web.json_response({"action_id": action.id})
+
+    async def _handle_console_cancel(self, request: web.Request) -> web.Response:
+        await self.agent.queue.interrupt()
+        return web.json_response({"cancelled": True})
 
     async def _handle_index(self, request: web.Request) -> web.FileResponse:
         dist = Path(__file__).parent.parent / "frontend" / "dist"

@@ -69,17 +69,19 @@ def main() -> None:
 
     # Read config from environment
     mock_bridge = os.environ.get("MOCK_BRIDGE", "").lower() in ("1", "true", "yes")
+    no_claude = os.environ.get("NO_CLAUDE", "").lower() in ("1", "true", "yes")
     bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8080")
     bot_name = os.environ.get("BOT_NAME", "Mineclaw")
     claude_model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
     api_key = os.environ.get("ANTHROPIC_API_KEY")
 
-    if not mock_bridge and not api_key:
-        logger.error("ANTHROPIC_API_KEY is required (or set MOCK_BRIDGE=1)")
+    if not mock_bridge and not no_claude and not api_key:
+        logger.error("ANTHROPIC_API_KEY is required (or set MOCK_BRIDGE=1 or NO_CLAUDE=1)")
         sys.exit(1)
 
     # Initialize Langfuse BEFORE importing modules that create AsyncAnthropic
-    _init_langfuse(logger)
+    if not no_claude:
+        _init_langfuse(logger)
 
     # Import here to avoid import-time side effects
     from agent.agent import Agent
@@ -90,27 +92,31 @@ def main() -> None:
     monitor_port = int(os.environ.get("MONITOR_PORT", "5555"))
 
     bridge = create_bridge(mock=mock_bridge, base_url=bridge_url)
-    claude = ClaudeClient(model=claude_model, api_key=api_key)
+    claude = None if no_claude else ClaudeClient(model=claude_model, api_key=api_key)
     agent = Agent(bridge=bridge, claude=claude, bot_name=bot_name)
     monitor = MonitorServer(agent, port=monitor_port)
 
-    logger.info(f"Mineclaw agent starting (mock={mock_bridge}, bot={bot_name}, model={claude_model})")
+    logger.info(
+        f"Mineclaw agent starting (mock={mock_bridge}, no_claude={no_claude}, "
+        f"bot={bot_name}, model={'<disabled>' if no_claude else claude_model})"
+    )
 
     try:
         # In mock mode, inject a test chat event after a short delay
         async def run():
             await monitor.start()
-            if mock_bridge and isinstance(bridge, MockBridgeClient):
+            if not no_claude and mock_bridge and isinstance(bridge, MockBridgeClient):
                 async def inject_after_delay():
                     await asyncio.sleep(1.0)
                     logger.info("Injecting test chat event")
                     bridge.inject_chat("Steve", "Hey Mineclaw, can you get me some oak logs?")
                 asyncio.create_task(inject_after_delay())
-            await agent.start()
+            await agent.start(handle_chat=not no_claude)
 
         asyncio.run(run())
     finally:
-        _shutdown_langfuse(logger)
+        if not no_claude:
+            _shutdown_langfuse(logger)
 
 
 if __name__ == "__main__":

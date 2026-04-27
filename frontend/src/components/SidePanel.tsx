@@ -1,5 +1,6 @@
 import type { QueueState, GameState } from "../types";
 import { ActionQueue } from "./ActionQueue";
+import { ConsolePanel } from "./ConsolePanel";
 import { GameInfo } from "./GameInfo";
 import { InventoryList } from "./InventoryList";
 import { PlanCard } from "./PlanCard";
@@ -20,6 +21,9 @@ export function SidePanel({ queue, gameState, plan }: Props) {
       <div className="side-section">
         <div className="side-section-label">Action Queue</div>
         <ActionQueue queue={queue} />
+      </div>
+      <div className="side-section">
+        <ConsolePanel />
       </div>
       {gameState && (
         <>

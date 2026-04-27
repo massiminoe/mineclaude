@@ -912,10 +912,13 @@ def _place_real(block: str, x: int, y: int, z: int, face: str) -> dict:
 
     _ensure_no_screen_open()
 
-    # Check if target position is air
+    # Reject only if the target cell holds a non-replaceable block. Vanilla
+    # MC silently replaces grass overlays, flowers, snow layers, water, etc.
+    # when the player places onto them — see bridge.blocks.REPLACEABLE_BLOCKS.
+    from bridge.blocks import is_replaceable
     try:
         current = _ms(minescript.getblock, x, y, z)
-        if current and "air" not in current:
+        if not is_replaceable(current):
             return {"placed": False, "error": f"Block already at {x},{y},{z}: {current}", "method": "real"}
     except Exception:
         pass

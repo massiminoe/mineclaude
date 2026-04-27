@@ -9,6 +9,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `docker compose down -v` — full clean restart (clears volumes, regenerates ops)
 - `mineclaude` — run the agent process (requires `.env` with `ANTHROPIC_API_KEY`)
 - `MOCK_BRIDGE=1 mineclaude` — test agent loop without MC server
+- `NO_CLAUDE=1 mineclaude` — headless mode (no Claude); queue + bridge + monitor stay up so you can drive primitives manually from the frontend Console panel
 - `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
 ## Project Structure
@@ -107,6 +108,8 @@ Three log files cover a running session — see `docs/autonomy.md` for the full 
 Render a session as a timeline: `python scripts/session_report.py --latest`.
 
 A **belief mismatch** (logged by `agent/belief_check.py`) means the agent's most recently injected gameState diverges from what the bridge currently sees. It is the strongest signal that Claude was deciding on stale data — check the mutation log around the same timestamp for the action that desynced state.
+
+For hands-on primitive debugging, run `NO_CLAUDE=1 mineclaude` and use the **Console** panel in the monitor frontend. You type the same code Claude would put in `newAction` (e.g. `await goToPosition(0, 64, 0)`), it enqueues on the same action queue, and the resulting trace renders in the Action Queue panel with full subaction breakdown. Useful for reproducing "Claude did X and something weird happened" without Claude in the loop.
 
 E2E tests live in `tests/e2e/` and are opt-in: `pytest --run-e2e`.
 

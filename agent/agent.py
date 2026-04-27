@@ -48,12 +48,13 @@ class Agent:
     def __init__(
         self,
         bridge: BridgeClient,
-        claude: ClaudeClient,
+        claude: ClaudeClient | None,
         bot_name: str = "Mineclaw",
     ):
         self.bridge = bridge
         self.claude = claude
         self.bot_name = bot_name
+        self._handle_chat_enabled = True
         self.system_prompt = build_system_prompt(bot_name)
         self.messages: list[dict[str, Any]] = []
         self.queue = ActionQueue()
@@ -85,14 +86,24 @@ class Agent:
             except Exception:
                 pass
 
-    async def start(self) -> None:
-        """Start the agent: queue worker + event listener."""
-        logger.info(f"Starting agent as {self.bot_name}")
+    async def start(self, *, handle_chat: bool = True) -> None:
+        """Start the agent: queue worker + event listener.
+
+        When `handle_chat=False` (headless / console-only mode), incoming
+        chat events are dropped before reaching the Claude loop. Death and
+        respawn events still fire — a console-driven session can absolutely
+        kill the bot, and we want the queue cleared cleanly when it does.
+        """
+        self._handle_chat_enabled = handle_chat
+        mode = "normal" if handle_chat else "headless (no Claude)"
+        logger.info(f"Starting agent as {self.bot_name} ({mode})")
         self.queue.start()
         await self.bridge.events(self._handle_event)
 
     async def _handle_event(self, event: dict) -> None:
         if event.get("type") == "chat":
+            if not self._handle_chat_enabled:
+                return
             await self._handle_chat(event["data"])
         elif event.get("type") == "death":
             await self._handle_death()
