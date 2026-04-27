@@ -51,7 +51,11 @@ class RealBridgeClient:
     def __init__(self, base_url: str = "http://localhost:8080"):
         self.base_url = base_url.rstrip("/")
         self.ws_url = self.base_url.replace("http", "ws") + "/events"
-        self._http = httpx.AsyncClient(base_url=self.base_url, timeout=30.0)
+        # 90s global timeout: must exceed bridge's longest per-request operation
+        # (goto_and_wait defaults to 60s). A mismatch causes spurious ReadTimeout
+        # on the client while the bridge executor is still running, blocking
+        # subsequent requests. See plan: frolicking-spinning-biscuit.md Fix 2.
+        self._http = httpx.AsyncClient(base_url=self.base_url, timeout=90.0)
         self._ws = None
         self._ws_task = None
 
@@ -273,12 +277,13 @@ class MockBridgeClient:
             return BridgeResponse("error", f"Unknown recipe: {item}. Cannot craft without a known recipe.", {"crafted": 0, "method": "simulated"})
 
         if recipe.needs_table:
+            # Match real bridge scan radius (see bridge/minescript_api.py _craft_via_table).
             has_table = any(
-                b["name"] == "crafting_table" and b["distance"] <= 4
+                b["name"] == "crafting_table" and b["distance"] <= 16
                 for b in self._nearby_blocks
             )
             if not has_table:
-                return BridgeResponse("error", f"Cannot craft {item}: requires a crafting table nearby.", {"crafted": 0, "method": "simulated"})
+                return BridgeResponse("error", f"Cannot craft {item}: no crafting table nearby. Place one first.", {"crafted": 0, "method": "simulated"})
 
         required = get_required_ingredients(item, count)
         if required is None:
@@ -312,13 +317,13 @@ class MockBridgeClient:
         recipe = get_smelting_recipe(item)
         if recipe is None:
             return BridgeResponse("error", f"Unknown smelting recipe: {item}", {"smelted": 0})
-        # Check furnace nearby
+        # Match real bridge scan radius (see bridge/minescript_api.py smelt_item).
         has_furnace = any(
-            b["name"] in ("furnace", "lit_furnace") and b["distance"] <= 4
+            b["name"] in ("furnace", "lit_furnace") and b["distance"] <= 16
             for b in self._nearby_blocks
         )
         if not has_furnace:
-            return BridgeResponse("error", "No furnace within 4 blocks.", {"smelted": 0})
+            return BridgeResponse("error", "No furnace nearby. Place one first.", {"smelted": 0})
         # Check input
         if not self._remove_from_inventory(recipe.input, count):
             return BridgeResponse("error", f"No {recipe.input} in inventory", {"smelted": 0})

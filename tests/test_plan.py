@@ -136,8 +136,8 @@ def test_inject_plan_with_content_wraps_in_tags(agent, isolated_plan):
     assert "(no active plan)" not in content
 
 
-async def test_handle_chat_injects_plan_after_gamestate(agent, isolated_plan, monkeypatch):
-    """End-to-end: chat arrival triggers plan injection after gameState injection."""
+async def test_handle_chat_injects_plan_before_gamestate(agent, isolated_plan, monkeypatch):
+    """End-to-end: chat arrival injects plan (chat-level) then fresh gameState per iteration."""
     isolated_plan.parent.mkdir(parents=True)
     isolated_plan.write_text("- current step\n", encoding="utf-8")
 
@@ -167,14 +167,15 @@ async def test_handle_chat_injects_plan_after_gamestate(agent, isolated_plan, mo
 
     await agent._handle_chat_traced({"username": "player1", "message": "hi"})
 
-    # Find the plan injection pair in messages — it must follow the gameState pair.
+    # plan_auto is injected once per chat; gameState injected at each iteration (iter 0 here).
     ids = [
         (m.get("content", [{}])[0].get("id") if isinstance(m.get("content"), list) else None)
         for m in agent.messages
     ]
-    assert "gamestate_auto" in ids
     assert "plan_auto" in ids
-    assert ids.index("plan_auto") > ids.index("gamestate_auto")
+    assert "gamestate_auto_0" in ids
+    # Plan is chat-level so it comes first; gameState is per-iteration and follows.
+    assert ids.index("plan_auto") < ids.index("gamestate_auto_0")
 
     # Verify the plan content was read from disk and wrapped.
     plan_idx = ids.index("plan_auto")

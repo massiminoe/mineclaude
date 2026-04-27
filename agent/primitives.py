@@ -54,9 +54,16 @@ def _wrap(name: str, fn: Any, on_subaction: SubActionCallback) -> Any:
 
 
 def _check(resp: BridgeResponse) -> str:
-    """Raise on error responses so sandbox code stops on failure."""
+    """Raise on error responses so sandbox code stops on failure.
+
+    Partial successes are surfaced with a `[partial]` prefix so Claude can
+    tell when a craft/smelt delivered fewer than requested, or when a place
+    succeeded without verification.
+    """
     if resp.status == "error":
         raise RuntimeError(resp.message)
+    if resp.status == "partial":
+        return f"[partial] {resp.message}"
     return resp.message
 
 
@@ -84,7 +91,7 @@ def make_primitives(
     async def breakBlockAt(x: int, y: int, z: int) -> str:
         return _check(await bridge.break_block(x, y, z))
 
-    async def collectItems(radius: float = 3) -> str:
+    async def collectItems(radius: float = 6) -> str:
         return _check(await bridge.collect(radius))
 
     async def attackNearest(mob_type: str) -> str:

@@ -40,6 +40,10 @@ SAFE_BUILTINS = {
     "filter": filter,
     "reversed": reversed,
     "sorted": sorted,
+    "iter": iter,
+    "next": next,
+    "any": any,
+    "all": all,
     # Math
     "min": min,
     "max": max,

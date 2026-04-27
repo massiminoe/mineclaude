@@ -24,9 +24,12 @@ export function useSocket() {
   const reconnectTimeout = useRef<number>(0);
   const backoff = useRef(RECONNECT_BASE);
 
-  const fetchState = useCallback(() => {
+  const fetchState = useCallback((attempt = 0) => {
     fetch("/api/state")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((data) => {
         if (data.conversation) setConversation(data.conversation);
         if (data.queue) setQueue(data.queue);
@@ -34,7 +37,12 @@ export function useSocket() {
         if (data.plan !== undefined) setPlan(data.plan ?? "");
       })
       .catch(() => {
-        // Agent might not be running yet
+        // Likely a race with the monitor coming up — retry a few times
+        // so a stale UI recovers without the user refreshing the page.
+        if (attempt < 3) {
+          const delay = 500 * Math.pow(2, attempt);
+          window.setTimeout(() => fetchState(attempt + 1), delay);
+        }
       });
   }, []);
 
@@ -61,6 +69,18 @@ export function useSocket() {
         connect();
       }, backoff.current + jitter);
       backoff.current = Math.min(backoff.current * 2, RECONNECT_MAX);
+    };
+
+    ws.onerror = () => {
+      // Funnel all failure paths through onclose so backoff is unambiguous.
+      // Some browsers fire onerror without a prompt onclose on cold restarts.
+      if (ws.readyState !== WebSocket.CLOSED) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
     };
 
     ws.onmessage = (event) => {
