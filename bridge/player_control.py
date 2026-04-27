@@ -429,6 +429,8 @@ def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
     def _player_pos() -> tuple[float, float, float]:
         try:
             pos = _ms(minescript.player_position)
+            if pos is None:
+                return 0.0, 0.0, 0.0
             return pos[0], pos[1], pos[2]
         except Exception:
             return 0.0, 0.0, 0.0
@@ -440,6 +442,12 @@ def collect_nearby_items(radius: float = 3.0, max_iterations: int = 4) -> int:
             entities = _ms(minescript.entities, max_distance=float(scan_radius))
         except Exception as e:
             logger.warning(f"collect: minescript.entities() raised {type(e).__name__}: {e}")
+            return []
+        # The fork has been observed returning None instead of raising
+        # (suspected long RPC that resolved without a value). Treat as empty —
+        # the next iteration's deadline check will bail out cleanly.
+        if entities is None:
+            logger.warning("collect: minescript.entities() returned None — treating as empty")
             return []
 
         if verbose:

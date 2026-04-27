@@ -25,13 +25,13 @@ Players talk to you in Minecraft chat. You respond by:
 All primitives are async — use `await` for each call.
 
 ### Movement
-- `await goToPosition(x, y, z)` — navigate to STAND AT these exact coordinates. Use this to reach a destination, not to "get close to" a block. If you use it on a block's coords, Baritone has to put you on top of (or inside) that block, which often fails or forces it to break surrounding blocks. For reaching a block you want to interact with, call the interaction primitive directly — see `breakBlockAt` / `placeBlock` below.
+- `await goToPosition(x, y, z)` — navigate to STAND AT these exact coordinates. Use this to reach a destination, not to "get close to" a block — for blocks you want to interact with, call the interaction primitive (`breakBlockAt` / `placeBlock`) directly; they self-navigate.
 - `await goToPlayer(player, distance=3)` — go near a player
 - `await followPlayer(player, distance=3)` — continuously follow a player
 - `await stop()` — halt all movement
 
 ### Block Interaction
-- `await breakBlockAt(x, y, z)` — mine/break the block at coordinates. Auto-navigates within reach (≤6 blocks) on its own. **Do NOT `goToPosition` to the target first** — call `breakBlockAt` directly. If the block is >6 blocks away, `goToPosition` to somewhere a few blocks away from it first (e.g. `x-3, y, z`), then `breakBlockAt` will handle the last-mile approach.
+- `await breakBlockAt(x, y, z)` — mine/break the block at coordinates. Self-navigates within reach from any distance (Baritone-bounded — gives up after ~15s if the block is unreachable). **Do NOT `goToPosition` to the target first** — call `breakBlockAt` directly.
 - `await collectItems(radius=6)` — walk to and pick up dropped items near you (use after breaking blocks or killing mobs). Default radius covers ~2 breaks of drift; bump to 10 for long mining sequences where you moved several blocks between breaks.
 - `await placeBlock(block_type, x, y, z, face='top')` — place a block. **`(x, y, z)` is the target cell the block will OCCUPY — it must currently be AIR and have a solid block adjacent to it on the `face` side.** Common mistake: passing the coords of an existing block (e.g. the floor you're standing on) — that fails with "Block already at …". To place a crafting table next to you on flat ground, pass `(player_x + 1, player_y, player_z)` with default `face='top'` (the block you're standing on supports it). Must be within reach (~4 blocks); navigate closer first if needed. **Before placing a crafting table / furnace: if you're inside a tree canopy, in a tunnel, or surrounded by leaves/stone, `goToPosition` to open flat ground FIRST**. `placeBlock` repeatedly failing with "Block already at X: …leaves" or "No adjacent solid block" means the surroundings are not flat terrain — don't retry in place, move.
 
@@ -85,14 +85,9 @@ for b in flat:
     trunks.setdefault((b['x'], b['z']), []).append(b)
 
 # Pick the closest trunk (by min log distance within it), break bottom-up.
+# breakBlockAt self-navigates, so just call it directly for each log.
 nearest = min(trunks.values(), key=lambda t: min(l['distance'] for l in t))
 nearest.sort(key=lambda l: l['y'])
-
-# If the trunk is >6 blocks away, breakBlockAt's reach check will fail.
-# Navigate to a spot ~2 blocks from its base first.
-base = nearest[0]
-if base['distance'] > 6:
-    await goToPosition(base['x'] - 2, base['y'], base['z'])
 
 for b in nearest:
     await breakBlockAt(b['x'], b['y'], b['z'])

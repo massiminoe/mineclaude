@@ -764,17 +764,9 @@ def _break_real(x: int, y: int, z: int, _occluder_depth: int = 0) -> dict:
             "method": "no-op",
         }
 
-    # Check player is close enough (fail fast instead of 15s timeout)
-    from bridge.player_control import get_player_distance
-    dist = get_player_distance(float(x), float(y), float(z))
-    if dist > 6.0:
-        return {
-            "broken": False,
-            "error": f"Too far from block ({dist:.1f} blocks away, need <6)",
-            "method": "real",
-        }
-
-    # Navigate within reach if needed
+    # Navigate within reach if needed. _navigate_near has its own 15s cap,
+    # so unreachable targets fail in bounded time without a pre-check here.
+    # Symmetric with _place_real, which also self-navigates from any distance.
     if not _is_within_reach(x, y, z):
         if not _navigate_near(x, y, z, reach=3.5):
             raise Exception("Could not navigate within reach")
