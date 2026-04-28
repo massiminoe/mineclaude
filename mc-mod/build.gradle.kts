@@ -31,6 +31,10 @@ dependencies {
     modImplementation("net.fabricmc:fabric-loader:$loaderVersion")
     modImplementation("net.fabricmc.fabric-api:fabric-api:$fabricVersion")
     modImplementation("net.fabricmc:fabric-language-kotlin:$fabricKotlinVersion")
+    // Phase 6 — events WebSocket. `include` ships Java-WebSocket inside
+    // the mod JAR (Loom's jar-in-jar) so Fabric resolves it at runtime
+    // without a separate dep on the user's classpath.
+    include(implementation("org.java-websocket:Java-WebSocket:1.5.7")!!)
 }
 
 tasks.withType<JavaCompile> {

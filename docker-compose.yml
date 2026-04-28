@@ -35,6 +35,10 @@ services:
     ports:
       - "8080:8080"
       - "8081:8081"
+      # Phase 6 — events WebSocket on dedicated listener port. JDK
+      # HttpServer doesn't speak WS upgrades, so Java-WebSocket binds
+      # its own socket here.
+      - "8082:8082"
     volumes:
       - hmc-assets:/headlessmc/HeadlessMC/run/assets
     stdin_open: true

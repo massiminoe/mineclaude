@@ -75,6 +75,11 @@ def main() -> None:
     # endpoints from the Minescript-backed Python bridge. Set to empty string
     # to disable while the mod is being rebuilt or for parity testing.
     native_bridge_url = os.environ.get("BRIDGE_URL_NATIVE", "http://localhost:8081") or None
+    # Phase 6 — events WebSocket is served by the native mod on a dedicated
+    # listener port (Java-WebSocket alongside the JDK HttpServer). Set
+    # BRIDGE_WS_URL_NATIVE="" to fall back to the legacy bridge at
+    # ws://…:8080/events (e.g. while the mod is being rebuilt).
+    native_ws_url = os.environ.get("BRIDGE_WS_URL_NATIVE", "ws://localhost:8082/events") or None
     bot_name = os.environ.get("BOT_NAME", "Mineclaw")
     claude_model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -95,7 +100,12 @@ def main() -> None:
 
     monitor_port = int(os.environ.get("MONITOR_PORT", "5555"))
 
-    bridge = create_bridge(mock=mock_bridge, base_url=bridge_url, native_url=native_bridge_url)
+    bridge = create_bridge(
+        mock=mock_bridge,
+        base_url=bridge_url,
+        native_url=native_bridge_url,
+        native_ws_url=native_ws_url,
+    )
     claude = None if no_claude else ClaudeClient(model=claude_model, api_key=api_key)
     agent = Agent(bridge=bridge, claude=claude, bot_name=bot_name)
     monitor = MonitorServer(agent, port=monitor_port)

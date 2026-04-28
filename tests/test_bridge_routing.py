@@ -76,6 +76,30 @@ def test_phase5_routing_includes_movement():
         assert endpoint in bridge_mod.NATIVE_ENDPOINTS, f"{endpoint} missing"
 
 
+def test_phase6_ws_url_uses_native_when_provided():
+    """Phase 6 binary-cuts events WS over to the native mod's dedicated
+    listener (ws://…:8082/events). Per-endpoint routing doesn't apply
+    here — `/events` is a single subscription, so we just flip ws_url."""
+    client = RealBridgeClient(
+        base_url="http://legacy.example:8080",
+        native_url="http://native.example:8081",
+        native_ws_url="ws://native.example:8082/events",
+    )
+    assert client.ws_url == "ws://native.example:8082/events"
+
+
+def test_phase6_ws_url_falls_back_to_legacy_when_native_ws_disabled():
+    """Setting BRIDGE_WS_URL_NATIVE='' (None on the constructor) must
+    fall back to deriving the WS URL from base_url, so the agent keeps
+    working when the native mod is being rebuilt."""
+    client = RealBridgeClient(
+        base_url="http://legacy.example:8080",
+        native_url="http://native.example:8081",
+        native_ws_url=None,
+    )
+    assert client.ws_url == "ws://legacy.example:8080/events"
+
+
 def test_no_native_url_falls_back_to_legacy():
     """Disabling the native bridge (e.g. while the mod is rebuilt) must keep
     the agent working end-to-end against the legacy bridge alone."""

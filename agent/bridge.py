@@ -142,10 +142,18 @@ class RealBridgeClient:
         self,
         base_url: str = "http://localhost:8080",
         native_url: str | None = "http://localhost:8081",
+        native_ws_url: str | None = "ws://localhost:8082/events",
     ):
         self.base_url = base_url.rstrip("/")
         self.native_url = native_url.rstrip("/") if native_url else None
-        self.ws_url = self.base_url.replace("http", "ws") + "/events"
+        # Phase 6 — events WS lives on the native mod (port 8082, separate
+        # listener from HTTP-8081 because JDK HttpServer doesn't speak WS
+        # upgrades). Cutover is binary: when native_ws_url is set we use
+        # it; explicit empty string ("") falls back to legacy ws://…:8080.
+        # See docs/superpowers/specs/2026-04-28-native-mod-phase6-events.md
+        self.native_ws_url = native_ws_url.rstrip("/") if native_ws_url else None
+        legacy_ws_url = self.base_url.replace("http", "ws") + "/events"
+        self.ws_url = self.native_ws_url or legacy_ws_url
         # 90s global timeout: must exceed bridge's longest per-request operation
         # (goto_and_wait defaults to 60s). A mismatch causes spurious ReadTimeout
         # on the client while the bridge executor is still running, blocking
@@ -678,7 +686,8 @@ def create_bridge(
     mock: bool = False,
     base_url: str = "http://localhost:8080",
     native_url: str | None = "http://localhost:8081",
+    native_ws_url: str | None = "ws://localhost:8082/events",
 ) -> BridgeClient:
     if mock:
         return MockBridgeClient()
-    return RealBridgeClient(base_url, native_url=native_url)
+    return RealBridgeClient(base_url, native_url=native_url, native_ws_url=native_ws_url)

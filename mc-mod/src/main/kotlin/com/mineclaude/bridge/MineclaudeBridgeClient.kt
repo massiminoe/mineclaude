@@ -51,11 +51,21 @@ class MineclaudeBridgeClient : ClientModInitializer {
 
         bridge.start()
 
+        // Phase 6 events WS — separate listener port (8082). Hooks
+        // Fabric's chat / death / respawn events directly, replacing the
+        // legacy bridge's polled health monitor + Minescript EventQueue
+        // chat poller. JDK HttpServer doesn't speak WS upgrades, so this
+        // runs as its own Java-WebSocket WebSocketServer.
+        log.info("mineclaude events WS: starting on {}:{}", BIND_HOST, WS_PORT)
+        EventsWebSocket.start(BIND_HOST, WS_PORT)
+        EventBus.register()
+
         // Stop cleanly so a `/stop` from the launcher doesn't leak the
-        // listener thread on next reload.
+        // listener threads on next reload.
         ClientLifecycleEvents.CLIENT_STOPPING.register(
             ClientLifecycleEvents.ClientStopping {
                 log.info("mineclaude bridge: stopping")
+                EventsWebSocket.shutdown()
                 bridge.stop()
             }
         )
@@ -69,6 +79,9 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // headless container, so external bind is safe here.
         const val BIND_HOST = "0.0.0.0"
         const val BIND_PORT = 8081
+        // Events WS lives on a dedicated port — JDK's HttpServer doesn't
+        // support WS upgrades, so Java-WebSocket gets its own listener.
+        const val WS_PORT = 8082
         val log = LoggerFactory.getLogger("mineclaude-bridge")!!
     }
 }
