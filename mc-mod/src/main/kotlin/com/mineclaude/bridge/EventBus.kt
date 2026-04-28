@@ -67,7 +67,19 @@ object EventBus {
             ClientReceiveMessageEvents.Chat { message, _, sender, _, _ ->
                 val username = sender?.name ?: return@Chat
                 val raw = message.string ?: return@Chat
-                val text = FORMATTING_STRIP.replace(raw, "").trim()
+                val cleaned = FORMATTING_STRIP.replace(raw, "").trim()
+                // message.string is the *formatted* display text — vanilla
+                // wraps player chat as "<Name> body" via the chat decorator.
+                // sender.name is authoritative, so strip the redundant
+                // prefix before forwarding to the agent. Falls back to the
+                // generic <(\w+)>… regex for servers that prefix with rank
+                // tags (e.g. "[VIP] <Name> body" → group 2 wins).
+                val text = when {
+                    cleaned.startsWith("<$username>") ->
+                        cleaned.removePrefix("<$username>").trim()
+                    else ->
+                        CHAT_REGEX.find(cleaned)?.groupValues?.get(2)?.trim() ?: cleaned
+                }
                 if (text.isEmpty()) return@Chat
                 pushChat(username, text)
             }
