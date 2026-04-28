@@ -1,3 +1,0 @@
-python=python3
-command[.py]=python3 {command} {args}
-autorun[*]=\bridge

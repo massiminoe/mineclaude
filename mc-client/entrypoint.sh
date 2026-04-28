@@ -28,26 +28,6 @@ fi
 echo "Mods installed in $MODS_DIR:"
 ls -la "$MODS_DIR/"
 
-# Copy Minescript scripts to both possible locations
-# (Minescript may use /headlessmc/minescript/ or the game dir)
-for SCRIPTS_DIR in "$GAME_DIR/minescript" "/headlessmc/minescript"; do
-    mkdir -p "$SCRIPTS_DIR"
-    if ls /tmp/scripts/*.py 1>/dev/null 2>&1; then
-        cp /tmp/scripts/*.py "$SCRIPTS_DIR/"
-    fi
-    # Install Minescript config (autorun bridge on world join)
-    if [ -f /tmp/scripts/minescript-config.txt ]; then
-        cp /tmp/scripts/minescript-config.txt "$SCRIPTS_DIR/config.txt"
-    fi
-done
-echo "Scripts installed"
-
-# Copy bridge package so it's importable from /headlessmc/bridge/
-if [ -d /tmp/bridge ]; then
-    cp -r /tmp/bridge/ /headlessmc/bridge/
-    echo "Bridge package installed at /headlessmc/bridge/"
-fi
-
 # Copy MC render options into game dir
 if [ -f /tmp/options.txt ]; then
     cp /tmp/options.txt "$GAME_DIR/options.txt"
@@ -101,10 +81,12 @@ except Exception as e:
     print(f'RCON failed: {e}')
 "
 
-# Wait for bridge to be ready (autorun config starts bridge on world join)
+# Wait for the native Fabric mod bridge to be ready. The mod boots its
+# JDK HttpServer once Minecraft finishes initializing the client; we
+# poll /health (not /status — /status needs an active world) on 8081.
 echo "Waiting for bridge server..."
 for i in $(seq 1 30); do
-    if curl -s localhost:8080/status > /dev/null 2>&1; then
+    if curl -s localhost:8081/health > /dev/null 2>&1; then
         echo "Bridge server ready!"
         break
     fi

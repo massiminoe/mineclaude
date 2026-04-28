@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import type { ConversationMessage } from "../types";
 import { ChatOverlay } from "./ChatOverlay";
 
-const BRIDGE_URL = "http://localhost:8080";
+const BRIDGE_URL = "http://localhost:8081";
 const STREAM_URL = `${BRIDGE_URL}/video/stream?fps=10&quality=50`;
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 10000;

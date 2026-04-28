@@ -7,10 +7,10 @@ import org.slf4j.LoggerFactory
 /**
  * Mineclaude native bridge — entrypoint.
  *
- * Boots an HTTP server on 127.0.0.1:8081 that progressively takes over
- * endpoints from the Minescript-backed Python bridge on :8080. See
- * docs/superpowers/specs/2026-04-27-native-mod-bridge-plan.md for the
- * cutover order.
+ * Boots an HTTP server on 0.0.0.0:8081 + an events WebSocket on 8082.
+ * The bridge owns every endpoint the agent and frontend hit — there is
+ * no separate Python bridge process anymore. The Phase 0–8 migration
+ * history lives in docs/superpowers/specs/2026-04-*-native-mod-*.
  */
 class MineclaudeBridgeClient : ClientModInitializer {
     override fun onInitializeClient() {

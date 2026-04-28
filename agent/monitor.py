@@ -66,13 +66,7 @@ class MonitorServer:
 
     async def _handle_state(self, request: web.Request) -> web.Response:
         game = await self._get_game_state()
-        # /video/stream is Phase 7 native — prefer the native bridge URL
-        # when available so the frontend hits 8081 directly. Fall back to
-        # the legacy bridge URL only if the native client is disabled.
-        video_base = (
-            getattr(self.agent.bridge, "native_url", None)
-            or getattr(self.agent.bridge, "base_url", "")
-        )
+        video_base = getattr(self.agent.bridge, "base_url", "")
         return web.json_response({
             "conversation": self.agent.messages,
             "queue": self.agent.queue.status(),

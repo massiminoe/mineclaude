@@ -70,16 +70,11 @@ def main() -> None:
     # Read config from environment
     mock_bridge = os.environ.get("MOCK_BRIDGE", "").lower() in ("1", "true", "yes")
     no_claude = os.environ.get("NO_CLAUDE", "").lower() in ("1", "true", "yes")
-    bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8080")
-    # Native Fabric mod (in-process to MC) — progressively takes over
-    # endpoints from the Minescript-backed Python bridge. Set to empty string
-    # to disable while the mod is being rebuilt or for parity testing.
-    native_bridge_url = os.environ.get("BRIDGE_URL_NATIVE", "http://localhost:8081") or None
-    # Phase 6 — events WebSocket is served by the native mod on a dedicated
-    # listener port (Java-WebSocket alongside the JDK HttpServer). Set
-    # BRIDGE_WS_URL_NATIVE="" to fall back to the legacy bridge at
-    # ws://…:8080/events (e.g. while the mod is being rebuilt).
-    native_ws_url = os.environ.get("BRIDGE_WS_URL_NATIVE", "ws://localhost:8082/events") or None
+    # Native Fabric mod owns every endpoint after Phase 8. HTTP on 8081
+    # (JDK HttpServer), events WS on 8082 (Java-WebSocket — separate
+    # listener because JDK HttpServer doesn't speak WS upgrades).
+    bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8081")
+    bridge_ws_url = os.environ.get("BRIDGE_WS_URL", "ws://localhost:8082/events")
     bot_name = os.environ.get("BOT_NAME", "Mineclaw")
     claude_model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -103,8 +98,7 @@ def main() -> None:
     bridge = create_bridge(
         mock=mock_bridge,
         base_url=bridge_url,
-        native_url=native_bridge_url,
-        native_ws_url=native_ws_url,
+        ws_url=bridge_ws_url,
     )
     claude = None if no_claude else ClaudeClient(model=claude_model, api_key=api_key)
     agent = Agent(bridge=bridge, claude=claude, bot_name=bot_name)

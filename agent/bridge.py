@@ -66,125 +66,29 @@ class BridgeClient(Protocol):
     async def close(self) -> None: ...
 
 
-# Endpoints owned by the native Fabric mod (port 8081). Entries get added
-# per phase as the cutover lands; routing falls back to legacy when the
-# native bridge isn't configured (see _client_for + native_url=None).
-#
-# Phase 1: read-only endpoints. Parity verified by tests/e2e/test_native_parity.py.
-# Subsequent phases add writes / movement / containers — see
-# docs/superpowers/specs/2026-04-27-native-mod-bridge-plan.md.
-NATIVE_ENDPOINTS: frozenset[str] = frozenset(
-    {
-        "/status",
-        "/nearby/blocks",
-        "/nearby/entities",
-        # Phase 2 — simple write. Native /chat preserves legacy semantics:
-        # `#`/`\` go through sendChatMessage so client-side hooks (Baritone,
-        # Minescript) can intercept; `/`-prefixed via sendChatCommand;
-        # plain text wrapped in /tellraw to dodge signed-chat disconnect.
-        "/chat",
-        # Phase 2b — inventory-touching writes. The native impls now use
-        # `interactionManager.clickSlot` (PICKUP / SWAP) instead of the
-        # broken `player_inventory_slot_to_hotbar` API path, so they can
-        # handle non-hotbar items (slow path stages into the hotbar, drops
-        # / equips, then SWAPs back to preserve layout) and armor slots
-        # (pickup-then-place into PSH 5..8 with server-side validation).
-        "/equip",
-        "/discard",
-        # Phase 3 — world mutations. Native impls drive
-        # `interactionManager.attackBlock/updateBlockBreakingProgress`
-        # (break), `interactionManager.interactBlock` (place) and
-        # `attackEntity` directly, replacing the press_attack/press_use
-        # Minescript path that wedged on RPC pipe contention. /collect
-        # stays on legacy because its Baritone-driven walk loop hasn't
-        # been ported yet.
-        "/break",
-        "/place",
-        "/attack",
-        # Phase 4 — container manipulation. Native /craft and the
-        # /furnace/* trio drive `interactionManager.interactBlock` (open)
-        # + `clickSlot` (place ingredients, extract output) directly,
-        # replacing the legacy Minescript `container_*` API path. With
-        # these on native, no endpoint leaves a stale ScreenHandler open
-        # across bridges, so the EquipRoute cross-bridge sync barrier
-        # becomes provably dead code (see commit retiring SCREEN_SYNC_MS).
-        "/craft",
-        "/furnace/load",
-        "/furnace/inspect",
-        "/furnace/extract",
-        # Phase 5 — Baritone-driven movement. Native impls send the same
-        # `#goto`/`#mine`/`#follow`/`#stop`/`#explore` chat strings as the
-        # legacy bridge but route them through the in-process tick thread
-        # via `player.networkHandler.sendChatMessage` (Baritone's chat hook
-        # intercepts client-side). /goto polls `player.pos` directly for
-        # arrival instead of the Minescript RPC poll loop. /collect runs
-        # the walk-loop in Kotlin against `world.entities` directly.
-        # See: docs/superpowers/specs/2026-04-28-native-mod-phase3-movement.md
-        "/goto",
-        "/mine",
-        "/follow",
-        "/stop",
-        "/explore",
-        "/collect",
-        # Phase 7 — vision. Both shell out to ffmpeg x11grab from `:99`
-        # in the native mod; same approach as legacy because
-        # NativeImage.writeTo() produces 0-byte PNGs on ARM64 Mesa.
-        # /screenshot returns JSON-wrapped base64 by default (or raw
-        # bytes with ?raw=true); /video/stream is a long-lived
-        # multipart/x-mixed-replace MJPEG stream consumed by the
-        # frontend monitor (one persistent ffmpeg per client).
-        "/screenshot",
-        "/video/stream",
-        # /probe intentionally not routed: the legacy and native bodies are
-        # different shapes (legacy dumps Minescript Python APIs; native
-        # identifies the bridge). Agent doesn't consume /probe today, so
-        # whichever bridge a curl hits is fine. Frontend or human probes
-        # explicitly choose a port.
-    }
-)
-
-
 class RealBridgeClient:
-    """HTTP/WS client for the real bridge server."""
+    """HTTP/WS client for the native Fabric mod bridge.
+
+    The mod owns every endpoint after the Phase 8 decommission of the
+    legacy Minescript-backed Python bridge. HTTP lives on 8081 (JDK
+    HttpServer); the events WS lives on 8082 (Java-WebSocket, separate
+    listener because JDK HttpServer doesn't speak WS upgrades).
+    """
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8080",
-        native_url: str | None = "http://localhost:8081",
-        native_ws_url: str | None = "ws://localhost:8082/events",
+        base_url: str = "http://localhost:8081",
+        ws_url: str = "ws://localhost:8082/events",
     ):
         self.base_url = base_url.rstrip("/")
-        self.native_url = native_url.rstrip("/") if native_url else None
-        # Phase 6 — events WS lives on the native mod (port 8082, separate
-        # listener from HTTP-8081 because JDK HttpServer doesn't speak WS
-        # upgrades). Cutover is binary: when native_ws_url is set we use
-        # it; explicit empty string ("") falls back to legacy ws://…:8080.
-        # See docs/superpowers/specs/2026-04-28-native-mod-phase6-events.md
-        self.native_ws_url = native_ws_url.rstrip("/") if native_ws_url else None
-        legacy_ws_url = self.base_url.replace("http", "ws") + "/events"
-        self.ws_url = self.native_ws_url or legacy_ws_url
-        # 90s global timeout: must exceed bridge's longest per-request operation
-        # (goto_and_wait defaults to 60s). A mismatch causes spurious ReadTimeout
-        # on the client while the bridge executor is still running, blocking
-        # subsequent requests. See plan: frolicking-spinning-biscuit.md Fix 2.
+        self.ws_url = ws_url.rstrip("/")
+        # 90s global timeout: must exceed the bridge's longest per-request
+        # operation (e.g. /goto with a 60s default). A shorter client-side
+        # timeout would cause spurious ReadTimeouts while the mod's
+        # tick-thread executor is still working — wedging subsequent
+        # requests behind the dropped one.
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=90.0)
-        self._native_http: httpx.AsyncClient | None = (
-            httpx.AsyncClient(base_url=self.native_url, timeout=90.0)
-            if self.native_url
-            else None
-        )
         self._ws = None
-        self._ws_task = None
-
-    def _client_for(self, path: str) -> httpx.AsyncClient:
-        """Pick the legacy or native HTTP client based on NATIVE_ENDPOINTS.
-
-        Endpoints not yet ported live on the legacy Minescript bridge (8080);
-        ported endpoints route to the native Fabric mod (8081).
-        """
-        if self._native_http is not None and path in NATIVE_ENDPOINTS:
-            return self._native_http
-        return self._http
 
     def _parse(self, resp: httpx.Response) -> BridgeResponse:
         data = resp.json()
@@ -195,46 +99,46 @@ class RealBridgeClient:
         )
 
     async def get_status(self) -> BridgeResponse:
-        return self._parse(await self._client_for("/status").get("/status"))
+        return self._parse(await self._http.get("/status"))
 
     async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse:
         params: dict = {"r": radius}
         if block_types:
             params["types"] = ",".join(block_types)
-        return self._parse(await self._client_for("/nearby/blocks").get("/nearby/blocks", params=params))
+        return self._parse(await self._http.get("/nearby/blocks", params=params))
 
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse:
-        return self._parse(await self._client_for("/nearby/entities").get("/nearby/entities", params={"r": radius}))
+        return self._parse(await self._http.get("/nearby/entities", params={"r": radius}))
 
     async def goto(self, x: float, y: float, z: float) -> BridgeResponse:
-        return self._parse(await self._client_for("/goto").post("/goto", json={"x": x, "y": y, "z": z}))
+        return self._parse(await self._http.post("/goto", json={"x": x, "y": y, "z": z}))
 
     async def mine(self, block: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._client_for("/mine").post("/mine", json={"block": block, "count": count}))
+        return self._parse(await self._http.post("/mine", json={"block": block, "count": count}))
 
     async def follow(self, player: str, distance: int = 3) -> BridgeResponse:
-        return self._parse(await self._client_for("/follow").post("/follow", json={"player": player, "distance": distance}))
+        return self._parse(await self._http.post("/follow", json={"player": player, "distance": distance}))
 
     async def explore(self) -> BridgeResponse:
-        return self._parse(await self._client_for("/explore").post("/explore"))
+        return self._parse(await self._http.post("/explore"))
 
     async def stop(self) -> BridgeResponse:
-        return self._parse(await self._client_for("/stop").post("/stop"))
+        return self._parse(await self._http.post("/stop"))
 
     async def place(self, block: str, x: int, y: int, z: int, face: str = "top") -> BridgeResponse:
-        return self._parse(await self._client_for("/place").post("/place", json={"block": block, "x": x, "y": y, "z": z, "face": face}))
+        return self._parse(await self._http.post("/place", json={"block": block, "x": x, "y": y, "z": z, "face": face}))
 
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse:
-        return self._parse(await self._client_for("/break").post("/break", json={"x": x, "y": y, "z": z}))
+        return self._parse(await self._http.post("/break", json={"x": x, "y": y, "z": z}))
 
     async def collect(self, radius: float = 3) -> BridgeResponse:
-        return self._parse(await self._client_for("/collect").post("/collect", json={"radius": radius}))
+        return self._parse(await self._http.post("/collect", json={"radius": radius}))
 
     async def attack(self, entity_id: str) -> BridgeResponse:
-        return self._parse(await self._client_for("/attack").post("/attack", json={"entity_id": entity_id}))
+        return self._parse(await self._http.post("/attack", json={"entity_id": entity_id}))
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._client_for("/craft").post("/craft", json={"item": item, "count": count}))
+        return self._parse(await self._http.post("/craft", json={"item": item, "count": count}))
 
     async def furnace_load(
         self,
@@ -254,9 +158,7 @@ class RealBridgeClient:
         }
         if x is not None and y is not None and z is not None:
             body["x"], body["y"], body["z"] = x, y, z
-        return self._parse(
-            await self._client_for("/furnace/load").post("/furnace/load", json=body)
-        )
+        return self._parse(await self._http.post("/furnace/load", json=body))
 
     async def furnace_inspect(
         self,
@@ -267,9 +169,7 @@ class RealBridgeClient:
         params: dict[str, Any] = {}
         if x is not None and y is not None and z is not None:
             params["x"], params["y"], params["z"] = x, y, z
-        return self._parse(
-            await self._client_for("/furnace/inspect").get("/furnace/inspect", params=params)
-        )
+        return self._parse(await self._http.get("/furnace/inspect", params=params))
 
     async def furnace_extract(
         self,
@@ -280,21 +180,19 @@ class RealBridgeClient:
         body: dict[str, Any] = {}
         if x is not None and y is not None and z is not None:
             body["x"], body["y"], body["z"] = x, y, z
-        return self._parse(
-            await self._client_for("/furnace/extract").post("/furnace/extract", json=body)
-        )
+        return self._parse(await self._http.post("/furnace/extract", json=body))
 
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
-        return self._parse(await self._client_for("/equip").post("/equip", json={"item": item, "slot": slot}))
+        return self._parse(await self._http.post("/equip", json={"item": item, "slot": slot}))
 
     async def discard(self, item: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._client_for("/discard").post("/discard", json={"item": item, "count": count}))
+        return self._parse(await self._http.post("/discard", json={"item": item, "count": count}))
 
     async def chat(self, message: str) -> BridgeResponse:
-        return self._parse(await self._client_for("/chat").post("/chat", json={"message": message}))
+        return self._parse(await self._http.post("/chat", json={"message": message}))
 
     async def screenshot(self) -> BridgeResponse:
-        return self._parse(await self._client_for("/screenshot").get("/screenshot", params={"format": "jpeg", "quality": "80"}))
+        return self._parse(await self._http.get("/screenshot", params={"format": "jpeg", "quality": "80"}))
 
     async def events(self, callback) -> None:
         """Connect to WS event stream with reconnection backoff."""
@@ -317,8 +215,6 @@ class RealBridgeClient:
         if self._ws:
             await self._ws.close()
         await self._http.aclose()
-        if self._native_http is not None:
-            await self._native_http.aclose()
 
 
 class MockBridgeClient:
@@ -693,10 +589,9 @@ class MockBridgeClient:
 
 def create_bridge(
     mock: bool = False,
-    base_url: str = "http://localhost:8080",
-    native_url: str | None = "http://localhost:8081",
-    native_ws_url: str | None = "ws://localhost:8082/events",
+    base_url: str = "http://localhost:8081",
+    ws_url: str = "ws://localhost:8082/events",
 ) -> BridgeClient:
     if mock:
         return MockBridgeClient()
-    return RealBridgeClient(base_url, native_url=native_url, native_ws_url=native_ws_url)
+    return RealBridgeClient(base_url, ws_url=ws_url)

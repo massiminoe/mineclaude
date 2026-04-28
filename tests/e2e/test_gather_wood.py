@@ -31,7 +31,7 @@ async def _inventory_count(bridge_url: str, item_substring: str) -> int:
 
 async def test_agent_gathers_wood(scenario):
     """Ask the bot to collect a log; assert it appears in inventory."""
-    before = await _inventory_count("http://localhost:8080", "log")
+    before = await _inventory_count("http://localhost:8081", "log")
     result = await scenario.say("tester", "please get one log", timeout_s=300.0)
 
     assert result.text_sent, "agent did not reply"
@@ -39,7 +39,7 @@ async def test_agent_gathers_wood(scenario):
 
     # Give Baritone a moment to finish and the cache to refresh.
     await asyncio.sleep(5.0)
-    after = await _inventory_count("http://localhost:8080", "log")
+    after = await _inventory_count("http://localhost:8081", "log")
     assert after > before, (
         f"expected log count to increase; before={before} after={after}. "
         f"Session log: {result.session_log_path}"

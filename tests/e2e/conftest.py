@@ -9,7 +9,7 @@ startup per test run) and waits for the bridge /health endpoint. The
 Requires:
   - docker + docker compose on the host
   - ANTHROPIC_API_KEY in the environment (for real Claude calls)
-  - Ports 8080 (bridge), 25565 (MC), 25575 (RCON) free
+  - Ports 8081 (bridge HTTP), 8082 (bridge WS), 25565 (MC), 25575 (RCON) free
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ async def agent(mc_stack):
     from agent.bridge import RealBridgeClient
     from agent.claude import ClaudeClient
 
-    bridge = RealBridgeClient(base_url="http://localhost:8080")
+    bridge = RealBridgeClient(base_url="http://localhost:8081")
     claude = ClaudeClient(api_key=os.environ["ANTHROPIC_API_KEY"])
     ag = Agent(bridge=bridge, claude=claude, bot_name="Mineclaw")
     ag.queue.set_executor(ag._execute_action)

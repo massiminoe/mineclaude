@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import httpx
 
 
-BRIDGE_URL = "http://localhost:8080"
+BRIDGE_URL = "http://localhost:8081"
 RCON_HOST = "localhost"
 RCON_PORT = 25575
 RCON_PASSWORD = "mineclaude"

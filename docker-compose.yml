@@ -33,11 +33,11 @@ services:
       # to "" to disable, or tweak gamma/brightness/contrast to taste.
       # MONITOR_VIDEO_FILTER: "eq=gamma=2.0:brightness=0.08:contrast=1.15"
     ports:
-      - "8080:8080"
+      # Native Fabric mod bridge — HTTP on 8081, events WS on 8082
+      # (separate listener because JDK HttpServer doesn't speak WS
+      # upgrades). The legacy Python bridge on 8080 was decommissioned
+      # in Phase 8.
       - "8081:8081"
-      # Phase 6 — events WebSocket on dedicated listener port. JDK
-      # HttpServer doesn't speak WS upgrades, so Java-WebSocket binds
-      # its own socket here.
       - "8082:8082"
     volumes:
       - hmc-assets:/headlessmc/HeadlessMC/run/assets

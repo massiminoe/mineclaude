@@ -14,7 +14,10 @@ RUN ./gradlew --no-daemon build -x test
 # --- Stage 2: HeadlessMC runtime image ------------------------------------
 FROM 3arthqu4ke/headlessmc:latest
 
-# Install Python 3 (required by Minescript for .py scripts) and screen (for CLI interaction)
+# Runtime deps: screen for the HMC CLI session, curl for the entrypoint's
+# health-poll, xvfb + mesa for software OpenGL rendering, ffmpeg for the
+# native bridge's /screenshot + /video/stream (x11grab :99). Python is
+# kept solely for the RCON-based bot opping in entrypoint.sh.
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends \
     python3 python3-pip screen curl \
@@ -44,17 +47,12 @@ COPY mc-client/mods/*.jar /tmp/mods/
 # before copying into the mods dir.
 COPY --from=mod-builder /build/build/libs/ /tmp/mod-builder-libs/
 
-# Install aiohttp for bridge HTTP+WS server, mcrcon for server commands
-RUN pip3 install --break-system-packages aiohttp mcrcon Pillow
-
-# Copy test scripts
-COPY mc-client/scripts/ /tmp/scripts/
+# mcrcon is the only Python dep we still need — entrypoint.sh uses it to
+# op the bot + tweak gamerules over RCON after the world join.
+RUN pip3 install --break-system-packages mcrcon
 
 # Copy MC render options
 COPY mc-client/options.txt /tmp/options.txt
-
-# Copy bridge package
-COPY bridge/ /tmp/bridge/
 
 # Startup script that:
 # 1. Copies mods into the correct mods folder

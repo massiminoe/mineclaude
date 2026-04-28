@@ -1,8 +1,9 @@
 """Crafting and smelting recipe tables for essential survival items.
 
-Duplicated from bridge/recipes.py because bridge/ runs inside the MC container
-and agent/ is a separate installable package.  Keep both files in sync when
-adding recipes.
+Used by the agent to validate craft requests pre-flight (ingredient
+availability, table requirement). The native bridge mod has its own
+authoritative recipe table in `mc-mod/.../Recipes.kt`; keep both in
+sync when adding recipes.
 
 Each recipe maps an output item to its crafting pattern and ingredients.
 Patterns use single-char keys mapped to item names.

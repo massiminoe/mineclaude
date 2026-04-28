@@ -5,26 +5,22 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 ## Commands
 
 - `pytest` — run tests
-- `docker compose up --build` — run full stack (MC server + headless client w/ bridge)
+- `docker compose up --build` — run full stack (MC server + headless client w/ native bridge mod)
 - `docker compose down -v` — full clean restart (clears volumes, regenerates ops)
 - `mineclaude` — run the agent process (requires `.env` with `ANTHROPIC_API_KEY`)
 - `MOCK_BRIDGE=1 mineclaude` — test agent loop without MC server
-- `BRIDGE_URL_NATIVE=""` (env, prefix to `mineclaude`) — disable the native Fabric mod bridge (8081), routing every endpoint to the legacy Minescript bridge (8080). Default points at `http://localhost:8081`. Use to diagnose whether a bug is in the new mod vs. the agent
-- `BRIDGE_WS_URL_NATIVE=""` (env, prefix to `mineclaude`) — fall back to the legacy `/events` WS at `ws://localhost:8080/events`. Default points at `ws://localhost:8082/events` (native mod). The events stream is binary cutover (not per-endpoint routed) — it's a single subscription
+- `BRIDGE_URL` (env, default `http://localhost:8081`) — native bridge HTTP
+- `BRIDGE_WS_URL` (env, default `ws://localhost:8082/events`) — native bridge events WS
 - `NO_CLAUDE=1 mineclaude` — headless mode (no Claude); queue + bridge + monitor stay up so you can drive primitives manually from the frontend Console panel
 - `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
 ## Project Structure
 
 - `agent/` — Python package (bridge, sandbox, primitives, claude, agent, prompt, main, monitor)
-- `bridge/` — HTTP+WS bridge server (runs inside MC client container, NOT installed locally)
-  - `player_control.py` — shared helpers (look_at, find_slot, navigate, etc.)
-  - `recipes.py` — crafting recipe table (~30 essential survival recipes)
-  - `screenshot.py` — screenshot capture via Minescript + Pillow
 - `frontend/` — React + TypeScript + Vite monitor UI
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
-- `mc-client/` — Dockerfile, entrypoint, mods, Minescript scripts
-- `mc-mod/` — Kotlin Fabric mod (`mineclaude-bridge`) progressively replacing the Minescript-backed Python bridge. Built in stage 1 of `mc-client/Dockerfile`. Listens on port 8081. See `docs/superpowers/specs/2026-04-27-native-mod-bridge-plan.md`
+- `mc-client/` — Dockerfile + entrypoint for the headless MC client container that runs the bridge mod
+- `mc-mod/` — Kotlin Fabric mod (`mineclaude-bridge`). Owns every bridge endpoint the agent + frontend hit. Built in stage 1 of `mc-client/Dockerfile`. HTTP on 8081 (JDK HttpServer), events WS on 8082 (Java-WebSocket). The Phase 0–8 migration history lives in `docs/superpowers/specs/2026-04-*-native-mod-*`
 - `docker-compose.yml` — `itzg/minecraft-server` + custom `mc-client/Dockerfile`
 
 ## Key Patterns
@@ -46,72 +42,59 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - Frontend: React + Vite dev server on port 5173, proxies `/api` to monitor
   - `cd frontend && npm run dev` — dev server
   - `cd frontend && npx vite build` — production build (served by monitor)
-- Bridge: aiohttp server on port 8080 inside mc-client container (legacy, Minescript-backed)
-- Native bridge: JDK HttpServer on port 8081 inside mc-client container, served by the `mineclaude-bridge` Fabric mod (Kotlin). Java-WebSocket on port 8082 for `/events` (separate listener because JDK HttpServer doesn't speak WS upgrades). `agent.bridge.NATIVE_ENDPOINTS` controls per-endpoint routing — empty in Phase 0, populated as endpoints are ported. Currently routed: `/status`, `/nearby/blocks`, `/nearby/entities`, `/chat`, `/equip`, `/discard`, `/break`, `/place`, `/attack`, `/craft`, `/smelt`, `/goto`, `/mine`, `/follow`, `/stop`, `/explore`, `/collect`, `/screenshot`, `/video/stream`. Inventory writes use `interactionManager.clickSlot` (PICKUP/SWAP) so they cover non-hotbar items + armor without the legacy `/item replace` shuffle. World mutations drive `interactionManager.attackBlock` + `updateBlockBreakingProgress` (break, with denylist-gated recursive auto-clear of occluders to depth=2), `interactionManager.interactBlock` (place, with synthetic BlockHitResult on a found adjacent solid), and `attackEntity` (attack). Container ops (craft, smelt) open a CraftingScreenHandler / FurnaceScreenHandler via `interactBlock`, drive ingredient placement + extraction via `clickSlot` PICKUP / QUICK_MOVE through a `MenuClicker.withOpenedBlock { … }` helper that always `closeHandledScreen`s in a `finally`; the recipe + smelting tables are ported into Kotlin (`Recipes.kt`), and the 2x2 inventory crafter clicks PSH 1..4 directly without opening any UI. With containers native, no endpoint leaves a stale ScreenHandler open across bridges — the EquipRoute cross-bridge sync barrier (`closeHandledScreen` + 80 ms wait) was retired. Movement endpoints (Phase 5) ship the same `#goto` / `#mine` / `#follow` / `#stop` / `#explore` chat strings as the legacy bridge but route them in-process via `player.networkHandler.sendChatMessage` — Baritone hooks the chat path client-side. `/goto` polls `player.pos` directly for arrival; `/collect` runs the walk-loop in Kotlin against `world.entities`. Events WS (Phase 6) lives on a dedicated Java-WebSocket listener at port 8082 — replaces the legacy bridge's polled-health death monitor + Minescript EventQueue chat poller with `ClientReceiveMessageEvents.CHAT` (player chat — `sender.name` is authoritative; `GAME` kept as fallback for `/say`/`/tellraw`-wrapped chat) + `ClientTickEvents.END_CLIENT_TICK` (alive↔dead transitions, fires same-tick instead of 5s laggy). Vision endpoints (Phase 7) shell out to `ffmpeg -f x11grab -i :99` from Kotlin via `ProcessBuilder` — `NativeImage.writeTo()` produces 0-byte PNGs on the ARM64 Mesa llvmpipe stack the deployment container actually renders with, so direct framebuffer capture is the only reliable path. `/screenshot` returns JSON-wrapped base64 (or raw bytes with `?raw=true`); `/video/stream` runs one persistent ffmpeg per client and writes `multipart/x-mixed-replace` MJPEG over JDK HttpServer's chunked output (sendResponseHeaders status=200, length=0). Monitor's `video_url` now points at the native bridge (8081) instead of legacy.
-- Bridge logs to `/tmp/bridge.log` inside container (NOT to MC chat, to avoid feedback loops)
+- Bridge: Kotlin Fabric mod (`mineclaude-bridge`) running in-process to MC. JDK HttpServer on port 8081 for HTTP, separate Java-WebSocket listener on 8082 for `/events` (JDK HttpServer doesn't speak WS upgrades). All routes live in `mc-mod/src/main/kotlin/com/mineclaude/bridge/*Route.kt`; `HttpBridge.kt` dispatches them. Handlers needing MC state submit to the client tick thread via `TickThread.submitAndWait(timeoutMs) { … }` so the HttpServer worker pool stays free for incoming requests
+- **How endpoints are implemented:** Inventory writes (`/equip`, `/discard`) use `interactionManager.clickSlot` PICKUP/SWAP so they cover non-hotbar items + armor in one path. World mutations drive `interactionManager.attackBlock` + `updateBlockBreakingProgress` (`/break`, with denylist-gated recursive auto-clear of occluders to depth=2), `interactionManager.interactBlock` (`/place`, with synthetic BlockHitResult on a found adjacent solid), and `attackEntity` (`/attack`). Container ops (`/craft`, `/furnace/*`) open the screen handler via `interactBlock` and drive placement/extraction through a `MenuClicker.withOpenedBlock { … }` helper that always `closeHandledScreen`s in a `finally`; the recipe + smelting tables live in `Recipes.kt`. The 2×2 inventory crafter clicks PSH 1..4 directly without opening any UI. Movement endpoints (`/goto`, `/mine`, `/follow`, `/stop`, `/explore`) send `#…` chat strings via `player.networkHandler.sendChatMessage` so Baritone's client-side chat hook intercepts them. `/goto` polls `player.pos` directly for arrival; `/collect` runs the walk-loop in Kotlin against `world.entities`. Events WS hooks `ClientReceiveMessageEvents.CHAT` (player chat — `sender.name` authoritative; `GAME` kept as fallback for `/say`/`/tellraw`-wrapped chat) + `ClientTickEvents.END_CLIENT_TICK` (alive↔dead transitions). Vision (`/screenshot`, `/video/stream`) shells out to `ffmpeg -f x11grab -i :99` from Kotlin — `NativeImage.writeTo()` produces 0-byte PNGs on ARM64 Mesa llvmpipe, so direct framebuffer capture is the only reliable path. `/screenshot` returns JSON-wrapped base64 (or raw bytes with `?raw=true`); `/video/stream` runs one persistent ffmpeg per client and writes `multipart/x-mixed-replace` MJPEG over JDK HttpServer's chunked output
+- Bridge logs through SLF4J to MC's standard log (visible via `docker compose logs mc-client`). The legacy Python bridge's `/tmp/bridge.log` and `/tmp/bridge.log.mutations.jsonl` are gone with Phase 8
 
 ## Bridge API
 
 - `GET /status` — player position, health, hunger, inventory, time
 - `GET /nearby/blocks?r=8` — blocks within radius
 - `GET /nearby/entities?r=32` — entities within radius
-- `POST /goto` `{x, y, z}` — Baritone pathfinding
-- `POST /mine` `{block}` — Baritone mining
-- `POST /follow` `{player}` — Baritone follow (`#follow player <name>`)
-- `POST /stop` — Baritone stop
-- `POST /chat` `{message}` — send chat via `/tellraw` (avoids signed chat issues)
-- `POST /place`, `/break`, `/craft`, `/smelt`, `/equip`, `/discard` — MVP via server commands and container APIs
-- `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius of player
+- `POST /goto` `{x, y, z}` — Baritone pathfinding (polls arrival)
+- `POST /mine` `{block}` — Baritone mining (fire-and-forget)
+- `POST /follow` `{player}` — Baritone follow
+- `POST /stop` / `POST /explore` — Baritone control
+- `POST /chat` `{message}` — send chat (`#`/`\` via `sendChatMessage`, `/cmd` via `sendChatCommand`, plain text wrapped in `/tellraw` to dodge signed-chat disconnect)
+- `POST /place`, `/break`, `/attack`, `/equip`, `/discard` — world + inventory mutations via `interactionManager`
+- `POST /craft` `{item, count}` — opens crafting screen, places ingredients, extracts output
+- `POST /furnace/load`, `GET /furnace/inspect`, `POST /furnace/extract` — furnace lifecycle
+- `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius
 - `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`)
 - `GET /video/stream` — MJPEG video stream of game view
-- `WS /events` — chat event stream
+- `GET /health` — bridge liveness + ported endpoint list
+- `WS /events` — chat / death / respawn event stream
 
 ## Infrastructure Gotchas
 
 - MC **1.21.5** (NOT 1.21.6), Fabric Loader 0.18.4, Fabric API 0.128.2
 - HMC config: `/headlessmc/HeadlessMC/config.properties` (NOT `/root/HeadlessMC/`)
 - Do NOT pass `-D` flags to `hmc` CLI — crashes silently. Use config.properties.
-- Launch: `hmc launch fabric:1.21.5 -offline -inmemory` (no -lwjgl, renders to Xvfb)
+- Launch: `hmc launch fabric:1.21.5 -offline -inmemory` (renders to Xvfb)
 - Game dir: `/headlessmc/HeadlessMC/run`
-- Scripts: `/headlessmc/minescript/` (NOT game dir)
-- Python 3 must be installed in Docker image for .py Minescript scripts
-- Baritone commands: `#goto X Y Z`, `#mine <block>`, `#follow player <name>`, `#stop`
-- Baritone v1.14.0, Minescript 5.0b11, hmc-specifics 2.3.0
-- HeadlessMC 2.8.0 (`3arthqu4ke/headlessmc:latest`)
+- Baritone commands sent via chat: `#goto X Y Z`, `#mine <block>`, `#follow player <name>`, `#stop`, `#explore`
+- Baritone v1.14.0, hmc-specifics 2.3.0, HeadlessMC 2.8.0 (`3arthqu4ke/headlessmc:latest`)
 - Rendering via Xvfb virtual framebuffer + Mesa llvmpipe (software OpenGL 4.5)
 - `hmc.check.xvfb=true` in config.properties, `LIBGL_ALWAYS_SOFTWARE=1` env var
-- `minescript.screenshot(filename)` — native MC screenshot API (saves PNG to screenshots/ dir)
+- `NativeImage.writeTo()` produces 0-byte PNGs on the ARM64 Mesa stack — vision endpoints capture via ffmpeg x11grab from `:99` instead
 - Vision: Claude `screenshot` tool sends game view as base64 JPEG in tool_result image block
 
-## Minescript v5.0 API Notes
+## Bridge mod (mc-mod) gotchas
 
-- `minescript.player()` returns `EntityData` dataclass, NOT a tuple — use `player_position()` for `[x, y, z]`
-- `minescript.entities()` returns `List[EntityData]` — access `.position`, `.name`, `.type`, `.health`. **`ent.type` format is `"entity.minecraft.zombie"`** (with dots) NOT `"minecraft:zombie"` (with colon). Use `_clean_entity_type()` in `minescript_api.py` to strip — `.replace("minecraft:", "")` is a no-op
-- `minescript.player_inventory()` returns `List[ItemStack]` — access `.item`, `.count`, `.slot`
-- `minescript.world_info()` returns `WorldInfo` dataclass — use `.day_ticks`, `.raining`, etc.
-- `minescript.player_biome()` does NOT exist in v5.0
-- Chat events: use `EventQueue` + `register_chat_listener()`, NOT `chat_events()`
-- `ChatEvent` may arrive as dict — check `isinstance(ev, dict)` before `hasattr(ev, "message")`
-- Chat messages include `[Not Secure]` prefix with `ONLINE_MODE=false` — use regex to find `<Player>` pattern
-- Player-control APIs take `pressed: bool` arg: `player_press_attack(True/False)`, `player_press_use(True/False)`, etc.
-- `player_look_at(x, y, z)` exists — use it instead of manual yaw/pitch math
-- `player_inventory_select_slot(slot)` — selects hotbar slot (NOT `player_select_slot`)
-- `player_inventory_slot_to_hotbar(slot)` — exists but BROKEN on MC 1.21.5 (ServerboundPickItemPacket removed in 1.21.4). Workaround: `/item replace` commands (see player_control.py)
-- Container APIs (from custom build with PR #40): `container_open(x,y,z)`, `container_close()`, `container_click_slot(slot,button,shift)`, `container_swap_slots(slot1,slot2)`, `container_get_items()`, `container_get_slot(slot)`, `container_get_info()`, `container_find_item(item_id)`
-- `player_get_targeted_block()` — returns `TargetedBlock(position, distance, side, type)` for whatever the player's crosshair is currently pointing at (or None). `_break_real` uses this to detect occlusion before pressing attack
-- `GET /probe` endpoint — returns JSON of all available Minescript APIs and capabilities
+- **Tick-thread discipline:** any handler reading or mutating MC state must wrap its body in `TickThread.submitAndWait(timeoutMs) { … }`. Calling Minecraft APIs off the client tick thread mostly works, until it doesn't (concurrent ChunkManager access, partially-loaded entity views). The HttpServer worker pool is where handlers run; they submit a task and block until the next client tick services it
+- **`interactionManager.clickSlot` for inventory writes:** PICKUP/SWAP covers non-hotbar items + armor in one path. Avoid the legacy `/item replace` shuffle — it's lossy on NBT
+- **`break` occlusion handling:** `interactionManager.attackBlock` mines whatever the eye-ray hits, not the target coords. `BreakRoute` checks `crosshairTarget` after aiming and recursively auto-clears benign occluders (dirt above target stone) up to depth=2. `_OCCLUDER_DENYLIST` (containers, beds, doors, etc.) raises a prescriptive error so the agent decides what to do
+- **Container ops never leak:** every screen-opening route uses `MenuClicker.withOpenedBlock { … }` which always `closeHandledScreen`s in a `finally`. Without this, a stale ScreenHandler silently no-ops subsequent world actions because input is captured by Screens
+- **`/goto` held-slot leak:** Baritone auto-equips throwaway blocks while pathing. `GotoRoute` snapshots the held hotbar slot at entry and restores it on exit
+- **Events WS:** `ClientReceiveMessageEvents.CHAT` (sender.name) is the authoritative player-chat hook. `GAME` is a fallback — only fires for server-origin messages (`/say`, `/tellraw`). The chat regex on GAME drops bot self-echoes because `/tellraw` text doesn't match `<Name> message`
+- **Vision shell-out:** `ffmpeg -f x11grab -video_size 854x480 -i :99` runs on the HttpServer worker pool, not the tick thread (no MC state involved). Stderr drained concurrently to avoid pipe-fill deadlock; 5s timeout on `/screenshot`. `/video/stream` runs one persistent ffmpeg per client and SIGKILLs on disconnect (IOException on response write)
 
 ## Debugging
 
-Three log files cover a running session — see `docs/autonomy.md` for the full runbook:
+- `state/sessions/<ts>-<id>.jsonl` — agent-side replay log. Every turn, every Claude iteration, every tool call with timing, every belief mismatch. Emitted by `agent/session_log.py`. Render as a timeline: `python scripts/session_report.py --latest`
+- Bridge-side logs go through SLF4J to MC's standard log — `docker compose logs mc-client` for the live stream, or filter for `mineclaude-bridge` loggers. The legacy mutation-log JSONL is gone with Phase 8; if you need before/after world snapshots, the agent's session log captures pre/post `/status` around each tool call
 
-- `state/sessions/<ts>-<id>.jsonl` — agent-side replay log. Every turn, every Claude iteration, every tool call with timing, every belief mismatch. Emitted by `agent/session_log.py`.
-- `/tmp/bridge.log.mutations.jsonl` — one entry per mutating HTTP call with before/after world state. Emitted by `bridge/mutation_log.py`. Also exposed via `GET /mutations`.
-- `/tmp/bridge.log` — freeform bridge-side stdlib logging (cache scanner, RPC channel state).
-
-Render a session as a timeline: `python scripts/session_report.py --latest`.
-
-A **belief mismatch** (logged by `agent/belief_check.py`) means the agent's most recently injected gameState diverges from what the bridge currently sees. It is the strongest signal that Claude was deciding on stale data — check the mutation log around the same timestamp for the action that desynced state.
+A **belief mismatch** (logged by `agent/belief_check.py`) means the agent's most recently injected gameState diverges from what the bridge currently sees. It is the strongest signal that Claude was deciding on stale data — check the session log around the same timestamp for the action that desynced state.
 
 For hands-on primitive debugging, run `NO_CLAUDE=1 mineclaude` and use the **Console** panel in the monitor frontend. You type the same code Claude would put in `newAction` (e.g. `await goToPosition(0, 64, 0)`), it enqueues on the same action queue, and the resulting trace renders in the Action Queue panel with full subaction breakdown. Useful for reproducing "Claude did X and something weird happened" without Claude in the loop.
 
@@ -119,20 +102,7 @@ E2E tests live in `tests/e2e/` and are opt-in: `pytest --run-e2e`.
 
 ## Known Workarounds
 
-- **Signed chat crash**: `ONLINE_MODE=false` breaks MC signed chat on 2nd+ message. Bot sends via `/tellraw @a` instead of `minescript.chat()`
-- **Emojis**: MC can't render them — stripped to ASCII before sending, prompt tells Claude not to use them
-- **Bot opping**: `OPS` env var unreliable with offline-mode. RCON ops both bot and player in entrypoint after connection
-- **Bridge logging**: Must NOT use Python `logging` to stdout (Minescript routes it to MC chat → feedback loop). Logs to `/tmp/bridge.log`
-- **break/place/attack**: Real player actions (look_at + press_attack/press_use). Verified working in-game. Break does NOT auto-collect drops — agent must call `collectItems()` after. **place** verifies via `getblock` after `press_use`: confirmed-placed → success, verify-errored → tolerant success, still-air → honest `{"placed": False, "error": "...is a GUI open?"}`. **All world-interaction primitives** (`_place_real`, `_break_real`, `_attack_real`, `_discard_real`) call `_ensure_no_screen_open()` defensively at the top — input is captured by Screens, so any lingering inventory GUI would silently no-op the action
-- **break occlusion handling**: `_break_real` uses `minescript.player_get_targeted_block()` after `_look_at_block` to detect cases where MC's eye-ray hits a nearer block instead of the target (e.g. dirt above stone when standing adjacent with a shallow look angle). Without this check, `press_attack` mines the wrong block and the `getblock(target)` poll loop never sees a change → silent 15s timeout. On mismatch, auto-clears the occluder via recursive `_break_real` call (depth cap = 2), then re-aims at the true target — mirrors what a human does (break dirt, then stone). Recursion only applies to naturally-placed terrain: `_OCCLUDER_DENYLIST` covers containers, beds, doors, signs, anvils, brewing stands, etc. — if the occluder is in the denylist, raises a prescriptive error so the agent decides. Every auto-clear is logged at INFO in `/tmp/bridge.log` for post-hoc traceability
-- **Baritone nav timeout**: `navigate_near` in `player_control.py` uses a 15s deadline (not 30s). Longer waits on unreachable targets (tree-top logs behind leaves, walled-off ore) just burn Claude iterations on guaranteed failures
-- **collect (item pickup)**: MC requires walking within ~1 block of dropped item entities. `collect_nearby_items(radius)` in `player_control.py` scans `minescript.entities()` for `entity.minecraft.item` types within radius of player, walks to each via Baritone `#goto`. Idempotent — returns 0 (success) when nothing nearby. 18s overall time budget, max 4 iterations. Agent-side primitive default is `radius=6` (not 3) — long mining sequences drift 3+ blocks between breaks and items land out of the narrower radius. `/collect` handler synchronously calls `force_refresh_status` so the inventory cache reflects pickups that happened during Baritone travel for preceding breaks (auto-pickup happens mid-navigation; the per-break `force_refresh_status` fires before that, so only the post-collect refresh captures it)
-- **discard**: Real (select slot + press_drop). Works if item already in hotbar
-- **equip hand/offhand**: Real (inventory_select_slot / swap_hands). Works if item in hotbar
-- **equip armor**: Real — opens player inventory screen via `press_key_bind('key.inventory', True/False)` (the fork lacks `player_press_inventory`), finds armor in inventory portion (slots 9-44 of `InventoryMenu`), uses `container_swap_slots(source, armor_slot)` to move it. Armor slot indices in `InventoryMenu`: head=5, chest=6, legs=7, feet=8. Fallback `/item replace entity @s armor.{slot}` retained as defensive backstop. Verified end-to-end with iron_helmet
-- **craft**: Real — opens a crafting menu via container APIs and clicks ingredients into the grid. 3x3 recipes use a nearby `crafting_table` block via `container_open(x,y,z)`. 2x2 recipes use the player's built-in 2x2 crafter via `press_key_bind('key.inventory')` (the fork lacks `player_press_inventory`/`open_inventory`). Click model per ingredient: **left-click source** to pick up entire stack, **right-click grid slot** to drop 1 from cursor, **left-click source** to drop cursor stack back (re-stacks since same item) — leaves cursor empty between placements so the same source can feed multiple grid slots. Shift-click slot 0 to extract output. Cleanup phase shift-clicks any leftover grid items back to inventory before closing (otherwise MC drops them as entities). Slot layouts: `CraftingMenu` (table) reports `player_slots=36, container_slots=10` with player inv at slots 10-45; `InventoryMenu` (E key) reports `player_slots=41, container_slots=5` with armor at 5-8, player inv at 9-44, offhand at 45. Both screens have title `"Crafting"` — distinguish by container_id/slot count if needed. **Both open and close are verified** via `_is_any_screen_open()` (uses `screen_name()` then `container_get_info()`) with one retry on failure — close failures previously left the inventory open which then silently no-op'd subsequent world actions. **All inventory clicks are paced to whole game ticks** via `_tick_sleep(n)` (`MC_TICK_MS = 50`) — gives MC time to process each event between calls and makes the agent's actions visibly human in the game window
-- **press_key_bind**: This Minescript fork's substitute for the missing `player_press_inventory`/`open_inventory` APIs. `press_key_bind("key.inventory", True/False)` works to **OPEN** the player inventory (when no screen is active) but does NOT work to close it. Reason: MC's `Minecraft.tick()` only calls `handleKeybinds()` when `screen == null`, so global keybind events are queued but never processed while a screen is open. Worse — the queued click would be consumed by the next `handleKeybinds()` call after a successful close via another path, **immediately re-opening the inventory**. So `_try_close_once()` deliberately avoids `press_key_bind` and uses `container_close` instead (which calls `LocalPlayer.closeContainer()` regardless of screen state). Tick-paced: 1 tick between keydown and keyup, 2 ticks settle after release
-- **smelt**: Real furnace smelting via container clicks (same shape as craft). Opens the furnace menu, uses the 3-click dance (**left-click source** → **right-click N times** into `_FURNACE_INPUT_SLOT=0` or `_FURNACE_FUEL_SLOT=1` → **left-click source** to re-stack the remainder; step 3 is skipped when step 2 drained the cursor) to load input and fuel, polls `getblock` for `lit=false` to detect completion (container APIs keep working while the menu is open, so no close/reopen dance), then shift-clicks `_FURNACE_OUTPUT_SLOT=2` to extract. Verifies extraction via before/after `_get_inventory_counts()` snapshot; open and close are verified via `_is_any_screen_open()` + `_close_open_screen()` in a `finally`. FurnaceMenu inventory range is `_FURNACE_INV_RANGE = (3, 38)` (27 inv slots at 3-29, 9 hotbar at 30-38). All clicks `_tick_sleep(1)`-paced, matching craft. Pre-existing output is shift-click'd out before inserting so it isn't lost
-- **Hotbar movement**: Uses `/item replace ... from` commands (lossless, preserves NBT/durability) since `player_inventory_slot_to_hotbar` is broken on MC 1.21.5. Prefers empty hotbar slots; if full, uses a temp inventory slot for swap
-- **Custom Minescript build**: JAR built from `massiminoe/minescript@mc1.21.5-containers` (5.0b11 + container APIs from PR #40 + A1 length-prefixed RPC framing). Build with `NO_MINESCRIPT_FORGE_BUILD=1 NO_MINESCRIPT_NEOFORGE_BUILD=1 ./gradlew :fabric:build -x test` (forge module's plugin is incompatible with Gradle 9.x and we don't need it). A1 framing changes the wire format on the script's stdin/stdout pipes — non-mineclaude scripts running on this JAR break, but bridge.py is the only consumer. Plain `print()` from scripts is rerouted to stderr so it can't corrupt the framed wire — use `minescript.echo()` or stderr if you need visible output. Plan: `docs/superpowers/specs/2026-04-27-A1-framing-fix-plan.md`
-- The `method` field in response dicts indicates "real" or "fallback" path
+- **Signed chat crash:** `ONLINE_MODE=false` breaks MC signed chat on 2nd+ outgoing message. `ChatRoute.kt` sends plain text via `sendChatCommand("tellraw @a {\"text\":…}")` instead. Slash-commands and `#`/`\` prefixes go through `sendChatMessage`/`sendChatCommand` so Baritone's chat hook intercepts them client-side
+- **Emojis:** MC can't render them — `ChatRoute` strips non-ASCII before wrapping in `/tellraw`. Prompt tells Claude not to use them
+- **Bot opping:** `OPS` env var unreliable with offline-mode. `entrypoint.sh` RCONs `op Claude` + `op Massimino` after connection, plus `gamerule doImmediateRespawn true`
+- **Baritone nav timeout:** the agent's `navigate_near` primitive uses a 15s deadline. Longer waits on unreachable targets (tree-top logs behind leaves, walled-off ore) just burn Claude iterations on guaranteed failures
