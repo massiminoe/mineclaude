@@ -28,6 +28,11 @@ class MineclaudeBridgeClient : ClientModInitializer {
         ChatRoute.register(bridge)
         EquipRoute.register(bridge)
         DiscardRoute.register(bridge)
+        // Phase 3 world mutations — break/place/attack via interactionManager.
+        // /collect stays on the legacy bridge for now (Baritone-driven walk).
+        BreakRoute.register(bridge)
+        PlaceRoute.register(bridge)
+        AttackRoute.register(bridge)
 
         bridge.start()
 

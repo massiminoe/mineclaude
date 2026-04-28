@@ -32,8 +32,12 @@ object TickThread {
      * Schedule [task] on the client tick thread. The future completes with
      * the task's return value (or its thrown exception). Tracks inflight
      * count for `/health` reporting.
+     *
+     * The type parameter is unconstrained so handlers can return nullable
+     * results (e.g. "block id, or null when already-air") without having
+     * to wrap in a sentinel.
      */
-    fun <T : Any> submit(task: () -> T): CompletableFuture<T> {
+    fun <T> submit(task: () -> T): CompletableFuture<T> {
         val future = CompletableFuture<T>()
         pending.incrementAndGet()
         totalSubmitted.incrementAndGet()
@@ -55,7 +59,7 @@ object TickThread {
      * [timeoutMs] milliseconds. Throws on timeout so the dispatcher returns
      * a clean 503 instead of holding the worker thread indefinitely.
      */
-    fun <T : Any> submitAndWait(timeoutMs: Long = 2_000, task: () -> T): T {
+    fun <T> submitAndWait(timeoutMs: Long = 2_000, task: () -> T): T {
         return try {
             submit(task).get(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (e: TimeoutException) {

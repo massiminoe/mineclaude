@@ -46,6 +46,15 @@ def test_phase2b_routing_includes_equip_and_discard():
     assert "/discard" in bridge_mod.NATIVE_ENDPOINTS
 
 
+def test_phase3_routing_includes_world_mutations():
+    """Phase 3 ports break/place/attack to native interactionManager calls.
+    /collect stays legacy until the Baritone-driven walk loop is ported."""
+    assert "/break" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/place" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/attack" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/collect" not in bridge_mod.NATIVE_ENDPOINTS
+
+
 def test_no_native_url_falls_back_to_legacy():
     """Disabling the native bridge (e.g. while the mod is rebuilt) must keep
     the agent working end-to-end against the legacy bridge alone."""

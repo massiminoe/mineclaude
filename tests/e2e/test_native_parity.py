@@ -144,6 +144,10 @@ def test_probe_identifies_native_mod():
     assert "/chat" in p["ported"]
     assert "/equip" in p["ported"]
     assert "/discard" in p["ported"]
+    # Phase 3 routes — break/place/attack are ported and routed.
+    assert "/break" in p["ported"]
+    assert "/place" in p["ported"]
+    assert "/attack" in p["ported"]
     assert p["capabilities"]["tick_thread_executor"] is True
 
 
@@ -244,3 +248,55 @@ def test_discard_native_invalid_count():
     code, body = _post(f"{NATIVE}/discard", {"item": "stone", "count": 0})
     assert code == 400
     assert body["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — world-mutation endpoints (break / place / attack)
+#
+# We avoid actually mutating the test world: hit the validation paths and
+# the "already air" / "not in inventory" / "entity not found" branches.
+# Mutating tests would require coordinating block coords with the running
+# world and would leave persistent state across runs.
+# ---------------------------------------------------------------------------
+
+
+def test_break_native_already_air_is_idempotent_success():
+    """Breaking a known-air cell is a no-op success in both bridges. Use a
+    high-Y coordinate that's reliably above terrain."""
+    code, body = _post(f"{NATIVE}/break", {"x": 0, "y": 250, "z": 0})
+    assert code == 200, body
+    assert body["status"] == "success"
+    assert body["data"]["broken"] is True
+    assert body["data"]["already_gone"] is True
+
+
+def test_place_native_missing_block_param():
+    code, body = _post(f"{NATIVE}/place", {"x": 0, "y": 64, "z": 0})
+    assert code == 400
+    assert body["status"] == "error"
+    assert "block" in body["message"].lower()
+
+
+def test_place_native_unknown_block_not_in_inventory():
+    """An item the player doesn't have should fail cleanly with a clear
+    message — NOT crash the tick thread."""
+    code, body = _post(
+        f"{NATIVE}/place",
+        {"block": "definitely_not_a_real_item_zzz", "x": 0, "y": 250, "z": 0},
+    )
+    assert code == 200, body
+    assert body["status"] == "error"
+
+
+def test_attack_native_missing_entity_id():
+    code, body = _post(f"{NATIVE}/attack", {})
+    assert code == 400
+    assert body["status"] == "error"
+    assert "entity_id" in body["message"].lower()
+
+
+def test_attack_native_entity_not_found():
+    code, body = _post(f"{NATIVE}/attack", {"entity_id": "definitely_not_a_real_entity_zzz"})
+    assert code == 200, body
+    assert body["status"] == "error"
+    assert "not found" in body["message"].lower()

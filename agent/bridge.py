@@ -70,6 +70,16 @@ NATIVE_ENDPOINTS: frozenset[str] = frozenset(
         # (pickup-then-place into PSH 5..8 with server-side validation).
         "/equip",
         "/discard",
+        # Phase 3 — world mutations. Native impls drive
+        # `interactionManager.attackBlock/updateBlockBreakingProgress`
+        # (break), `interactionManager.interactBlock` (place) and
+        # `attackEntity` directly, replacing the press_attack/press_use
+        # Minescript path that wedged on RPC pipe contention. /collect
+        # stays on legacy because its Baritone-driven walk loop hasn't
+        # been ported yet.
+        "/break",
+        "/place",
+        "/attack",
         # /probe intentionally not routed: the legacy and native bodies are
         # different shapes (legacy dumps Minescript Python APIs; native
         # identifies the bridge). Agent doesn't consume /probe today, so
