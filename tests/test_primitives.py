@@ -234,34 +234,60 @@ async def test_collect_no_items_is_success(bridge, prims):
 
 
 @pytest.mark.asyncio
-async def test_smelt(bridge, prims):
+async def test_furnace_load_extract_round_trip(bridge, prims):
+    """Pure load/extract pair: caller specifies exact input + fuel; bridge
+    pulls those amounts from inventory; mock simulates smelting; extract
+    returns the output and any leftovers."""
+    bridge._add_to_inventory("raw_iron", 5)
+    bridge._add_to_inventory("birch_planks", 4)
+    bridge._nearby_blocks.append({"name": "furnace", "x": 2, "y": 64, "z": 0, "distance": 2.0})
+
+    # Load 3 raw_iron + 2 planks (covers 3 items @ 1.5 per plank).
+    await prims["furnaceLoad"]("raw_iron", 3, "birch_planks", 2)
+    assert sum(i["count"] for i in bridge._inventory if i["name"] == "raw_iron") == 2
+    assert sum(i["count"] for i in bridge._inventory if i["name"] == "birch_planks") == 2
+
+    # Inspect should report the in-flight contents (mock simulates instant cook).
+    state = await prims["furnaceInspect"]()
+    assert state["output"]["item"] == "iron_ingot"
+
+    # Extract returns output + remainders; inventory regains the iron + leftovers.
+    result = await prims["furnaceExtract"]()
+    assert result["output"]["item"] == "iron_ingot"
+    assert result["output"]["count"] == 3
+    assert any(i["name"] == "iron_ingot" and i["count"] == 3 for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_furnace_load_no_furnace(bridge, prims):
     bridge._add_to_inventory("raw_iron", 5)
     bridge._add_to_inventory("coal", 1)
-    bridge._nearby_blocks.append({"name": "furnace", "x": 2, "y": 64, "z": 0, "distance": 2.0})
-    result = await prims["smelt"]("iron_ingot", 5)
-    assert "Smelted" in result
-    assert any(i["name"] == "iron_ingot" and i["count"] == 5 for i in bridge._inventory)
-    assert not any(i["name"] == "raw_iron" for i in bridge._inventory)
-
-
-@pytest.mark.asyncio
-async def test_smelt_no_furnace(bridge, prims):
-    bridge._add_to_inventory("raw_iron", 5)
     with pytest.raises(RuntimeError, match="furnace"):
-        await prims["smelt"]("iron_ingot", 5)
+        await prims["furnaceLoad"]("raw_iron", 5, "coal", 1)
 
 
 @pytest.mark.asyncio
-async def test_smelt_unknown_recipe(bridge, prims):
-    with pytest.raises(RuntimeError, match="Unknown smelting recipe"):
-        await prims["smelt"]("diamond", 1)
-
-
-@pytest.mark.asyncio
-async def test_smelt_no_input(bridge, prims):
+async def test_furnace_load_short_input(bridge, prims):
+    """Load atomically: short input rejects without consuming fuel."""
+    bridge._add_to_inventory("raw_iron", 1)
+    bridge._add_to_inventory("coal", 5)
     bridge._nearby_blocks.append({"name": "furnace", "x": 2, "y": 64, "z": 0, "distance": 2.0})
     with pytest.raises(RuntimeError, match="raw_iron"):
-        await prims["smelt"]("iron_ingot", 5)
+        await prims["furnaceLoad"]("raw_iron", 5, "coal", 1)
+    # Fuel must NOT have been consumed.
+    assert sum(i["count"] for i in bridge._inventory if i["name"] == "coal") == 5
+
+
+@pytest.mark.asyncio
+async def test_furnace_load_short_fuel_refunds_input(bridge, prims):
+    """Load atomically: short fuel must refund any input we already pulled."""
+    bridge._add_to_inventory("raw_iron", 5)
+    bridge._add_to_inventory("coal", 0)
+    bridge._nearby_blocks.append({"name": "furnace", "x": 2, "y": 64, "z": 0, "distance": 2.0})
+    with pytest.raises(RuntimeError, match="coal"):
+        await prims["furnaceLoad"]("raw_iron", 5, "coal", 1)
+    # Input must NOT have been consumed since fuel check failed.
+    assert sum(i["count"] for i in bridge._inventory if i["name"] == "raw_iron") == 5
 
 
 @pytest.mark.asyncio

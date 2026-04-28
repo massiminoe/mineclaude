@@ -33,12 +33,12 @@ class MineclaudeBridgeClient : ClientModInitializer {
         BreakRoute.register(bridge)
         PlaceRoute.register(bridge)
         AttackRoute.register(bridge)
-        // Phase 4 container manipulation — craft and smelt via clickSlot.
-        // /equip armor was already native (Phase 2b); 4c retires the
-        // cross-bridge sync barrier in EquipRoute now that nothing else
-        // can leave a stale ScreenHandler open.
+        // Phase 4 container manipulation — craft and the /furnace/* trio
+        // via clickSlot. /equip armor was already native (Phase 2b); 4c
+        // retires the cross-bridge sync barrier in EquipRoute now that
+        // nothing else can leave a stale ScreenHandler open.
         CraftRoute.register(bridge)
-        SmeltRoute.register(bridge)
+        FurnaceRoute.register(bridge)
 
         bridge.start()
 

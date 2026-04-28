@@ -1,6 +1,7 @@
 package com.mineclaude.bridge
 
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
@@ -23,7 +24,11 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class HttpBridge(private val host: String, private val port: Int) {
 
-    private val gson = Gson()
+    // serializeNulls so empty container slots emit `{"item": null, "count": 0}`
+    // instead of `{"count": 0}`. Default Gson drops null map values, which
+    // breaks the agent contract: `state['input']['item']` would KeyError on
+    // empty slots. Side-effect-free for non-null fields.
+    private val gson: Gson = GsonBuilder().serializeNulls().create()
     private val routes = mutableMapOf<RouteKey, RouteHandler>()
     private val startedAt = System.currentTimeMillis()
     private val requestsServed = AtomicLong(0)

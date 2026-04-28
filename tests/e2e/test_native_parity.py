@@ -303,7 +303,7 @@ def test_attack_native_entity_not_found():
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 — container manipulation (craft / smelt)
+# Phase 4 — container manipulation (craft / furnace)
 #
 # Mutating tests aren't run here — they require world-coordinated setup
 # (a placed crafting table or furnace, items in inventory) that's
@@ -346,30 +346,43 @@ def test_craft_native_count_zero_is_noop():
     assert body["data"]["crafted"] == 0
 
 
-def test_smelt_native_missing_item_param():
-    code, body = _post(f"{NATIVE}/smelt", {"count": 1})
+def test_furnace_load_native_missing_params():
+    code, body = _post(f"{NATIVE}/furnace/load", {"input_count": 1, "fuel_count": 1})
     assert code == 400
     assert body["status"] == "error"
-    assert "item" in body["message"].lower()
+    assert "input_item" in body["message"].lower() or "fuel_item" in body["message"].lower()
 
 
-def test_smelt_native_unknown_recipe():
-    code, body = _post(f"{NATIVE}/smelt", {"item": "wooden_pickaxe"})
-    assert code == 200, body
+def test_furnace_load_native_zero_count_rejected():
+    code, body = _post(f"{NATIVE}/furnace/load", {
+        "input_item": "raw_iron", "input_count": 0,
+        "fuel_item": "coal", "fuel_count": 0,
+    })
+    assert code == 400
     assert body["status"] == "error"
-    assert "unknown smelting recipe" in body["message"].lower()
 
 
-def test_smelt_native_no_furnace_or_input():
-    """No furnace placed AND no input in inventory — preflight must
+def test_furnace_load_native_no_furnace_or_input():
+    """No furnace placed AND no input/fuel in inventory — preflight must
     surface one of those errors, not crash."""
-    code, body = _post(f"{NATIVE}/smelt", {"item": "iron_ingot", "count": 1})
+    code, body = _post(f"{NATIVE}/furnace/load", {
+        "input_item": "raw_iron", "input_count": 1,
+        "fuel_item": "coal", "fuel_count": 1,
+    })
     assert code == 200, body
     assert body["status"] == "error"
+
+
+def test_furnace_inspect_native_runs():
+    body = _fetch(f"{NATIVE}/furnace/inspect")
+    # Either reports state of an existing furnace, or "no furnace nearby".
+    assert body["status"] in ("success", "error")
 
 
 def test_probe_phase4_endpoints_listed():
     """`/probe` should advertise the new container endpoints."""
     p = _fetch(f"{NATIVE}/probe")["data"]
     assert "/craft" in p["ported"]
-    assert "/smelt" in p["ported"]
+    assert "/furnace/load" in p["ported"]
+    assert "/furnace/inspect" in p["ported"]
+    assert "/furnace/extract" in p["ported"]

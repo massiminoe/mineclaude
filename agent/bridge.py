@@ -36,7 +36,28 @@ class BridgeClient(Protocol):
     async def collect(self, radius: float = 3) -> BridgeResponse: ...
     async def attack(self, entity_id: str) -> BridgeResponse: ...
     async def craft(self, item: str, count: int = 1) -> BridgeResponse: ...
-    async def smelt(self, item: str, count: int = 1) -> BridgeResponse: ...
+    async def furnace_load(
+        self,
+        input_item: str,
+        input_count: int,
+        fuel_item: str,
+        fuel_count: int,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse: ...
+    async def furnace_inspect(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse: ...
+    async def furnace_extract(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse: ...
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse: ...
     async def discard(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
@@ -80,15 +101,17 @@ NATIVE_ENDPOINTS: frozenset[str] = frozenset(
         "/break",
         "/place",
         "/attack",
-        # Phase 4 — container manipulation. Native /craft and /smelt drive
-        # `interactionManager.interactBlock` (open) + `clickSlot` (place
-        # ingredients, extract output) directly, replacing the legacy
-        # Minescript `container_*` API path. With these on native, no
-        # endpoint leaves a stale ScreenHandler open across bridges, so
-        # the EquipRoute cross-bridge sync barrier becomes provably dead
-        # code (see commit retiring SCREEN_SYNC_MS).
+        # Phase 4 — container manipulation. Native /craft and the
+        # /furnace/* trio drive `interactionManager.interactBlock` (open)
+        # + `clickSlot` (place ingredients, extract output) directly,
+        # replacing the legacy Minescript `container_*` API path. With
+        # these on native, no endpoint leaves a stale ScreenHandler open
+        # across bridges, so the EquipRoute cross-bridge sync barrier
+        # becomes provably dead code (see commit retiring SCREEN_SYNC_MS).
         "/craft",
-        "/smelt",
+        "/furnace/load",
+        "/furnace/inspect",
+        "/furnace/extract",
         # /probe intentionally not routed: the legacy and native bodies are
         # different shapes (legacy dumps Minescript Python APIs; native
         # identifies the bridge). Agent doesn't consume /probe today, so
@@ -182,8 +205,53 @@ class RealBridgeClient:
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
         return self._parse(await self._client_for("/craft").post("/craft", json={"item": item, "count": count}))
 
-    async def smelt(self, item: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._client_for("/smelt").post("/smelt", json={"item": item, "count": count}))
+    async def furnace_load(
+        self,
+        input_item: str,
+        input_count: int,
+        fuel_item: str,
+        fuel_count: int,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        body: dict[str, Any] = {
+            "input_item": input_item,
+            "input_count": input_count,
+            "fuel_item": fuel_item,
+            "fuel_count": fuel_count,
+        }
+        if x is not None and y is not None and z is not None:
+            body["x"], body["y"], body["z"] = x, y, z
+        return self._parse(
+            await self._client_for("/furnace/load").post("/furnace/load", json=body)
+        )
+
+    async def furnace_inspect(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        params: dict[str, Any] = {}
+        if x is not None and y is not None and z is not None:
+            params["x"], params["y"], params["z"] = x, y, z
+        return self._parse(
+            await self._client_for("/furnace/inspect").get("/furnace/inspect", params=params)
+        )
+
+    async def furnace_extract(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        body: dict[str, Any] = {}
+        if x is not None and y is not None and z is not None:
+            body["x"], body["y"], body["z"] = x, y, z
+        return self._parse(
+            await self._client_for("/furnace/extract").post("/furnace/extract", json=body)
+        )
 
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         return self._parse(await self._client_for("/equip").post("/equip", json={"item": item, "slot": slot}))
@@ -387,23 +455,136 @@ class MockBridgeClient:
 
         return BridgeResponse("success", f"Crafted {total_output} {item}", {"crafted": total_output, "method": "simulated"})
 
-    async def smelt(self, item: str, count: int = 1) -> BridgeResponse:
-        from agent.recipes import get_smelting_recipe
-        recipe = get_smelting_recipe(item)
-        if recipe is None:
-            return BridgeResponse("error", f"Unknown smelting recipe: {item}", {"smelted": 0})
-        # Match real bridge scan radius (see bridge/minescript_api.py smelt_item).
-        has_furnace = any(
-            b["name"] in ("furnace", "lit_furnace") and b["distance"] <= 16
-            for b in self._nearby_blocks
+    def _find_furnace(self, x: int | None, y: int | None, z: int | None) -> dict | None:
+        if x is not None and y is not None and z is not None:
+            for b in self._nearby_blocks:
+                if b["name"] in ("furnace", "lit_furnace") and b["x"] == x and b["y"] == y and b["z"] == z:
+                    return b
+            return None
+        for b in self._nearby_blocks:
+            if b["name"] in ("furnace", "lit_furnace") and b["distance"] <= 16:
+                return b
+        return None
+
+    def _furnace_state(self, b: dict) -> dict:
+        """Lazily attach mutable slot state to a mock furnace block."""
+        return b.setdefault("_state", {
+            "input": {"item": None, "count": 0},
+            "fuel": {"item": None, "count": 0},
+            "output": {"item": None, "count": 0},
+        })
+
+    async def furnace_load(
+        self,
+        input_item: str,
+        input_count: int,
+        fuel_item: str,
+        fuel_count: int,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        b = self._find_furnace(x, y, z)
+        if b is None:
+            return BridgeResponse("error", "No furnace nearby. Place one first.")
+        # Pull the stated amounts from inventory; fail if either is short.
+        if not self._remove_from_inventory(input_item, input_count):
+            return BridgeResponse(
+                "error",
+                f"Not enough {input_item} in inventory (need {input_count})",
+            )
+        if not self._remove_from_inventory(fuel_item, fuel_count):
+            # Refund the input we already pulled so the call is atomic.
+            self._add_to_inventory(input_item, input_count)
+            return BridgeResponse(
+                "error",
+                f"Not enough {fuel_item} in inventory (need {fuel_count})",
+            )
+        # Simulate smelting: produce output equal to min(input_count, fuel_count * fuel_value).
+        # Mock fuel value is hardcoded to 1.5 for parity with planks/log; good enough
+        # for tests that exercise the round-trip.
+        from agent.recipes import get_smelting_by_input
+        recipe = get_smelting_by_input(input_item)
+        state = self._furnace_state(b)
+        if recipe is not None:
+            produced = min(input_count, int(fuel_count * 1.5))
+            state["output"] = {"item": recipe.output, "count": produced}
+            state["input"] = {"item": input_item, "count": max(0, input_count - produced)}
+            state["fuel"] = {"item": fuel_item, "count": 0}
+        else:
+            # No known recipe — treat as nothing smelts. Inputs sit in slots.
+            state["input"] = {"item": input_item, "count": input_count}
+            state["fuel"] = {"item": fuel_item, "count": fuel_count}
+        b["name"] = "lit_furnace" if recipe is not None else "furnace"
+        return BridgeResponse(
+            "success",
+            f"Loaded {input_count} {input_item} and {fuel_count} {fuel_item} into furnace",
+            {
+                "loaded_input": input_count,
+                "loaded_fuel": fuel_count,
+                "position": {"x": b["x"], "y": b["y"], "z": b["z"]},
+                "method": "simulated",
+            },
         )
-        if not has_furnace:
-            return BridgeResponse("error", "No furnace nearby. Place one first.", {"smelted": 0})
-        # Check input
-        if not self._remove_from_inventory(recipe.input, count):
-            return BridgeResponse("error", f"No {recipe.input} in inventory", {"smelted": 0})
-        self._add_to_inventory(item, count)
-        return BridgeResponse("success", f"Smelted {count} {item}", {"smelted": count, "output": item, "method": "real"})
+
+    async def furnace_inspect(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        b = self._find_furnace(x, y, z)
+        if b is None:
+            return BridgeResponse("error", "No furnace nearby.")
+        state = self._furnace_state(b)
+        return BridgeResponse(
+            "success",
+            "Furnace inspected",
+            {
+                "position": {"x": b["x"], "y": b["y"], "z": b["z"]},
+                "lit": b["name"] == "lit_furnace",
+                "cook_progress": 0.0,
+                "fuel_remaining_ticks": 0,
+                "input": dict(state["input"]),
+                "fuel": dict(state["fuel"]),
+                "output": dict(state["output"]),
+                "method": "simulated",
+            },
+        )
+
+    async def furnace_extract(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        b = self._find_furnace(x, y, z)
+        if b is None:
+            return BridgeResponse("error", "No furnace nearby.")
+        state = self._furnace_state(b)
+        out = dict(state["output"])
+        in_left = dict(state["input"])
+        fuel_left = dict(state["fuel"])
+        # Move everything back to inventory.
+        for slot in (out, in_left, fuel_left):
+            if slot["item"] and slot["count"] > 0:
+                self._add_to_inventory(slot["item"], slot["count"])
+        # Reset slot state.
+        state["input"] = {"item": None, "count": 0}
+        state["fuel"] = {"item": None, "count": 0}
+        state["output"] = {"item": None, "count": 0}
+        b["name"] = "furnace"
+        return BridgeResponse(
+            "success",
+            f"Extracted {out['count']} {out['item'] or 'nothing'} from furnace",
+            {
+                "position": {"x": b["x"], "y": b["y"], "z": b["z"]},
+                "output": out,
+                "input_left": in_left,
+                "fuel_left": fuel_left,
+                "method": "simulated",
+            },
+        )
 
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         for entry in self._inventory:

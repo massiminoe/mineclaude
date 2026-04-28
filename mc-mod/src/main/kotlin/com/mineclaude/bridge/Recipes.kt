@@ -38,12 +38,6 @@ internal object Recipes {
         val needsTable: Boolean,
     )
 
-    data class SmeltingRecipe(
-        val output: String,
-        val input: String,
-        val outputCount: Int = 1,
-    )
-
     /**
      * Ingredients that accept any variant with the same suffix.
      * e.g. recipe says "oak_planks" but any *_planks works.
@@ -51,27 +45,6 @@ internal object Recipes {
     private val VARIANT_SUFFIXES: Map<String, String> = mapOf(
         "oak_planks" to "_planks",
         "oak_log" to "_log",
-    )
-
-    private val SMELTING_VARIANT_SUFFIXES: Map<String, String> = mapOf(
-        "oak_log" to "_log",
-    )
-
-    private val FUEL_VARIANT_SUFFIXES: Map<String, String> = mapOf(
-        "oak_planks" to "_planks",
-        "oak_log" to "_log",
-    )
-
-    /** Items per fuel unit. */
-    private val FUEL_VALUES: Map<String, Double> = mapOf(
-        "coal" to 8.0,
-        "charcoal" to 8.0,
-        "coal_block" to 80.0,
-        "lava_bucket" to 100.0,
-        "blaze_rod" to 12.0,
-        "stick" to 0.5,
-        "oak_planks" to 1.5,
-        "oak_log" to 1.5,
     )
 
     val RECIPES: Map<String, Recipe> = mapOf(
@@ -120,57 +93,15 @@ internal object Recipes {
         "bowl" to Recipe("bowl", 4, listOf("# #", " # "), mapOf('#' to "oak_planks"), true),
     )
 
-    val SMELTING_RECIPES: Map<String, SmeltingRecipe> = mapOf(
-        "iron_ingot" to SmeltingRecipe("iron_ingot", "raw_iron"),
-        "gold_ingot" to SmeltingRecipe("gold_ingot", "raw_gold"),
-        "copper_ingot" to SmeltingRecipe("copper_ingot", "raw_copper"),
-        "glass" to SmeltingRecipe("glass", "sand"),
-        "stone" to SmeltingRecipe("stone", "cobblestone"),
-        "smooth_stone" to SmeltingRecipe("smooth_stone", "stone"),
-        "brick" to SmeltingRecipe("brick", "clay_ball"),
-        "nether_brick" to SmeltingRecipe("nether_brick", "netherrack"),
-        "charcoal" to SmeltingRecipe("charcoal", "oak_log"),
-        "cooked_beef" to SmeltingRecipe("cooked_beef", "beef"),
-        "cooked_porkchop" to SmeltingRecipe("cooked_porkchop", "porkchop"),
-        "cooked_chicken" to SmeltingRecipe("cooked_chicken", "chicken"),
-        "cooked_mutton" to SmeltingRecipe("cooked_mutton", "mutton"),
-        "cooked_cod" to SmeltingRecipe("cooked_cod", "cod"),
-        "cooked_salmon" to SmeltingRecipe("cooked_salmon", "salmon"),
-        "dried_kelp" to SmeltingRecipe("dried_kelp", "kelp"),
-    )
-
     fun matchesIngredient(required: String, available: String): Boolean {
         if (required == available) return true
         val suffix = VARIANT_SUFFIXES[required] ?: return false
         return available.endsWith(suffix)
     }
 
-    fun matchesSmeltingInput(required: String, available: String): Boolean {
-        if (required == available) return true
-        val suffix = SMELTING_VARIANT_SUFFIXES[required] ?: return false
-        return available.endsWith(suffix)
-    }
-
-    /** Items per unit of this fuel, or 0 if not fuel. */
-    fun getFuelValue(item: String): Double {
-        val name = item.removePrefix("minecraft:")
-        FUEL_VALUES[name]?.let { return it }
-        for ((canonical, suffix) in FUEL_VARIANT_SUFFIXES) {
-            if (name.endsWith(suffix)) {
-                FUEL_VALUES[canonical]?.let { return it }
-            }
-        }
-        return 0.0
-    }
-
     fun getRecipe(item: String): Recipe? {
         val name = item.removePrefix("minecraft:")
         return RECIPES[name]
-    }
-
-    fun getSmeltingRecipe(item: String): SmeltingRecipe? {
-        val name = item.removePrefix("minecraft:")
-        return SMELTING_RECIPES[name]
     }
 
     /**

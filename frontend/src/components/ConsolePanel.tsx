@@ -28,7 +28,9 @@ const PRIMITIVE_GROUPS: { label: string; items: string[] }[] = [
     label: "inventory",
     items: [
       "await craft(item, count=1)",
-      "await smelt(item, count=1)",
+      "await furnaceLoad(input_item, input_count, fuel_item, fuel_count)",
+      "await furnaceInspect()",
+      "await furnaceExtract()",
       "await equip(item, slot='hand')",
       "await discard(item, count=1)",
     ],

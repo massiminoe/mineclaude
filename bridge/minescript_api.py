@@ -1581,146 +1581,216 @@ def _insert_stack_into_container_slot(
     return placed, None
 
 
-def smelt_item(item: str, count: int = 1) -> dict:
-    """Smelt items in a nearby furnace using real container clicks.
+def _find_furnace_pos(x: int | None, y: int | None, z: int | None) -> tuple[int, int, int] | None:
+    """Resolve a furnace position. Explicit (x,y,z) wins; else nearest within 16."""
+    if x is not None and y is not None and z is not None:
+        return (int(x), int(y), int(z))
+    blocks = get_nearby_blocks(radius=16, block_types=["furnace", "lit_furnace"])
+    if not blocks:
+        return None
+    fb = blocks[0]
+    return (fb["x"], fb["y"], fb["z"])
 
-    Opens the furnace menu, left-/right-clicks input and fuel into the
-    input (slot 0) and fuel (slot 1) slots, polls the block's `lit` state
-    until smelting completes, then shift-clicks the result (slot 2) back
-    into the player inventory.  Verifies the extraction via a before/after
-    inventory snapshot.
+
+def _read_furnace_slot(slot: int) -> dict:
+    """Read a single furnace slot via container_get_items. Caller owns the open menu."""
+    try:
+        items = _ms(minescript.container_get_items) or []
+    except Exception:
+        return {"item": None, "count": 0}
+    for ci in items:
+        if getattr(ci, "slot", None) != slot:
+            continue
+        name = (getattr(ci, "item", "") or "").replace("minecraft:", "")
+        count = getattr(ci, "count", 0)
+        if not name or count <= 0:
+            return {"item": None, "count": 0}
+        return {"item": name, "count": count}
+    return {"item": None, "count": 0}
+
+
+def furnace_load(
+    input_item: str,
+    input_count: int,
+    fuel_item: str,
+    fuel_count: int,
+    x: int | None = None,
+    y: int | None = None,
+    z: int | None = None,
+) -> dict:
+    """Load a furnace with the EXACT amounts the caller specifies. No
+    recipe lookup, no fuel selection, no count capping. Pure pass-through
+    that mirrors the real furnace UI: top slot = input, bottom slot = fuel.
+
+    Returns immediately after loading — does NOT wait for smelting to
+    complete. Caller is responsible for inspecting / extracting.
     """
-    from bridge.recipes import (
-        get_smelting_recipe, get_fuel_value, _matches_smelting_input,
-    )
+    input_item = input_item.replace("minecraft:", "")
+    fuel_item = fuel_item.replace("minecraft:", "")
+    if input_count <= 0 or fuel_count <= 0:
+        return {"loaded": 0, "error": "input_count and fuel_count must be > 0", "method": "real"}
 
-    item = item.replace("minecraft:", "")
-    recipe = get_smelting_recipe(item)
-    if recipe is None:
-        return {"smelted": 0, "error": f"Unknown smelting recipe: {item}", "method": "real"}
-
-    count = min(count, 64)  # furnace slots cap at 64
-
-    furnace_blocks = get_nearby_blocks(radius=16, block_types=["furnace", "lit_furnace"])
-    if not furnace_blocks:
-        return {"smelted": 0, "error": "No furnace nearby. Place one first.", "method": "real"}
-
-    fb = furnace_blocks[0]
-    fx, fy, fz = fb["x"], fb["y"], fb["z"]
+    pos = _find_furnace_pos(x, y, z)
+    if pos is None:
+        return {"loaded": 0, "error": "No furnace nearby. Place one first.", "method": "real"}
+    fx, fy, fz = pos
 
     have = _get_inventory_counts()
-    input_item = recipe.input
-    actual_input = None
-    for inv_item, inv_count in have.items():
-        if _matches_smelting_input(input_item, inv_item) and inv_count > 0:
-            actual_input = inv_item
-            break
-    if actual_input is None:
-        return {"smelted": 0, "error": f"No {input_item} in inventory.", "method": "real"}
-    available_input = have.get(actual_input, 0)
-    smelt_count = min(count, available_input)
-
-    actual_fuel = None
-    fuel_value = 0
-    for inv_item, inv_count in have.items():
-        fv = get_fuel_value(inv_item)
-        if fv > 0 and inv_count > 0:
-            actual_fuel = inv_item
-            fuel_value = fv
-            break
-    if actual_fuel is None:
-        return {"smelted": 0, "error": "No fuel in inventory (need coal, logs, planks, etc.).", "method": "real"}
-
-    fuel_needed = math.ceil(smelt_count / fuel_value)
-    fuel_available = have.get(actual_fuel, 0)
-    if fuel_available < fuel_needed:
-        smelt_count = int(fuel_available * fuel_value)
-        fuel_needed = fuel_available
-        if smelt_count <= 0:
-            return {"smelted": 0, "error": "Not enough fuel.", "method": "real"}
+    have_input = have.get(input_item, 0)
+    if have_input < input_count:
+        return {"loaded": 0, "error": f"Not enough {input_item} in inventory: need {input_count}, have {have_input}", "method": "real"}
+    have_fuel = have.get(fuel_item, 0)
+    if have_fuel < fuel_count:
+        return {"loaded": 0, "error": f"Not enough {fuel_item} in inventory: need {fuel_count}, have {have_fuel}", "method": "real"}
 
     from bridge.player_control import navigate_near
     if not _is_block_within_reach(fx, fy, fz):
         if not navigate_near(fx, fy, fz, reach=3.5):
-            return {"smelted": 0, "error": "Could not reach furnace.", "method": "real"}
+            return {"loaded": 0, "error": "Could not reach furnace.", "method": "real"}
 
     try:
         _ms(minescript.container_open, fx, fy, fz)
     except Exception as e:
-        return {"smelted": 0, "error": f"Failed to open furnace: {e}", "method": "real"}
-    _tick_sleep(2)  # let the furnace screen settle before clicking
+        return {"loaded": 0, "error": f"Failed to open furnace: {e}", "method": "real"}
+    _tick_sleep(2)
     if not _is_any_screen_open():
-        return {"smelted": 0, "error": "Furnace menu did not open.", "method": "real"}
+        return {"loaded": 0, "error": "Furnace menu did not open.", "method": "real"}
 
-    before_output = _get_inventory_counts().get(recipe.output, 0)
-    delta = 0
     err: str | None = None
-
     try:
-        # Preserve any pre-existing output by shift-clicking it into player inv first.
-        try:
-            existing = _ms(minescript.container_get_items)
-            for ci in existing or []:
-                if getattr(ci, "slot", None) == _FURNACE_OUTPUT_SLOT:
-                    name = (getattr(ci, "item", "") or "").replace("minecraft:", "")
-                    if name:
-                        _ms(minescript.container_click_slot, _FURNACE_OUTPUT_SLOT, 0, True)
-                        _tick_sleep(2)
-                    break
-        except Exception:
-            pass
-
         placed_input, ierr = _insert_stack_into_container_slot(
-            actual_input, smelt_count, _FURNACE_INPUT_SLOT,
-            _FURNACE_INV_RANGE, matches=_matches_smelting_input,
+            input_item, input_count, _FURNACE_INPUT_SLOT, _FURNACE_INV_RANGE,
         )
-        if placed_input < smelt_count:
-            err = ierr or f"Only placed {placed_input}/{smelt_count} {actual_input} in input slot"
-            return {"smelted": 0, "error": err, "method": "real"}
+        if placed_input < input_count:
+            err = ierr or f"Only placed {placed_input}/{input_count} {input_item} in input slot"
+            return {"loaded": 0, "error": err, "method": "real"}
 
         placed_fuel, ferr = _insert_stack_into_container_slot(
-            actual_fuel, fuel_needed, _FURNACE_FUEL_SLOT,
-            _FURNACE_INV_RANGE,
+            fuel_item, fuel_count, _FURNACE_FUEL_SLOT, _FURNACE_INV_RANGE,
         )
-        if placed_fuel < fuel_needed:
-            err = ferr or f"Only placed {placed_fuel}/{fuel_needed} {actual_fuel} in fuel slot"
-            return {"smelted": 0, "error": err, "method": "real"}
-
-        # Wait for smelting: poll getblock for lit=false.
-        # Each item takes ~10 game seconds (200 ticks); the +5s buffer covers
-        # ignition latency and the 2s polling granularity.  Container APIs
-        # remain usable while the menu is open, so no close/reopen dance.
-        smelt_time = smelt_count * 10 + 5
-        deadline = time.monotonic() + smelt_time
-        time.sleep(2)  # let the furnace light
-        while time.monotonic() < deadline:
-            try:
-                block_state = _ms(minescript.getblock, fx, fy, fz)
-                if block_state and "lit=false" in block_state:
-                    break
-            except Exception:
-                pass
-            time.sleep(2)
-        time.sleep(0.5)  # let the final tick's output item settle into slot 2
-
-        # Extract output via shift-click; verify via inventory delta.
-        try:
-            _ms(minescript.container_click_slot, _FURNACE_OUTPUT_SLOT, 0, True)
-            _tick_sleep(2)
-        except Exception as e:
-            err = f"Failed to shift-click output: {e}"
-            return {"smelted": 0, "error": err, "method": "real"}
-
-        after_output = _get_inventory_counts().get(recipe.output, 0)
-        delta = after_output - before_output
-        if delta <= 0:
-            err = "Output extraction yielded nothing (inventory full?)"
-            return {"smelted": 0, "error": err, "method": "real"}
+        if placed_fuel < fuel_count:
+            err = ferr or f"Only placed {placed_fuel}/{fuel_count} {fuel_item} in fuel slot"
+            return {"loaded": 0, "error": err, "method": "real"}
     finally:
         _close_open_screen()
 
     logger.info(
-        f"smelt: smelted {delta} {recipe.output} from {actual_input} with "
-        f"{fuel_needed}x {actual_fuel} ({smelt_count} requested)"
+        f"furnace/load: {input_count}x {input_item} + {fuel_count}x {fuel_item} into furnace at {fx},{fy},{fz}"
     )
-    return {"smelted": delta, "output": recipe.output, "fuel_used": fuel_needed, "method": "real"}
+    return {
+        "loaded_input": input_count,
+        "loaded_fuel": fuel_count,
+        "position": {"x": fx, "y": fy, "z": fz},
+        "method": "real",
+    }
+
+
+def furnace_inspect(
+    x: int | None = None,
+    y: int | None = None,
+    z: int | None = None,
+) -> dict:
+    """Read the state of a furnace (slot contents + lit) without
+    consuming or modifying anything. The legacy bridge briefly opens the
+    menu to read slots — the native bridge reads the block entity
+    directly and avoids the UI flicker.
+    """
+    pos = _find_furnace_pos(x, y, z)
+    if pos is None:
+        return {"error": "No furnace nearby.", "method": "real"}
+    fx, fy, fz = pos
+
+    lit = False
+    try:
+        block_state = _ms(minescript.getblock, fx, fy, fz)
+        if block_state and "lit=true" in block_state:
+            lit = True
+    except Exception:
+        pass
+
+    from bridge.player_control import navigate_near
+    if not _is_block_within_reach(fx, fy, fz):
+        if not navigate_near(fx, fy, fz, reach=3.5):
+            return {"error": "Could not reach furnace.", "method": "real"}
+
+    try:
+        _ms(minescript.container_open, fx, fy, fz)
+    except Exception as e:
+        return {"error": f"Failed to open furnace: {e}", "method": "real"}
+    _tick_sleep(2)
+    if not _is_any_screen_open():
+        return {"error": "Furnace menu did not open.", "method": "real"}
+
+    try:
+        input_slot = _read_furnace_slot(_FURNACE_INPUT_SLOT)
+        fuel_slot = _read_furnace_slot(_FURNACE_FUEL_SLOT)
+        output_slot = _read_furnace_slot(_FURNACE_OUTPUT_SLOT)
+    finally:
+        _close_open_screen()
+
+    return {
+        "position": {"x": fx, "y": fy, "z": fz},
+        "lit": lit,
+        "input": input_slot,
+        "fuel": fuel_slot,
+        "output": output_slot,
+        "method": "real",
+    }
+
+
+def furnace_extract(
+    x: int | None = None,
+    y: int | None = None,
+    z: int | None = None,
+) -> dict:
+    """Extract everything from the furnace: output (slot 2), then any
+    leftover input (slot 0) and fuel (slot 1). Returns per-slot what
+    came back so the caller can distinguish output from leftovers.
+
+    Pulling slot 0/1 mid-cook aborts the cook, mirroring real MC: this
+    is the only way to recover from a wrong load (e.g. wrong input item).
+    """
+    pos = _find_furnace_pos(x, y, z)
+    if pos is None:
+        return {"error": "No furnace nearby.", "method": "real"}
+    fx, fy, fz = pos
+
+    from bridge.player_control import navigate_near
+    if not _is_block_within_reach(fx, fy, fz):
+        if not navigate_near(fx, fy, fz, reach=3.5):
+            return {"error": "Could not reach furnace.", "method": "real"}
+
+    try:
+        _ms(minescript.container_open, fx, fy, fz)
+    except Exception as e:
+        return {"error": f"Failed to open furnace: {e}", "method": "real"}
+    _tick_sleep(2)
+    if not _is_any_screen_open():
+        return {"error": "Furnace menu did not open.", "method": "real"}
+
+    try:
+        # Snapshot per-slot BEFORE shift-clicking — the after-state is "all empty"
+        # and gives us no way to report what came out.
+        output = _read_furnace_slot(_FURNACE_OUTPUT_SLOT)
+        input_left = _read_furnace_slot(_FURNACE_INPUT_SLOT)
+        fuel_left = _read_furnace_slot(_FURNACE_FUEL_SLOT)
+
+        for slot in (_FURNACE_OUTPUT_SLOT, _FURNACE_INPUT_SLOT, _FURNACE_FUEL_SLOT):
+            try:
+                _ms(minescript.container_click_slot, slot, 0, True)  # shift-click
+                _tick_sleep(2)
+            except Exception as e:
+                logger.warning(f"furnace/extract: shift-click slot {slot} failed: {e}")
+    finally:
+        _close_open_screen()
+
+    logger.info(
+        f"furnace/extract: output={output}, input_left={input_left}, fuel_left={fuel_left} at {fx},{fy},{fz}"
+    )
+    return {
+        "position": {"x": fx, "y": fy, "z": fz},
+        "output": output,
+        "input_left": input_left,
+        "fuel_left": fuel_left,
+        "method": "real",
+    }

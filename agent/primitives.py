@@ -103,8 +103,38 @@ def make_primitives(
     async def craft(item: str, count: int = 1) -> str:
         return _check(await bridge.craft(item, count))
 
-    async def smelt(item: str, count: int = 1) -> str:
-        return _check(await bridge.smelt(item, count))
+    async def furnaceLoad(
+        input_item: str,
+        input_count: int,
+        fuel_item: str,
+        fuel_count: int,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> str:
+        return _check(await bridge.furnace_load(
+            input_item, input_count, fuel_item, fuel_count, x, y, z,
+        ))
+
+    async def furnaceInspect(
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        resp = await bridge.furnace_inspect(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def furnaceExtract(
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        resp = await bridge.furnace_extract(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
 
     async def equip(item: str, slot: str = "hand") -> str:
         return _check(await bridge.equip(item, slot))
@@ -165,7 +195,9 @@ def make_primitives(
         "attackNearest": attackNearest,
         "defendSelf": defendSelf,
         "craft": craft,
-        "smelt": smelt,
+        "furnaceLoad": furnaceLoad,
+        "furnaceInspect": furnaceInspect,
+        "furnaceExtract": furnaceExtract,
         "equip": equip,
         "discard": discard,
         "getStats": getStats,

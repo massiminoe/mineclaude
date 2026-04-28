@@ -385,22 +385,56 @@ async def handle_craft(request: web.Request) -> web.Response:
 
 
 @log_mutation
-async def handle_smelt(request: web.Request) -> web.Response:
+async def handle_furnace_load(request: web.Request) -> web.Response:
     body = await request.json()
-    item = body.get("item", "")
-    count = body.get("count", 1)
-    if not item:
-        return web.json_response(_err("Missing 'item' parameter"), status=400)
-    result = await _run(minescript_api.smelt_item, item, count)
+    input_item = body.get("input_item", "")
+    fuel_item = body.get("fuel_item", "")
+    input_count = body.get("input_count", 0)
+    fuel_count = body.get("fuel_count", 0)
+    if not input_item or not fuel_item:
+        return web.json_response(_err("Missing 'input_item' or 'fuel_item'"), status=400)
+    x = body.get("x"); y = body.get("y"); z = body.get("z")
+    result = await _run(
+        minescript_api.furnace_load,
+        input_item, input_count, fuel_item, fuel_count, x, y, z,
+    )
     await _run(_world_cache.force_refresh_status)
-    smelted = result.get("smelted", 0)
-    enriched = {**result, "requested": count, "actual": smelted}
-    if smelted == 0:
-        return web.json_response(_err(result.get("error", "Failed to smelt")))
-    msg = f"Smelted {smelted} {item}"
-    if smelted < count:
-        return web.json_response(_partial(enriched, msg + f" (wanted {count})"))
-    return web.json_response(_ok(enriched, msg))
+    if "error" in result:
+        return web.json_response(_err(result["error"]))
+    msg = f"Loaded {input_count} {input_item} and {fuel_count} {fuel_item} into furnace"
+    return web.json_response(_ok(result, msg))
+
+
+async def handle_furnace_inspect(request: web.Request) -> web.Response:
+    # Optional ?x&y&z to pin a specific furnace.
+    x = request.query.get("x")
+    y = request.query.get("y")
+    z = request.query.get("z")
+    xi = int(x) if x is not None else None
+    yi = int(y) if y is not None else None
+    zi = int(z) if z is not None else None
+    result = await _run(minescript_api.furnace_inspect, xi, yi, zi)
+    if "error" in result:
+        return web.json_response(_err(result["error"]))
+    return web.json_response(_ok(result, "Furnace inspected"))
+
+
+@log_mutation
+async def handle_furnace_extract(request: web.Request) -> web.Response:
+    # extract is mutating; inspect is not.
+    body = await request.json() if request.body_exists else {}
+    x = body.get("x") if body else None
+    y = body.get("y") if body else None
+    z = body.get("z") if body else None
+    result = await _run(minescript_api.furnace_extract, x, y, z)
+    await _run(_world_cache.force_refresh_status)
+    if "error" in result:
+        return web.json_response(_err(result["error"]))
+    out = result.get("output") or {}
+    out_count = out.get("count", 0)
+    out_item = out.get("item") or "nothing"
+    msg = f"Extracted {out_count} {out_item} from furnace"
+    return web.json_response(_ok(result, msg))
 
 
 @log_mutation
@@ -921,7 +955,9 @@ def create_app() -> web.Application:
     app.router.add_post("/collect", handle_collect)
     app.router.add_post("/attack", handle_attack)
     app.router.add_post("/craft", handle_craft)
-    app.router.add_post("/smelt", handle_smelt)
+    app.router.add_post("/furnace/load", handle_furnace_load)
+    app.router.add_get("/furnace/inspect", handle_furnace_inspect)
+    app.router.add_post("/furnace/extract", handle_furnace_extract)
     app.router.add_post("/equip", handle_equip)
     app.router.add_post("/discard", handle_discard)
     app.router.add_post("/chat", handle_chat)

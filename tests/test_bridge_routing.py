@@ -55,12 +55,18 @@ def test_phase3_routing_includes_world_mutations():
     assert "/collect" not in bridge_mod.NATIVE_ENDPOINTS
 
 
-def test_phase4_routing_includes_craft_and_smelt():
-    """Phase 4 ports craft + smelt to native clickSlot. With these on
-    native, no endpoint leaves a stale ScreenHandler open across bridges,
-    so the EquipRoute cross-bridge sync barrier was retired."""
+def test_phase4_routing_includes_craft_and_furnace():
+    """Phase 4 ports craft + the /furnace/* trio to native clickSlot.
+    With these on native, no endpoint leaves a stale ScreenHandler open
+    across bridges, so the EquipRoute cross-bridge sync barrier was
+    retired. The /furnace/* trio replaced the old /smelt endpoint:
+    load (insert input + fuel, no wait), inspect (read state), extract
+    (pull all three slots back)."""
     assert "/craft" in bridge_mod.NATIVE_ENDPOINTS
-    assert "/smelt" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/furnace/load" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/furnace/inspect" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/furnace/extract" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/smelt" not in bridge_mod.NATIVE_ENDPOINTS
 
 
 def test_no_native_url_falls_back_to_legacy():

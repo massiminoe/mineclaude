@@ -321,3 +321,15 @@ def get_smelting_recipe(item: str) -> SmeltingRecipe | None:
     """Look up a smelting recipe by output item name."""
     item = item.replace("minecraft:", "")
     return SMELTING_RECIPES.get(item)
+
+
+def get_smelting_by_input(input_item: str) -> SmeltingRecipe | None:
+    """Look up a smelting recipe by INPUT item name (mock-only convenience)."""
+    input_item = input_item.replace("minecraft:", "")
+    for recipe in SMELTING_RECIPES.values():
+        if recipe.input == input_item:
+            return recipe
+        # _log variants — recipe input is "oak_log", any _log smelts to charcoal.
+        if recipe.input.endswith("_log") and input_item.endswith("_log"):
+            return recipe
+    return None
