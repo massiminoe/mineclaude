@@ -10,9 +10,10 @@ import org.slf4j.LoggerFactory
  * Phase 6 — bridges Fabric client events to the events WebSocket.
  *
  * Hooks three event sources, all called on the client tick thread:
- *   - chat   (`ClientReceiveMessageEvents.GAME`)
- *   - death  (`ClientEntityEvents.ENTITY_UNLOAD` filtered to local player + dead)
- *   - respawn (state machine on local-player presence after a death)
+ *   - chat   (`ClientReceiveMessageEvents.CHAT` for player chat,
+ *             `ClientReceiveMessageEvents.GAME` for `/say`+`/tellraw`-wrapped chat)
+ *   - death  (`ClientTickEvents.END_CLIENT_TICK` polling `health <= 0`)
+ *   - respawn (state machine on the same poll)
  *
  * Wire shapes match the legacy bridge bit-for-bit so the agent's existing
  * dispatcher in `agent/agent.py:_handle_event` doesn't need any changes:
@@ -58,18 +59,30 @@ object EventBus {
     }
 
     private fun registerChat() {
+        // CHAT fires for player-authored chat (signed or profileless).
+        // sender.name is authoritative — no regex needed. Skip echoes
+        // of our own bot output: those go through /tellraw and arrive
+        // as GAME messages with no sender, never CHAT.
+        ClientReceiveMessageEvents.CHAT.register(
+            ClientReceiveMessageEvents.Chat { message, _, sender, _, _ ->
+                val username = sender?.name ?: return@Chat
+                val raw = message.string ?: return@Chat
+                val text = FORMATTING_STRIP.replace(raw, "").trim()
+                if (text.isEmpty()) return@Chat
+                pushChat(username, text)
+            }
+        )
+        // GAME catches /say, /tellraw, and system messages that wrap
+        // chat in `<Name> message` format (some servers reformat all
+        // chat through /tellraw under offline-mode signed-chat workarounds).
         ClientReceiveMessageEvents.GAME.register(
             ClientReceiveMessageEvents.Game { message, overlay ->
-                // Overlay messages are tick-spam (action bar text, etc.) —
-                // legacy Minescript chat listener doesn't fire on these.
                 if (overlay) return@Game
                 val raw = message.string ?: return@Game
                 val cleaned = FORMATTING_STRIP.replace(raw, "").trim()
                 val match = CHAT_REGEX.find(cleaned) ?: return@Game
                 val username = match.groupValues[1]
                 val text = match.groupValues[2].trim()
-                // Skip command-echoes that leaked through. Same filter as
-                // legacy chat_event_poller line 899.
                 if (text.startsWith("/")) return@Game
                 pushChat(username, text)
             }
