@@ -76,6 +76,16 @@ def test_phase5_routing_includes_movement():
         assert endpoint in bridge_mod.NATIVE_ENDPOINTS, f"{endpoint} missing"
 
 
+def test_phase7_routing_includes_vision():
+    """Phase 7 ports /screenshot and /video/stream to native. Both shell
+    out to ffmpeg x11grab from `:99` in the mod (NativeImage.writeTo()
+    doesn't work on ARM64 Mesa, so direct framebuffer capture stays the
+    only reliable path). With these on native, the legacy bridge owns no
+    endpoint the agent or frontend hits — Phase 8 can decommission it."""
+    assert "/screenshot" in bridge_mod.NATIVE_ENDPOINTS
+    assert "/video/stream" in bridge_mod.NATIVE_ENDPOINTS
+
+
 def test_phase6_ws_url_uses_native_when_provided():
     """Phase 6 binary-cuts events WS over to the native mod's dedicated
     listener (ws://…:8082/events). Per-endpoint routing doesn't apply

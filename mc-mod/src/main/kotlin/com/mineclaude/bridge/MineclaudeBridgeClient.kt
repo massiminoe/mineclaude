@@ -48,6 +48,13 @@ class MineclaudeBridgeClient : ClientModInitializer {
         MovementRoutes.register(bridge)
         GotoRoute.register(bridge)
         CollectRoute.register(bridge)
+        // Phase 7 vision — /screenshot and /video/stream. Both shell out
+        // to ffmpeg x11grab from `:99` — the same approach as the legacy
+        // bridge, because NativeImage.writeTo() produces 0-byte PNGs on
+        // ARM64 Mesa llvmpipe. The mod runs in the same container as
+        // Xvfb so the display is reachable from a child process.
+        ScreenshotRoute.register(bridge)
+        VideoStreamRoute.register(bridge)
 
         bridge.start()
 

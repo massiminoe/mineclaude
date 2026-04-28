@@ -126,6 +126,15 @@ NATIVE_ENDPOINTS: frozenset[str] = frozenset(
         "/stop",
         "/explore",
         "/collect",
+        # Phase 7 — vision. Both shell out to ffmpeg x11grab from `:99`
+        # in the native mod; same approach as legacy because
+        # NativeImage.writeTo() produces 0-byte PNGs on ARM64 Mesa.
+        # /screenshot returns JSON-wrapped base64 by default (or raw
+        # bytes with ?raw=true); /video/stream is a long-lived
+        # multipart/x-mixed-replace MJPEG stream consumed by the
+        # frontend monitor (one persistent ffmpeg per client).
+        "/screenshot",
+        "/video/stream",
         # /probe intentionally not routed: the legacy and native bodies are
         # different shapes (legacy dumps Minescript Python APIs; native
         # identifies the bridge). Agent doesn't consume /probe today, so

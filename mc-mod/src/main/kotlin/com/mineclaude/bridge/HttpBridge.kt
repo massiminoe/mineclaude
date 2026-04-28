@@ -30,6 +30,9 @@ class HttpBridge(private val host: String, private val port: Int) {
     // empty slots. Side-effect-free for non-null fields.
     private val gson: Gson = GsonBuilder().serializeNulls().create()
     private val routes = mutableMapOf<RouteKey, RouteHandler>()
+    // Raw routes own the entire response (headers + body) — used for binary
+    // image bytes and chunked MJPEG. Bypasses the JSON wrapper.
+    private val rawRoutes = mutableMapOf<RouteKey, RawRouteHandler>()
     private val startedAt = System.currentTimeMillis()
     private val requestsServed = AtomicLong(0)
     private val lastErrorTs = AtomicLong(0)
@@ -54,6 +57,11 @@ class HttpBridge(private val host: String, private val port: Int) {
 
     fun addRoute(method: String, path: String, handler: RouteHandler) {
         routes[RouteKey(method.uppercase(), path)] = handler
+        PortedEndpoints.register(path)
+    }
+
+    fun addRawRoute(method: String, path: String, handler: RawRouteHandler) {
+        rawRoutes[RouteKey(method.uppercase(), path)] = handler
         PortedEndpoints.register(path)
     }
 
@@ -83,6 +91,11 @@ class HttpBridge(private val host: String, private val port: Int) {
             requestsServed.incrementAndGet()
             try {
                 val key = RouteKey(exchange.requestMethod.uppercase(), exchange.requestURI.path)
+                val raw = rawRoutes[key]
+                if (raw != null) {
+                    raw.handle(exchange)
+                    return
+                }
                 val handler = routes[key]
                 if (handler == null) {
                     write(exchange, err("no route ${key.method} ${key.path}", status = 404))
@@ -142,6 +155,16 @@ private data class RouteKey(val method: String, val path: String)
 
 fun interface RouteHandler {
     fun handle(exchange: HttpExchange): BridgeResponse
+}
+
+/**
+ * Handler that owns the entire HTTP response (headers + body). Used by
+ * routes that don't fit the JSON envelope: binary screenshots and the
+ * chunked MJPEG video stream. Throwing from here is caught by the
+ * dispatcher and surfaced as a 500.
+ */
+fun interface RawRouteHandler {
+    fun handle(exchange: HttpExchange)
 }
 
 /** Wire shape matches the Python bridge: `{status, message, data}`. */
