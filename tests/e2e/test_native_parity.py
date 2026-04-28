@@ -300,3 +300,76 @@ def test_attack_native_entity_not_found():
     assert code == 200, body
     assert body["status"] == "error"
     assert "not found" in body["message"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — container manipulation (craft / smelt)
+#
+# Mutating tests aren't run here — they require world-coordinated setup
+# (a placed crafting table or furnace, items in inventory) that's
+# brittle to script across runs. Cover the validation paths and the
+# pre-flight error branches instead. Live e2e for the success paths is
+# the gather-wood / make-pickaxe scenario in tests/e2e/test_gather_wood.py.
+# ---------------------------------------------------------------------------
+
+
+def test_craft_native_missing_item_param():
+    code, body = _post(f"{NATIVE}/craft", {"count": 1})
+    assert code == 400
+    assert body["status"] == "error"
+    assert "item" in body["message"].lower()
+
+
+def test_craft_native_unknown_recipe():
+    code, body = _post(f"{NATIVE}/craft", {"item": "definitely_not_a_real_item_zzz"})
+    assert code == 200, body
+    assert body["status"] == "error"
+    assert "unknown recipe" in body["message"].lower()
+
+
+def test_craft_native_no_ingredients():
+    """Crafting wooden_pickaxe with the bot's default empty inventory
+    should fail at preflight with a clear missing-ingredients message,
+    NOT open a crafting table or wedge the tick thread."""
+    code, body = _post(f"{NATIVE}/craft", {"item": "wooden_pickaxe"})
+    assert code == 200, body
+    # Either "missing ingredients" (no inv) or "no crafting table" (no
+    # table placed yet) — both are valid preflight rejects depending on
+    # bot's current state. Just assert it doesn't 500/timeout.
+    assert body["status"] == "error"
+
+
+def test_craft_native_count_zero_is_noop():
+    code, body = _post(f"{NATIVE}/craft", {"item": "stick", "count": 0})
+    assert code == 200, body
+    assert body["status"] == "success"
+    assert body["data"]["crafted"] == 0
+
+
+def test_smelt_native_missing_item_param():
+    code, body = _post(f"{NATIVE}/smelt", {"count": 1})
+    assert code == 400
+    assert body["status"] == "error"
+    assert "item" in body["message"].lower()
+
+
+def test_smelt_native_unknown_recipe():
+    code, body = _post(f"{NATIVE}/smelt", {"item": "wooden_pickaxe"})
+    assert code == 200, body
+    assert body["status"] == "error"
+    assert "unknown smelting recipe" in body["message"].lower()
+
+
+def test_smelt_native_no_furnace_or_input():
+    """No furnace placed AND no input in inventory — preflight must
+    surface one of those errors, not crash."""
+    code, body = _post(f"{NATIVE}/smelt", {"item": "iron_ingot", "count": 1})
+    assert code == 200, body
+    assert body["status"] == "error"
+
+
+def test_probe_phase4_endpoints_listed():
+    """`/probe` should advertise the new container endpoints."""
+    p = _fetch(f"{NATIVE}/probe")["data"]
+    assert "/craft" in p["ported"]
+    assert "/smelt" in p["ported"]

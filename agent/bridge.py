@@ -80,6 +80,15 @@ NATIVE_ENDPOINTS: frozenset[str] = frozenset(
         "/break",
         "/place",
         "/attack",
+        # Phase 4 — container manipulation. Native /craft and /smelt drive
+        # `interactionManager.interactBlock` (open) + `clickSlot` (place
+        # ingredients, extract output) directly, replacing the legacy
+        # Minescript `container_*` API path. With these on native, no
+        # endpoint leaves a stale ScreenHandler open across bridges, so
+        # the EquipRoute cross-bridge sync barrier becomes provably dead
+        # code (see commit retiring SCREEN_SYNC_MS).
+        "/craft",
+        "/smelt",
         # /probe intentionally not routed: the legacy and native bodies are
         # different shapes (legacy dumps Minescript Python APIs; native
         # identifies the bridge). Agent doesn't consume /probe today, so
