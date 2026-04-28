@@ -16,11 +16,10 @@ import org.slf4j.LoggerFactory
  * `POST /equip` — select a hotbar item, swap it to the offhand, or move
  * it into an armor slot.
  *
- * Phase 2b extends Phase 2's hotbar-only impl to cover armor and
- * non-hotbar items. The `interactionManager.clickSlot` path makes this
- * straightforward: the PlayerScreenHandler is always present as the
- * player's `currentScreenHandler` when no other GUI is open, so we click
- * directly into PSH slots without touching any UI state.
+ * The `interactionManager.clickSlot` path makes this straightforward:
+ * PlayerScreenHandler is always the player's `currentScreenHandler`
+ * when no other GUI is open, so we click directly into PSH slots
+ * without touching any UI state.
  *
  * Slot semantics (mirrors legacy):
  *   - "hand" / "mainhand" — select hotbar slot (move from inv if needed)
@@ -29,32 +28,26 @@ import org.slf4j.LoggerFactory
  *     verifies via `getEquippedStack` so a server reject (e.g. wrong
  *     item type for the slot) surfaces as a clear error.
  *
- * # Cross-bridge sync barrier (post-Phase 3 fix)
+ * Post-equip verify (read mainHandStack / offHandStack / getEquippedStack
+ * after a 2-tick settle and return an error if the item isn't actually
+ * held) guards against server-side rejects unrelated to screen handlers
+ * — wrong armor type for the slot, etc.
  *
- * The native bridge runs alongside the legacy Python bridge. When the
- * legacy bridge has just done a /craft (or any container_open dance) and
- * issued a container_close, the *client* sees the new PlayerScreenHandler
- * immediately but the *server* may not have processed the close packet
- * yet. If a native /equip arrives in that window and fires a clickSlot,
- * the syncId of the click won't match the server's still-open
- * CraftingScreenHandler — server silently drops the click. The local
- * SWAP applied client-side; the held-slot select also applied; but the
- * server's view of the player's inventory + held item is stale, so the
- * next break swings bare-handed (observed: stones broke, no cobblestone
- * dropped).
+ * # Why there's no longer a syncCloseScreen barrier
  *
- * Fix:
- *   1. Before the SWAP path, ship `closeHandledScreen()` as an explicit
- *      sync barrier and wait one client tick so client + server agree.
- *   2. After the select, read mainHandStack and verify it actually holds
- *      the requested item. If not, return a clear error rather than
- *      reporting a false success.
+ * Until Phase 4, /craft and /smelt ran on the legacy bridge and could
+ * leave the *server* in a non-PlayerScreenHandler state for a few ticks
+ * after closing client-side. A native /equip arriving in that window
+ * fired clickSlot with a syncId the server didn't expect — the click
+ * was silently dropped server-side, the local swap applied client-side,
+ * and the next break swung bare-handed. The fix at the time was a
+ * `closeHandledScreen()` + 80ms wait inside /equip. With /craft and
+ * /smelt now native, no endpoint leaves a stale ScreenHandler open
+ * across bridges, so the barrier is dead code and was removed.
  */
 object EquipRoute {
     private val log = LoggerFactory.getLogger("mineclaude-bridge.equip")!!
 
-    /** ms to wait between tick submissions for client+server screen-state sync. */
-    private const val SCREEN_SYNC_MS = 80L
     /** ms to wait before the post-equip verify. Must exceed two MC ticks (~100ms). */
     private const val POST_EQUIP_SETTLE_MS = 120L
 
@@ -83,7 +76,7 @@ object EquipRoute {
     /**
      * "hand" / "mainhand" — guarantee [item] is held in the player's
      * mainhand after this call returns. Slow path moves it into the
-     * hotbar via SWAP after a closeHandledScreen sync barrier.
+     * hotbar via SWAP.
      */
     private fun handleHand(item: String, slot: String): BridgeResponse {
         val target = item.removePrefix("minecraft:")
@@ -96,12 +89,6 @@ object EquipRoute {
         val hotbarSlot: Int = if (located.inHotbar) {
             located.piSlot
         } else {
-            // Slow path: close any handled screen as a sync barrier, wait
-            // one tick, then SWAP. Without this, a recent legacy /craft can
-            // leave the server in CraftingScreenHandler — clickSlot fires
-            // against the wrong syncId and is silently dropped server-side.
-            syncCloseScreen()
-            Thread.sleep(SCREEN_SYNC_MS)
             val staged = TickThread.submitAndWait(timeoutMs = 2_000) {
                 stageIntoHotbar(item)
             } ?: return HttpBridge.err(
@@ -129,15 +116,9 @@ object EquipRoute {
             mainhandHolds(player, target)
         }
         if (!verified) {
-            log.warn(
-                "equip: post-select mainhand does not hold {} (asked for slot {}); " +
-                    "likely a screen-handler desync — see Phase 2b sync-barrier comment.",
-                item, hotbarSlot,
-            )
+            log.warn("equip: post-select mainhand does not hold {} (asked for slot {})", item, hotbarSlot)
             return HttpBridge.err(
-                "equip did not take effect — mainhand is not $item after select. " +
-                    "Likely cause: server's screen handler was out of sync (stale /craft " +
-                    "or container). A retry should succeed."
+                "equip did not take effect — mainhand is not $item after select."
             )
         }
         return HttpBridge.ok(
@@ -153,8 +134,6 @@ object EquipRoute {
         val hotbarSlot: Int = if (located.inHotbar) {
             located.piSlot
         } else {
-            syncCloseScreen()
-            Thread.sleep(SCREEN_SYNC_MS)
             TickThread.submitAndWait(timeoutMs = 2_000) { stageIntoHotbar(item) }
                 ?: return HttpBridge.err("$item is in inventory but couldn't be moved to the hotbar")
         }
@@ -180,8 +159,7 @@ object EquipRoute {
         if (!verified) {
             log.warn("equip: post-swap offhand does not hold {} (asked for slot {})", item, hotbarSlot)
             return HttpBridge.err(
-                "equip did not take effect — offhand is not $item after swap-hands. " +
-                    "Likely cause: server's screen handler was out of sync. A retry should succeed."
+                "equip did not take effect — offhand is not $item after swap-hands."
             )
         }
         return HttpBridge.ok(
@@ -192,16 +170,14 @@ object EquipRoute {
 
     /**
      * Move [item] into the named armor slot. Strategy:
-     *   1. Sync barrier: closeHandledScreen + 1 tick wait so we don't
-     *      click against a stale screen handler.
-     *   2. Find the item (errors if absent).
-     *   3. PICKUP from source PSH slot — cursor holds the stack.
-     *   4. PICKUP at the armor PSH slot — server validates the item is
+     *   1. Find the item (errors if absent).
+     *   2. PICKUP from source PSH slot — cursor holds the stack.
+     *   3. PICKUP at the armor PSH slot — server validates the item is
      *      the right armor type and either accepts (cursor empties) or
      *      rejects (cursor still holds the stack).
-     *   5. If cursor still has it, deposit back at source so we don't
+     *   4. If cursor still has it, deposit back at source so we don't
      *      drop items on the ground when the screen handler closes.
-     *   6. Verify via `getEquippedStack(slot)`: belt-and-suspenders for
+     *   5. Verify via `getEquippedStack(slot)`: belt-and-suspenders for
      *      the rare server-quirk where the click "succeeded" client-side
      *      but server state diverged.
      */
@@ -222,10 +198,6 @@ object EquipRoute {
                 "Equipped $item to $armorSlot",
             )
         }
-
-        // Sync barrier — armor click also needs the right syncId server-side.
-        syncCloseScreen()
-        Thread.sleep(SCREEN_SYNC_MS)
 
         val tickResult = TickThread.submitAndWait(timeoutMs = 2_000) {
             val player = MinecraftClient.getInstance().player ?: return@submitAndWait "no player"
@@ -274,24 +246,6 @@ object EquipRoute {
     private fun locate(item: String): InventoryHelpers.FoundStack? {
         val player = MinecraftClient.getInstance().player ?: return null
         return InventoryHelpers.findItem(player, item)
-    }
-
-    /**
-     * Tick-thread helper: ship a CloseHandledScreenC2SPacket so the
-     * server resets to PlayerScreenHandler. No-op visually if no GUI is
-     * open client-side, but acts as a sync barrier when the *server*
-     * still has a stale handler from a recent /craft / /open_container.
-     */
-    private fun syncCloseScreen() {
-        TickThread.submitAndWait(timeoutMs = 1_000) {
-            val player = MinecraftClient.getInstance().player ?: return@submitAndWait Unit
-            // closeHandledScreen sends CloseHandledScreenC2SPacket and
-            // resets currentScreenHandler. Safe to call even when only
-            // PlayerScreenHandler is "open" — server treats it as a
-            // standard inventory close.
-            player.closeHandledScreen()
-            Unit
-        }
     }
 
     /**
