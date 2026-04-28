@@ -66,6 +66,9 @@ object PlayerStatusRoutes {
             "inventory" to readInventory(player.inventory),
             "biome" to biome,
             "time" to time,
+            // Held hotbar slot (0..8). Useful for diagnosing "why is the
+            // wrong tool in mainhand" — the source of truth on the client.
+            "held_slot" to player.inventory.selectedSlot,
         )
     }
 
