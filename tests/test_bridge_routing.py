@@ -47,12 +47,10 @@ def test_phase2b_routing_includes_equip_and_discard():
 
 
 def test_phase3_routing_includes_world_mutations():
-    """Phase 3 ports break/place/attack to native interactionManager calls.
-    /collect stays legacy until the Baritone-driven walk loop is ported."""
+    """Phase 3 ports break/place/attack to native interactionManager calls."""
     assert "/break" in bridge_mod.NATIVE_ENDPOINTS
     assert "/place" in bridge_mod.NATIVE_ENDPOINTS
     assert "/attack" in bridge_mod.NATIVE_ENDPOINTS
-    assert "/collect" not in bridge_mod.NATIVE_ENDPOINTS
 
 
 def test_phase4_routing_includes_craft_and_furnace():
@@ -67,6 +65,15 @@ def test_phase4_routing_includes_craft_and_furnace():
     assert "/furnace/inspect" in bridge_mod.NATIVE_ENDPOINTS
     assert "/furnace/extract" in bridge_mod.NATIVE_ENDPOINTS
     assert "/smelt" not in bridge_mod.NATIVE_ENDPOINTS
+
+
+def test_phase5_routing_includes_movement():
+    """Phase 5 ports the Baritone-driven movement endpoints. Native impls
+    send the same `#…` chat strings as legacy via the in-process tick
+    thread; /goto polls player position directly; /collect runs the walk
+    loop in Kotlin against world.entities."""
+    for endpoint in ("/goto", "/mine", "/follow", "/stop", "/explore", "/collect"):
+        assert endpoint in bridge_mod.NATIVE_ENDPOINTS, f"{endpoint} missing"
 
 
 def test_no_native_url_falls_back_to_legacy():

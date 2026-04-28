@@ -112,6 +112,20 @@ NATIVE_ENDPOINTS: frozenset[str] = frozenset(
         "/furnace/load",
         "/furnace/inspect",
         "/furnace/extract",
+        # Phase 5 — Baritone-driven movement. Native impls send the same
+        # `#goto`/`#mine`/`#follow`/`#stop`/`#explore` chat strings as the
+        # legacy bridge but route them through the in-process tick thread
+        # via `player.networkHandler.sendChatMessage` (Baritone's chat hook
+        # intercepts client-side). /goto polls `player.pos` directly for
+        # arrival instead of the Minescript RPC poll loop. /collect runs
+        # the walk-loop in Kotlin against `world.entities` directly.
+        # See: docs/superpowers/specs/2026-04-28-native-mod-phase3-movement.md
+        "/goto",
+        "/mine",
+        "/follow",
+        "/stop",
+        "/explore",
+        "/collect",
         # /probe intentionally not routed: the legacy and native bodies are
         # different shapes (legacy dumps Minescript Python APIs; native
         # identifies the bridge). Agent doesn't consume /probe today, so

@@ -39,6 +39,15 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // nothing else can leave a stale ScreenHandler open.
         CraftRoute.register(bridge)
         FurnaceRoute.register(bridge)
+        // Phase 5 movement — Baritone-driven /goto, /mine, /follow, /stop,
+        // /explore, /collect. Same chat-string substrate as the legacy
+        // bridge (#goto / #mine / #follow / #stop / #explore through
+        // sendChatMessage) — Baritone hooks the chat path client-side.
+        // /goto polls player position for arrival; /collect runs a
+        // Baritone-driven walk loop; the rest are fire-and-forget.
+        MovementRoutes.register(bridge)
+        GotoRoute.register(bridge)
+        CollectRoute.register(bridge)
 
         bridge.start()
 

@@ -386,3 +386,113 @@ def test_probe_phase4_endpoints_listed():
     assert "/furnace/load" in p["ported"]
     assert "/furnace/inspect" in p["ported"]
     assert "/furnace/extract" in p["ported"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — movement (Baritone-driven /goto, /mine, /follow, /stop, /explore,
+# /collect)
+#
+# These are the chat-string fire-and-forget Baritone routes plus the
+# arrival-polling /goto and the walk-loop /collect. Live behavioral testing
+# is done by the e2e gather-wood scenario; here we cover validation paths,
+# command-string parity, and idempotent no-op success branches.
+# ---------------------------------------------------------------------------
+
+
+def test_stop_native_returns_command():
+    """`/stop` is fire-and-forget on both bridges; check shape parity."""
+    a_code, a_body = _post(f"{LEGACY}/stop", {})
+    b_code, b_body = _post(f"{NATIVE}/stop", {})
+    assert a_code == 200 and b_code == 200, (a_body, b_body)
+    assert a_body["status"] == "success" and b_body["status"] == "success"
+    assert a_body["data"]["command"] == "#stop"
+    assert b_body["data"]["command"] == "#stop"
+
+
+def test_explore_native_returns_command():
+    a_code, a_body = _post(f"{LEGACY}/explore", {})
+    b_code, b_body = _post(f"{NATIVE}/explore", {})
+    assert a_code == 200 and b_code == 200, (a_body, b_body)
+    assert a_body["data"]["command"] == "#explore"
+    assert b_body["data"]["command"] == "#explore"
+    # Stop the bot we just started so the next test isn't fighting Baritone.
+    _post(f"{NATIVE}/stop", {})
+
+
+def test_mine_native_missing_block_param():
+    a_code, a_body = _post(f"{LEGACY}/mine", {})
+    b_code, b_body = _post(f"{NATIVE}/mine", {})
+    assert a_code == 400 and b_code == 400, (a_body, b_body)
+    assert a_body["status"] == "error" and b_body["status"] == "error"
+    assert "block" in a_body["message"].lower()
+    assert "block" in b_body["message"].lower()
+
+
+def test_mine_native_command_with_count():
+    """Same `#mine N <block>` chat string on both bridges. Bot will receive
+    it, but in an empty test world there's nothing to mine — it'll path
+    around briefly. Stop right after to avoid leaking state."""
+    a_code, a_body = _post(f"{LEGACY}/mine", {"block": "stone", "count": 1})
+    b_code, b_body = _post(f"{NATIVE}/mine", {"block": "stone", "count": 1})
+    _post(f"{NATIVE}/stop", {})
+    assert a_code == 200 and b_code == 200, (a_body, b_body)
+    assert a_body["data"]["command"] == "#mine 1 stone"
+    assert b_body["data"]["command"] == "#mine 1 stone"
+
+
+def test_mine_native_command_without_count():
+    a_code, a_body = _post(f"{LEGACY}/mine", {"block": "stone"})
+    b_code, b_body = _post(f"{NATIVE}/mine", {"block": "stone"})
+    _post(f"{NATIVE}/stop", {})
+    assert a_code == 200 and b_code == 200, (a_body, b_body)
+    assert a_body["data"]["command"] == "#mine stone"
+    assert b_body["data"]["command"] == "#mine stone"
+
+
+def test_follow_native_missing_player_param():
+    a_code, a_body = _post(f"{LEGACY}/follow", {})
+    b_code, b_body = _post(f"{NATIVE}/follow", {})
+    assert a_code == 400 and b_code == 400, (a_body, b_body)
+    assert a_body["status"] == "error" and b_body["status"] == "error"
+    assert "player" in a_body["message"].lower()
+    assert "player" in b_body["message"].lower()
+
+
+def test_follow_native_command_string():
+    a_code, a_body = _post(f"{LEGACY}/follow", {"player": "TestPlayer"})
+    b_code, b_body = _post(f"{NATIVE}/follow", {"player": "TestPlayer"})
+    _post(f"{NATIVE}/stop", {})
+    assert a_code == 200 and b_code == 200, (a_body, b_body)
+    assert a_body["data"]["command"] == "#follow player TestPlayer"
+    assert b_body["data"]["command"] == "#follow player TestPlayer"
+
+
+def test_goto_native_already_at_target_arrives_fast():
+    """POST /goto with the player's current position. Both bridges should
+    return arrived=true within a tick or two — the player is already within
+    the 2.0-block arrival threshold."""
+    pos = _fetch(f"{NATIVE}/status")["data"]["position"]
+    code, body = _post(f"{NATIVE}/goto", {"x": pos["x"], "y": pos["y"], "z": pos["z"], "timeout": 5})
+    _post(f"{NATIVE}/stop", {})
+    assert code == 200, body
+    assert body["status"] == "success"
+    assert body["data"]["arrived"] is True
+    assert "position" in body["data"]
+    assert body["data"]["distance"] <= 2.0
+
+
+def test_collect_native_no_items_returns_zero():
+    """In an empty test world `/collect` finds nothing within radius and
+    returns `collected:0` quickly. Don't compare to legacy in the same call
+    — running both back-to-back can race on the wider-scan log path."""
+    code, body = _post(f"{NATIVE}/collect", {"radius": 1.0})
+    assert code == 200, body
+    assert body["status"] == "success"
+    assert body["data"]["collected"] == 0
+
+
+def test_probe_phase5_endpoints_listed():
+    """`/probe` should advertise the new movement endpoints."""
+    p = _fetch(f"{NATIVE}/probe")["data"]
+    for endpoint in ("/goto", "/mine", "/follow", "/stop", "/explore", "/collect"):
+        assert endpoint in p["ported"], f"{endpoint} missing from probe.ported: {p['ported']}"
