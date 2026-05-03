@@ -13,6 +13,7 @@ from agent.action_queue import ActionQueue
 from agent.bridge import BridgeClient
 from agent.claude import ClaudeClient
 from agent.primitives import make_primitives
+from agent.memory import read_memory, write_memory
 from agent.plan import read_plan, write_plan
 from agent.prompt import build_system_prompt, format_game_state
 from agent.sandbox import SandboxError, execute
@@ -164,9 +165,11 @@ class Agent:
             "content": f"{username}: {message}",
         })
 
-        # Inject synthetic plan tool_use/tool_result pair (fresh from disk each turn).
-        # Plan is chat-level; gameState refreshes per Claude iteration below.
+        # Inject synthetic plan + memory tool_use/tool_result pairs (fresh from
+        # disk each turn). Both are chat-level; gameState refreshes per Claude
+        # iteration below.
         self._inject_plan()
+        self._inject_memory()
 
         await self._emit("conversation:update", self.messages)
 
@@ -255,17 +258,26 @@ class Agent:
                     _t0 = time.monotonic()
                     result = await self._dispatch_tool(tool_use.name, tool_use.input)
                     _elapsed_ms = int((time.monotonic() - _t0) * 1000)
+                    log_result: Any
+                    if isinstance(result, dict) and result.get("_type") == "image_tool_result":
+                        # Archive the JPEG bytes to disk so the trace viewer can
+                        # render them — base64 is too heavy to keep in the JSONL.
+                        sl = self._current_session_logger
+                        img_path = (
+                            sl.save_image(tool_use.id, result["image"], result.get("format", "jpeg"))
+                            if sl is not None
+                            else None
+                        )
+                        log_result = {"type": "image", "text": result.get("text", ""), "image_path": img_path}
+                    else:
+                        log_result = result
                     self._slog(
                         "tool_dispatch",
                         iteration=iteration + 1,
                         name=tool_use.name,
                         tool_use_id=tool_use.id,
                         input=tool_use.input,
-                        result=(
-                            {"type": "image", "text": result.get("text", "")}
-                            if isinstance(result, dict) and result.get("_type") == "image_tool_result"
-                            else result
-                        ),
+                        result=log_result,
                         elapsed_ms=_elapsed_ms,
                     )
                     if isinstance(result, dict) and result.get("_type") == "image_tool_result":
@@ -381,6 +393,14 @@ class Agent:
                 if lines == 0:
                     return "plan cleared"
                 return f"plan saved ({lines} lines)"
+
+            elif name == "writeMemory":
+                content = input_data.get("content", "")
+                lines = write_memory(content)
+                await self._emit("memory:update", content)
+                if lines == 0:
+                    return "memory cleared"
+                return f"memory saved ({lines} lines)"
 
             elif name == "screenshot":
                 resp = await self.bridge.screenshot()
@@ -513,6 +533,39 @@ class Agent:
                 {
                     "type": "tool_result",
                     "tool_use_id": "plan_auto",
+                    "content": wrapped,
+                }
+            ],
+        })
+
+    def _inject_memory(self) -> None:
+        """Inject the current memory document as a synthetic tool_use/tool_result pair.
+
+        Re-reads ./state/memory.md fresh from disk each call so the agent always
+        sees the latest memory (including any edits made by a previous
+        writeMemory call, or by the user directly on disk).
+        """
+        memory_text = read_memory()
+        body = memory_text if memory_text else "(no memories saved)"
+        wrapped = f"<memory>\n{body}\n</memory>"
+
+        self.messages.append({
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "memory_auto",
+                    "name": "memory",
+                    "input": {},
+                }
+            ],
+        })
+        self.messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "memory_auto",
                     "content": wrapped,
                 }
             ],

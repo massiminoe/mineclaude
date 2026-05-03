@@ -19,6 +19,7 @@ export function useSocket() {
   });
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [plan, setPlan] = useState<string>("");
+  const [memory, setMemory] = useState<string>("");
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<number>(0);
@@ -35,6 +36,7 @@ export function useSocket() {
         if (data.queue) setQueue(data.queue);
         if (data.game) setGameState(data.game);
         if (data.plan !== undefined) setPlan(data.plan ?? "");
+        if (data.memory !== undefined) setMemory(data.memory ?? "");
       })
       .catch(() => {
         // Likely a race with the monitor coming up — retry a few times
@@ -117,6 +119,9 @@ export function useSocket() {
         case "plan:update":
           setPlan((data.plan as string) ?? "");
           break;
+        case "memory:update":
+          setMemory((data.memory as string) ?? "");
+          break;
       }
     },
     []
@@ -195,5 +200,5 @@ export function useSocket() {
     };
   }, [connect]);
 
-  return { conversation, queue, gameState, plan, connected };
+  return { conversation, queue, gameState, plan, memory, connected };
 }

@@ -3,20 +3,26 @@ import { ActionQueue } from "./ActionQueue";
 import { ConsolePanel } from "./ConsolePanel";
 import { GameInfo } from "./GameInfo";
 import { InventoryList } from "./InventoryList";
+import { MemoryCard } from "./MemoryCard";
 import { PlanCard } from "./PlanCard";
 
 interface Props {
   queue: QueueState;
   gameState: GameState | null;
   plan: string;
+  memory: string;
 }
 
-export function SidePanel({ queue, gameState, plan }: Props) {
+export function SidePanel({ queue, gameState, plan, memory }: Props) {
   return (
     <div className="side-panel">
       <div className="side-section">
         <div className="side-section-label">Plan</div>
         <PlanCard plan={plan} />
+      </div>
+      <div className="side-section">
+        <div className="side-section-label">Memory</div>
+        <MemoryCard memory={memory} />
       </div>
       <div className="side-section">
         <div className="side-section-label">Action Queue</div>

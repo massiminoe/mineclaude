@@ -12,9 +12,93 @@ from typing import Any
 from aiohttp import web
 
 from agent.belief_check import diff_belief_vs_actual
+from agent.memory import read_memory
 from agent.plan import read_plan
+from agent.session_log import DEFAULT_BASE_DIR as SESSIONS_DIR, IMAGES_DIRNAME
 
 logger = logging.getLogger(__name__)
+
+
+def _load_events(path: Path) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    try:
+        with path.open("r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"load events failed for {path}: {e}")
+    return events
+
+
+def _summarize_session(path: Path) -> dict[str, Any]:
+    """Cheap pass over a session JSONL to extract list-page metadata."""
+    summary: dict[str, Any] = {
+        "stem": path.stem,
+        "size": 0,
+        "mtime": 0.0,
+        "started_at": None,
+        "ended_at": None,
+        "turn_count": 0,
+        "iteration_count": 0,
+        "tool_call_count": 0,
+        "screenshot_count": 0,
+        "belief_mismatch_count": 0,
+        "exception_count": 0,
+        "first_user_message": None,
+        "session_id": None,
+    }
+    try:
+        st = path.stat()
+        summary["size"] = st.st_size
+        summary["mtime"] = st.st_mtime
+        last_ts: float | None = None
+        first_ts: float | None = None
+        with path.open("r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                ts = e.get("ts")
+                if isinstance(ts, (int, float)):
+                    if first_ts is None:
+                        first_ts = ts
+                    last_ts = ts
+                ev = e.get("event")
+                data = e.get("data") or {}
+                if ev == "session_open":
+                    summary["session_id"] = data.get("session_id")
+                elif ev == "chat_in":
+                    summary["turn_count"] += 1
+                    if summary["first_user_message"] is None:
+                        msg = data.get("message")
+                        if isinstance(msg, str):
+                            summary["first_user_message"] = msg[:200]
+                elif ev == "claude_request":
+                    summary["iteration_count"] += 1
+                elif ev == "tool_dispatch":
+                    summary["tool_call_count"] += 1
+                    res = data.get("result")
+                    if isinstance(res, dict) and res.get("type") == "image":
+                        summary["screenshot_count"] += 1
+                elif ev == "belief_mismatch":
+                    summary["belief_mismatch_count"] += 1
+                elif ev == "exception":
+                    summary["exception_count"] += 1
+        summary["started_at"] = first_ts
+        summary["ended_at"] = last_ts
+    except Exception as e:
+        logger.debug(f"session summary failed for {path}: {e}")
+    return summary
 
 
 class MonitorServer:
@@ -33,7 +117,11 @@ class MonitorServer:
         self._app.router.add_get("/api/queue", self._handle_queue)
         self._app.router.add_get("/api/game", self._handle_game)
         self._app.router.add_get("/api/plan", self._handle_plan)
+        self._app.router.add_get("/api/memory", self._handle_memory)
         self._app.router.add_get("/api/ws", self._handle_ws)
+        self._app.router.add_get("/api/sessions", self._handle_sessions_list)
+        self._app.router.add_get("/api/sessions/{stem}", self._handle_session_detail)
+        self._app.router.add_get("/api/sessions/{stem}/images/{name}", self._handle_session_image)
         self._app.router.add_post("/api/console/run", self._handle_console_run)
         self._app.router.add_post("/api/console/cancel", self._handle_console_cancel)
         # Static files (production build) — added last so API routes take priority
@@ -48,6 +136,7 @@ class MonitorServer:
     def _register_hooks(self) -> None:
         self.agent.on("conversation:update", self._on_conversation_update)
         self.agent.on("plan:update", self._on_plan_update)
+        self.agent.on("memory:update", self._on_memory_update)
         self.agent.queue.on("action:enqueued", self._on_action_event)
         self.agent.queue.on("action:started", self._on_action_event)
         self.agent.queue.on("action:completed", self._on_action_event)
@@ -72,6 +161,7 @@ class MonitorServer:
             "queue": self.agent.queue.status(),
             "game": game,
             "plan": read_plan(),
+            "memory": read_memory(),
             "video_url": f"{video_base}/video/stream?fps=10&quality=50" if video_base else None,
         })
 
@@ -87,6 +177,54 @@ class MonitorServer:
 
     async def _handle_plan(self, request: web.Request) -> web.Response:
         return web.json_response({"plan": read_plan()})
+
+    async def _handle_memory(self, request: web.Request) -> web.Response:
+        return web.json_response({"memory": read_memory()})
+
+    async def _handle_sessions_list(self, request: web.Request) -> web.Response:
+        sessions_dir = Path(SESSIONS_DIR)
+        if not sessions_dir.is_dir():
+            return web.json_response({"sessions": []})
+        files = sorted(
+            sessions_dir.glob("*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        sessions = await asyncio.to_thread(lambda: [_summarize_session(p) for p in files])
+        return web.json_response({"sessions": sessions})
+
+    async def _handle_session_detail(self, request: web.Request) -> web.Response:
+        stem = request.match_info["stem"]
+        path = self._session_path(stem)
+        if path is None:
+            return web.json_response({"error": "not found"}, status=404)
+        events = await asyncio.to_thread(_load_events, path)
+        return web.json_response({
+            "stem": stem,
+            "summary": _summarize_session(path),
+            "events": events,
+        })
+
+    async def _handle_session_image(self, request: web.Request) -> web.Response:
+        stem = request.match_info["stem"]
+        name = request.match_info["name"]
+        # Block traversal — names must be a single path segment.
+        if "/" in name or ".." in name or name.startswith("."):
+            return web.Response(status=400)
+        if self._session_path(stem) is None:
+            return web.Response(status=404)
+        img = Path(SESSIONS_DIR) / IMAGES_DIRNAME / stem / name
+        if not img.is_file():
+            return web.Response(status=404)
+        ctype = "image/jpeg" if img.suffix.lower() in (".jpg", ".jpeg") else "application/octet-stream"
+        return web.FileResponse(img, headers={"Content-Type": ctype, "Cache-Control": "public, max-age=86400"})
+
+    def _session_path(self, stem: str) -> Path | None:
+        """Resolve a session stem to its JSONL path, rejecting traversal."""
+        if not stem or "/" in stem or ".." in stem or stem.startswith("."):
+            return None
+        path = Path(SESSIONS_DIR) / f"{stem}.jsonl"
+        return path if path.is_file() else None
 
     async def _handle_console_run(self, request: web.Request) -> web.Response:
         try:
@@ -150,6 +288,9 @@ class MonitorServer:
 
     async def _on_plan_update(self, event: str, plan: Any) -> None:
         await self._broadcast("plan:update", {"plan": plan if isinstance(plan, str) else ""})
+
+    async def _on_memory_update(self, event: str, memory: Any) -> None:
+        await self._broadcast("memory:update", {"memory": memory if isinstance(memory, str) else ""})
 
     async def _on_action_event(self, event: str, action: Any, *_extra: Any) -> None:
         await self._broadcast(event.replace(":", "_"), {

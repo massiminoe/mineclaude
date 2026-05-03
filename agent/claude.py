@@ -106,6 +106,31 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["content"],
         },
     },
+    {
+        "name": "writeMemory",
+        "description": (
+            "Replace the contents of ./state/memory.md with the given content. "
+            "Memory is durable knowledge that outlives the current goal — locations "
+            "(base, mines, portals), hazards, and persistent rules. It is re-read from "
+            "disk and injected into your context each turn inside <memory> tags. This "
+            "tool does not edit in place — emit the full new file content each time. "
+            "To remove an entry, omit it from the new content. Pass an empty string to "
+            "wipe memory entirely (rarely correct)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "Full new content of memory.md. See the Memory section of the "
+                        "system prompt for the expected format."
+                    ),
+                }
+            },
+            "required": ["content"],
+        },
+    },
 ]
 
 
