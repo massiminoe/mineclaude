@@ -17,7 +17,7 @@ export default function App() {
       <TopBar connected={connected} view={route.view} onNavigate={navigate} />
       {route.view === "monitor" && (
         <div className="main-content">
-          <VideoPane conversation={conversation} />
+          <VideoPane conversation={conversation} connected={connected} />
           <SidePanel queue={queue} gameState={gameState} plan={plan} memory={memory} />
         </div>
       )}

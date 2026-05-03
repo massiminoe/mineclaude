@@ -9,9 +9,10 @@ const RETRY_MAX_MS = 10000;
 
 interface Props {
   conversation: ConversationMessage[];
+  connected: boolean;
 }
 
-export function VideoPane({ conversation }: Props) {
+export function VideoPane({ conversation, connected }: Props) {
   const [streamStatus, setStreamStatus] = useState<
     "loading" | "connected" | "error"
   >("loading");
@@ -20,6 +21,7 @@ export function VideoPane({ conversation }: Props) {
   const imgRef = useRef<HTMLImageElement>(null);
   const retryTimer = useRef<number>(0);
   const retryDelay = useRef(RETRY_BASE_MS);
+  const wasConnected = useRef(connected);
 
   useEffect(() => {
     const img = imgRef.current;
@@ -52,6 +54,24 @@ export function VideoPane({ conversation }: Props) {
       }
     };
   }, []);
+
+  // The MJPEG stream lives on a separate channel from the monitor WS, so an
+  // <img> hooked to a multipart response will silently freeze on its last
+  // frame when the underlying TCP connection dies — the browser only fires
+  // `error` on the *initial* fetch failure, not mid-stream. Force a reload
+  // whenever the monitor WS recovers from a disconnect.
+  useEffect(() => {
+    if (connected && !wasConnected.current) {
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+        retryTimer.current = 0;
+      }
+      retryDelay.current = RETRY_BASE_MS;
+      setStreamStatus("loading");
+      setStreamSrc(`${STREAM_URL}&_=${Date.now()}`);
+    }
+    wasConnected.current = connected;
+  }, [connected]);
 
   return (
     <div className="video-pane">
