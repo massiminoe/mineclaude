@@ -1,4 +1,4 @@
-"""Entry point for the Mineclaw agent."""
+"""Entry point for the Mineclaude agent."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def main() -> None:
     # listener because JDK HttpServer doesn't speak WS upgrades).
     bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8081")
     bridge_ws_url = os.environ.get("BRIDGE_WS_URL", "ws://localhost:8082/events")
-    bot_name = os.environ.get("BOT_NAME", "Mineclaw")
+    bot_name = os.environ.get("BOT_NAME", "Claude")
     claude_model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
     api_key = os.environ.get("ANTHROPIC_API_KEY")
 
@@ -105,7 +105,7 @@ def main() -> None:
     monitor = MonitorServer(agent, port=monitor_port)
 
     logger.info(
-        f"Mineclaw agent starting (mock={mock_bridge}, no_claude={no_claude}, "
+        f"Mineclaude agent starting (mock={mock_bridge}, no_claude={no_claude}, "
         f"bot={bot_name}, model={'<disabled>' if no_claude else claude_model})"
     )
 
@@ -117,7 +117,7 @@ def main() -> None:
                 async def inject_after_delay():
                     await asyncio.sleep(1.0)
                     logger.info("Injecting test chat event")
-                    bridge.inject_chat("Steve", "Hey Mineclaw, can you get me some oak logs?")
+                    bridge.inject_chat("Steve", "Hey Claude, can you get me some oak logs?")
                 asyncio.create_task(inject_after_delay())
             await agent.start(handle_chat=not no_claude)
 

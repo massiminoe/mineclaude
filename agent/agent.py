@@ -50,7 +50,7 @@ class Agent:
         self,
         bridge: BridgeClient,
         claude: ClaudeClient | None,
-        bot_name: str = "Mineclaw",
+        bot_name: str = "Claude",
     ):
         self.bridge = bridge
         self.claude = claude

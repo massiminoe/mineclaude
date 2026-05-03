@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def build_system_prompt(bot_name: str = "Mineclaw") -> str:
+def build_system_prompt(bot_name: str = "Claude") -> str:
     return f"""You are {bot_name}, a Minecraft bot controlled by an AI. You exist inside a Minecraft world and can interact with it through code execution and query tools.
 
 ## Identity

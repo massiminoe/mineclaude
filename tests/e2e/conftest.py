@@ -69,7 +69,7 @@ async def agent(mc_stack):
 
     bridge = RealBridgeClient(base_url="http://localhost:8081")
     claude = ClaudeClient(api_key=os.environ["ANTHROPIC_API_KEY"])
-    ag = Agent(bridge=bridge, claude=claude, bot_name="Mineclaw")
+    ag = Agent(bridge=bridge, claude=claude, bot_name="Claude")
     ag.queue.set_executor(ag._execute_action)
     ag.queue.start()
     try:
