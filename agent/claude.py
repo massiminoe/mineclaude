@@ -53,32 +53,6 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "queueStatus",
-        "description": "View running action, pending queue, and recent action history.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "queueClear",
-        "description": "Cancel all pending actions in the queue.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "queueRemove",
-        "description": "Cancel a specific pending action by ID.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "Action ID to cancel"}
-            },
-            "required": ["id"],
-        },
-    },
-    {
-        "name": "stop",
-        "description": "Emergency stop: clear the action queue and interrupt the running action.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
         "name": "screenshot",
         "description": "Take a screenshot of your current first-person view. Returns the image for visual analysis. Use when you need to see what's around you, verify a build, check terrain, or when text-based block data isn't sufficient.",
         "input_schema": {"type": "object", "properties": {}},

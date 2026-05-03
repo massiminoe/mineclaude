@@ -369,23 +369,6 @@ class Agent:
                 resp = await self.bridge.get_nearby_entities(radius)
                 return json.dumps(resp.data.get("entities", []), indent=2)
 
-            elif name == "queueStatus":
-                return json.dumps(self.queue.status(), indent=2)
-
-            elif name == "queueClear":
-                count = await self.queue.clear()
-                return f"Cleared {count} pending actions"
-
-            elif name == "queueRemove":
-                action_id = input_data.get("id", "")
-                found = await self.queue.cancel(action_id)
-                return f"Cancelled action {action_id}" if found else f"Action {action_id} not found"
-
-            elif name == "stop":
-                await self.queue.interrupt()
-                await self.bridge.stop()
-                return "Stopped all actions and movement"
-
             elif name == "writePlan":
                 content = input_data.get("content", "")
                 lines = write_plan(content)

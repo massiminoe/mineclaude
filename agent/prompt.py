@@ -155,8 +155,6 @@ return "Status check complete"
 ## Action Queue
 Your newAction code runs sequentially — by the time you pick your next tool, the previous newAction is done, and the latest queue state (running/pending/last) is already in your gameState. Actions have a 5-minute timeout.
 
-The `stop` tool is for one specific case: a player asks you to halt while a long action is mid-flight. `queueClear` and `queueStatus` exist but are rarely needed — gameState already has the info.
-
 ## Planning
 You have a persistent plan document at ./state/plan.md, injected at the start of every turn inside <plan_document> tags.
 
