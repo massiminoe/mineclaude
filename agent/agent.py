@@ -555,7 +555,26 @@ class Agent:
         })
 
     def _trim_history(self, max_messages: int = 50) -> None:
-        """Keep conversation history bounded."""
-        if len(self.messages) > max_messages:
-            # Keep the most recent messages
-            self.messages = self.messages[-max_messages:]
+        """Keep conversation history bounded.
+
+        A naive `messages[-N:]` slice can land between a `tool_use` and its
+        matching `tool_result`, leaving an orphaned tool_result at messages[0]
+        which 400s the next API call. We trim only at chat-turn boundaries —
+        user messages with plain-string content (one per inbound chat).
+        """
+        if len(self.messages) <= max_messages:
+            return
+
+        candidates = self.messages[-max_messages:]
+        for i, msg in enumerate(candidates):
+            if msg["role"] == "user" and isinstance(msg.get("content"), str):
+                self.messages = candidates[i:]
+                return
+
+        # No chat-turn boundary in the kept window (one very long turn).
+        # Fall back to the most recent boundary in the full history.
+        for i in range(len(self.messages) - 1, -1, -1):
+            msg = self.messages[i]
+            if msg["role"] == "user" and isinstance(msg.get("content"), str):
+                self.messages = self.messages[i:]
+                return
