@@ -82,9 +82,7 @@ object FurnaceRoute {
             )
         }
 
-        if (!ensureInReach(furnacePos)) {
-            return HttpBridge.err("Could not reach furnace.")
-        }
+        ensureInReach(furnacePos)?.let { return it }
 
         var err: String? = null
         try {
@@ -148,9 +146,7 @@ object FurnaceRoute {
             } catch (_: Throwable) { false }
         }
 
-        if (!ensureInReach(furnacePos)) {
-            return HttpBridge.err("Could not reach furnace.")
-        }
+        ensureInReach(furnacePos)?.let { return it }
 
         // Slot contents and cook timing are server-authoritative — the
         // client only learns them once the screen handler is open. So
@@ -200,9 +196,7 @@ object FurnaceRoute {
         val furnacePos = resolveFurnacePos(body)
             ?: return HttpBridge.err("No furnace nearby.")
 
-        if (!ensureInReach(furnacePos)) {
-            return HttpBridge.err("Could not reach furnace.")
-        }
+        ensureInReach(furnacePos)?.let { return it }
 
         // Slot contents are server-authoritative and only visible to the
         // client once the screen handler is open — so the snapshot has to
@@ -275,13 +269,20 @@ object FurnaceRoute {
         return BlockPos(x, y, z)
     }
 
-    private fun ensureInReach(pos: BlockPos): Boolean {
+    /** Returns null on success, or a populated error response if we can't reach [pos]. */
+    private fun ensureInReach(pos: BlockPos): BridgeResponse? {
         val inReach = TickThread.submitAndWait(timeoutMs = 1_000) {
             val player = MinecraftClient.getInstance().player ?: return@submitAndWait false
             WorldHelpers.isBlockWithinReach(player, pos, WorldHelpers.NAV_REACH)
         }
-        if (inReach) return true
-        return Navigation.navigateNear(pos, WorldHelpers.NAV_REACH)
+        if (inReach) return null
+        val nav = Navigation.navigateNear(pos, WorldHelpers.NAV_REACH)
+        if (nav is Navigation.Result.Failed) {
+            return HttpBridge.err(
+                "Couldn't reach furnace at (${pos.x}, ${pos.y}, ${pos.z}): ${nav.reason}",
+            )
+        }
+        return null
     }
 
     /** Tick-thread-only. Scans a cube around the player for a furnace block. */

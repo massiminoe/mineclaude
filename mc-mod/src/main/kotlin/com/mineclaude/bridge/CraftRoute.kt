@@ -100,8 +100,11 @@ object CraftRoute {
             WorldHelpers.isBlockWithinReach(player, tablePos, WorldHelpers.NAV_REACH)
         }
         if (!inReach) {
-            if (!Navigation.navigateNear(tablePos, WorldHelpers.NAV_REACH)) {
-                return HttpBridge.err("Could not reach crafting table.")
+            val nav = Navigation.navigateNear(tablePos, WorldHelpers.NAV_REACH)
+            if (nav is Navigation.Result.Failed) {
+                return HttpBridge.err(
+                    "Couldn't reach crafting table at (${tablePos.x}, ${tablePos.y}, ${tablePos.z}): ${nav.reason}",
+                )
             }
         }
 

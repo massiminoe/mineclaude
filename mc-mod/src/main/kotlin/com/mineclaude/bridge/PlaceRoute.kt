@@ -54,8 +54,11 @@ object PlaceRoute {
         when (val outcome = preflight) {
             is PreflightResult.Error -> return HttpBridge.err(outcome.message)
             is PreflightResult.NeedNavigation -> {
-                if (!Navigation.navigateNear(target)) {
-                    return HttpBridge.err("Could not navigate within reach")
+                val nav = Navigation.navigateNear(target)
+                if (nav is Navigation.Result.Failed) {
+                    return HttpBridge.err(
+                        "Couldn't reach (${target.x}, ${target.y}, ${target.z}) to place $block: ${nav.reason}",
+                    )
                 }
                 return doPlace(target, block, outcome.hotbarSlot)
             }

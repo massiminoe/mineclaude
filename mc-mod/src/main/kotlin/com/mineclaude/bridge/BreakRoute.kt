@@ -87,15 +87,19 @@ object BreakRoute {
         }
 
         // Self-navigate within reach if needed. Baritone has its own 15 s
-        // cap inside Navigation.navigateNear, so unreachable targets fail
-        // in bounded time.
+        // cap inside Navigation.navigateNear, plus a 5 s motion-stall bail,
+        // so unreachable targets fail in bounded time.
         val inReach = TickThread.submitAndWait(timeoutMs = 1_000) {
             val p = MinecraftClient.getInstance().player ?: return@submitAndWait false
             WorldHelpers.isBlockWithinReach(p, pos)
         }
         if (!inReach) {
-            if (!Navigation.navigateNear(pos)) {
-                return HttpBridge.err("Could not navigate within reach")
+            val nav = Navigation.navigateNear(pos)
+            if (nav is Navigation.Result.Failed) {
+                val displayName = originalBlock.removePrefix("minecraft:")
+                return HttpBridge.err(
+                    "Couldn't reach $displayName at (${pos.x}, ${pos.y}, ${pos.z}) to break: ${nav.reason}",
+                )
             }
         }
 

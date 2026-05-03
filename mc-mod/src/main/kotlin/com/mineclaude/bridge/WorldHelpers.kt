@@ -59,14 +59,23 @@ internal object WorldHelpers {
      * targets (canonical case: tree-top logs).
      */
     fun isBlockWithinReach(player: ClientPlayerEntity, pos: BlockPos, reach: Double = BLOCK_REACH): Boolean {
+        return eyeToBlockDistance(player, pos) <= reach
+    }
+
+    /** Eye-to-block-centre distance. Same math as [isBlockWithinReach]. */
+    fun eyeToBlockDistance(player: ClientPlayerEntity, pos: BlockPos): Double {
         val ex = player.x
         val ey = player.y + EYE_HEIGHT
         val ez = player.z
         val cx = pos.x + 0.5
         val cy = pos.y + 0.5
         val cz = pos.z + 0.5
-        val d = sqrt((cx - ex).let { it * it } + (cy - ey).let { it * it } + (cz - ez).let { it * it })
-        return d <= reach
+        return sqrt((cx - ex).let { it * it } + (cy - ey).let { it * it } + (cz - ez).let { it * it })
+    }
+
+    /** Signed Δy from player eye to block centre — positive means target is above. */
+    fun eyeToBlockDy(player: ClientPlayerEntity, pos: BlockPos): Double {
+        return (pos.y + 0.5) - (player.y + EYE_HEIGHT)
     }
 
     /** Foot-based distance — used for entities (item drops sit at foot height). */

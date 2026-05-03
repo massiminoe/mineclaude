@@ -42,8 +42,9 @@ object AttackRoute {
             is FindResult.Error ->
                 return HttpBridge.err(lookup.message)
             is FindResult.OutOfReach -> {
-                if (!Navigation.navigateNear(BlockPos.ofFloored(lookup.x, lookup.y, lookup.z), reach = 2.5)) {
-                    return HttpBridge.err("Could not navigate within melee range")
+                val nav = Navigation.navigateNear(BlockPos.ofFloored(lookup.x, lookup.y, lookup.z), reach = 2.5)
+                if (nav is Navigation.Result.Failed) {
+                    return HttpBridge.err("Couldn't reach $entityId for melee: ${nav.reason}")
                 }
                 return swingAtEntity(entityId)
             }
