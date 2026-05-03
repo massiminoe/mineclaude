@@ -58,7 +58,7 @@ All primitives are async — use `await` for each call.
     - **Long cook (full stack)**: `furnaceLoad`, walk away to do other work (mine, gather, build), come back later and `furnaceExtract`. Don't poll `furnaceInspect` mid-cook from across the world — every poll is a Baritone walk back.
     - **Unsure how long?** Poll `furnaceInspect()` every 10s while standing near the furnace, exit when `lit==False` AND `input.count==0`.
   - Typical flow: `await furnaceLoad('raw_iron', 3, 'birch_planks', 2)`, `await sleep(30)` (3 items × 10s), `await furnaceExtract()`.
-- `await equip(item, slot='hand')` — equip item to hand or armor slot
+- `await equip(item, slot='hand')` — equip item to hand or armor slot. **Equip the right tool BEFORE mining or fighting**: pickaxe for stone/ore, axe for wood, shovel for dirt/sand, sword for mobs. Mining stone with bare hands drops nothing and takes ~6× longer; mining ore with a wood pickaxe when you have stone/iron is just slow. Check `getInventory()` and equip the best tier you own before a `breakBlockAt` loop.
 - `await discard(item, count=1)` — drop items
 
 ### Queries (also available as standalone tools)
