@@ -128,10 +128,17 @@ export function useSocket() {
           setMemory((data.memory as string) ?? "");
           break;
         case "reflex:fired":
-          setReflexes((prev) => [
-            data as unknown as ReflexEvent,
-            ...prev,
-          ].slice(0, REFLEX_LOG_MAX));
+          // Dedupe against the REST snapshot fetched on (re)connect: if the
+          // event fires while fetchState is in flight, the snapshot already
+          // contains it and the WS push would otherwise add a second copy.
+          // `ts` is set once at dispatch time and is identical on both paths.
+          setReflexes((prev) => {
+            const incoming = data as unknown as ReflexEvent;
+            if (prev.some((r) => r.ts === incoming.ts && r.type === incoming.type)) {
+              return prev;
+            }
+            return [incoming, ...prev].slice(0, REFLEX_LOG_MAX);
+          });
           break;
       }
     },
