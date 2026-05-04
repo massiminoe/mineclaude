@@ -56,3 +56,9 @@ export interface WSMessage {
   data: Record<string, unknown>;
   ts: number;
 }
+
+export interface ReflexEvent {
+  type: string;
+  data: Record<string, unknown>;
+  ts: number;
+}

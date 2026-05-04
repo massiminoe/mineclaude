@@ -8,7 +8,7 @@ import { SessionDetailView } from "./components/SessionDetail";
 import "./App.css";
 
 export default function App() {
-  const { conversation, queue, gameState, plan, memory, connected } = useSocket();
+  const { conversation, queue, gameState, plan, memory, reflexes, connected } = useSocket();
   const [hash, navigate] = useHashRoute();
   const route = parseRoute(hash);
 
@@ -18,7 +18,7 @@ export default function App() {
       {route.view === "monitor" && (
         <div className="main-content">
           <VideoPane conversation={conversation} connected={connected} />
-          <SidePanel queue={queue} gameState={gameState} plan={plan} memory={memory} />
+          <SidePanel queue={queue} gameState={gameState} plan={plan} memory={memory} reflexes={reflexes} />
         </div>
       )}
       {route.view === "sessions-list" && (

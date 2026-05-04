@@ -1,19 +1,21 @@
-import type { QueueState, GameState } from "../types";
+import type { QueueState, GameState, ReflexEvent } from "../types";
 import { ActionQueue } from "./ActionQueue";
 import { ConsolePanel } from "./ConsolePanel";
 import { GameInfo } from "./GameInfo";
 import { InventoryList } from "./InventoryList";
 import { MemoryCard } from "./MemoryCard";
 import { PlanCard } from "./PlanCard";
+import { ReflexLog } from "./ReflexLog";
 
 interface Props {
   queue: QueueState;
   gameState: GameState | null;
   plan: string;
   memory: string;
+  reflexes: ReflexEvent[];
 }
 
-export function SidePanel({ queue, gameState, plan, memory }: Props) {
+export function SidePanel({ queue, gameState, plan, memory, reflexes }: Props) {
   return (
     <div className="side-panel">
       <div className="side-section">
@@ -27,6 +29,10 @@ export function SidePanel({ queue, gameState, plan, memory }: Props) {
       <div className="side-section">
         <div className="side-section-label">Action Queue</div>
         <ActionQueue queue={queue} />
+      </div>
+      <div className="side-section">
+        <div className="side-section-label">Reflex Events</div>
+        <ReflexLog reflexes={reflexes} />
       </div>
       <div className="side-section">
         <ConsolePanel />

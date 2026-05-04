@@ -137,6 +137,7 @@ class MonitorServer:
         self.agent.on("conversation:update", self._on_conversation_update)
         self.agent.on("plan:update", self._on_plan_update)
         self.agent.on("memory:update", self._on_memory_update)
+        self.agent.on("reflex:fired", self._on_reflex_fired)
         self.agent.queue.on("action:enqueued", self._on_action_event)
         self.agent.queue.on("action:started", self._on_action_event)
         self.agent.queue.on("action:completed", self._on_action_event)
@@ -156,12 +157,16 @@ class MonitorServer:
     async def _handle_state(self, request: web.Request) -> web.Response:
         game = await self._get_game_state()
         video_base = getattr(self.agent.bridge, "base_url", "")
+        # Reflex log: most-recent first to match the WS push semantics in
+        # the frontend (which prepends incoming events).
+        reflexes = list(reversed(list(self.agent.reflexes.recent)))
         return web.json_response({
             "conversation": self.agent.messages,
             "queue": self.agent.queue.status(),
             "game": game,
             "plan": read_plan(),
             "memory": read_memory(),
+            "reflexes": reflexes,
             "video_url": f"{video_base}/video/stream?fps=10&quality=50" if video_base else None,
         })
 
@@ -292,6 +297,10 @@ class MonitorServer:
     async def _on_memory_update(self, event: str, memory: Any) -> None:
         await self._broadcast("memory:update", {"memory": memory if isinstance(memory, str) else ""})
 
+    async def _on_reflex_fired(self, event: str, entry: Any) -> None:
+        # entry is the dict pushed onto reflexes.recent: {type, data, ts}.
+        await self._broadcast("reflex:fired", entry if isinstance(entry, dict) else {})
+
     async def _on_action_event(self, event: str, action: Any, *_extra: Any) -> None:
         await self._broadcast(event.replace(":", "_"), {
             "action": {
@@ -350,7 +359,16 @@ class MonitorServer:
                         and hasattr(self.agent, "last_activity_ts")
                         and (time.monotonic() - self.agent.last_activity_ts) > 30.0
                     )
-                    if belief and not action_in_flight and not idle:
+                    # Reflex grace: handlers can mutate world state (place
+                    # water, swim up) without Claude knowing. For 2s after
+                    # the most recent reflex fire, suppress the check —
+                    # the next gameState injection includes the reflex
+                    # entry and Claude reconciles from there.
+                    reflex_recent = (
+                        hasattr(self.agent, "reflexes")
+                        and (time.monotonic() - self.agent.reflexes.last_fire_ts) < 2.0
+                    )
+                    if belief and not action_in_flight and not idle and not reflex_recent:
                         mismatches = diff_belief_vs_actual(belief, game)
                         if mismatches:
                             # Dedupe repeated identical mismatches (don't spam)

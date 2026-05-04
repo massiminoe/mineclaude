@@ -16,6 +16,12 @@ base {
     archivesName.set(archivesBaseName)
 }
 
+loom {
+    mixin {
+        defaultRefmapName.set("mineclaude-bridge.refmap.json")
+    }
+}
+
 version = modVersion
 group = mavenGroup
 

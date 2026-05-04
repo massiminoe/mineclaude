@@ -19,6 +19,9 @@
       }
     ]
   },
+  "mixins": [
+    "mineclaude.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=${loader_version}",
     "fabric-api": "*",

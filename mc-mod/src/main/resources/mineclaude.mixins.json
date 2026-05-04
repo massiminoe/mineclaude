@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "com.mineclaude.bridge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+    "ClientPlayNetworkHandlerDamageMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "refmap": "mineclaude-bridge.refmap.json"
+}

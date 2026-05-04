@@ -5,10 +5,13 @@ import type {
   GameState,
   ActionItem,
   SubActionItem,
+  ReflexEvent,
 } from "../types";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 15000;
+// Cap the in-memory reflex log; matches the agent's RECENT_MAXLEN.
+const REFLEX_LOG_MAX = 10;
 
 export function useSocket() {
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
@@ -20,6 +23,7 @@ export function useSocket() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [plan, setPlan] = useState<string>("");
   const [memory, setMemory] = useState<string>("");
+  const [reflexes, setReflexes] = useState<ReflexEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<number>(0);
@@ -37,6 +41,7 @@ export function useSocket() {
         if (data.game) setGameState(data.game);
         if (data.plan !== undefined) setPlan(data.plan ?? "");
         if (data.memory !== undefined) setMemory(data.memory ?? "");
+        if (Array.isArray(data.reflexes)) setReflexes(data.reflexes);
       })
       .catch(() => {
         // Likely a race with the monitor coming up — retry a few times
@@ -122,6 +127,12 @@ export function useSocket() {
         case "memory:update":
           setMemory((data.memory as string) ?? "");
           break;
+        case "reflex:fired":
+          setReflexes((prev) => [
+            data as unknown as ReflexEvent,
+            ...prev,
+          ].slice(0, REFLEX_LOG_MAX));
+          break;
       }
     },
     []
@@ -200,5 +211,5 @@ export function useSocket() {
     };
   }, [connect]);
 
-  return { conversation, queue, gameState, plan, memory, connected };
+  return { conversation, queue, gameState, plan, memory, reflexes, connected };
 }

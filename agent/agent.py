@@ -16,6 +16,7 @@ from agent.primitives import make_primitives
 from agent.memory import read_memory, write_memory
 from agent.plan import read_plan, write_plan
 from agent.prompt import build_system_prompt, format_game_state
+from agent.reflexes import ReflexRegistry, register_default_handlers
 from agent.sandbox import SandboxError, execute
 from agent.session_log import SessionLogger
 
@@ -72,10 +73,34 @@ class Agent:
         self.last_activity_ts: float = time.monotonic()
         self._callbacks: dict[str, list[Callable[[str, Any], Coroutine[Any, Any, None]]]] = {}
 
+        # Chat dispatch state. Two-layer design:
+        #   * `_pending_user_inputs` collects user messages on receipt — fast,
+        #     cheap, never touches `self.messages` directly so it can't land
+        #     between an in-flight tool_use/tool_result pair.
+        #   * `_chat_trigger` (asyncio.Event) tells the worker "respond now."
+        #     Multiple sets while the worker is busy collapse into one wakeup,
+        #     so a burst of chats produces a single response that sees all of
+        #     them in history.
+        # Reflex preempt cancels `_active_chat_task` and clears the trigger,
+        # but PRESERVES `_pending_user_inputs` — the user's words survive the
+        # interruption; only the would-be response is dropped.
+        self._pending_user_inputs: list[dict[str, Any]] = []
+        self._chat_trigger: asyncio.Event = asyncio.Event()
+        self._chat_worker_task: asyncio.Task | None = None
+        self._active_chat_task: asyncio.Task | None = None
+
+        # Reflex layer: dispatches mod-emitted events (damage, lava, drowning,
+        # tool-broke) to handlers configured in agent/reflexes.py.
+        self.reflexes = ReflexRegistry(self)
+        register_default_handlers(self.reflexes)
+
         # Wire up executor and logging
         self.queue.set_executor(self._execute_action)
         self.queue.on("action:started", self._on_action_started)
         self.queue.on("action:completed", self._on_action_completed)
+        # bridge.stop halts Baritone before the worker task is cancelled —
+        # otherwise an in-flight `#goto` keeps walking after preemption.
+        self.queue.set_pre_interrupt(self._pre_interrupt_stop_bridge)
 
     def on(self, event: str, callback: Callable[[str, Any], Coroutine[Any, Any, None]]) -> None:
         self._callbacks.setdefault(event, []).append(callback)
@@ -88,7 +113,7 @@ class Agent:
                 pass
 
     async def start(self, *, handle_chat: bool = True) -> None:
-        """Start the agent: queue worker + event listener.
+        """Start the agent: queue worker + chat worker + event listener.
 
         When `handle_chat=False` (headless / console-only mode), incoming
         chat events are dropped before reaching the Claude loop. Death and
@@ -99,39 +124,147 @@ class Agent:
         mode = "normal" if handle_chat else "headless (no Claude)"
         logger.info(f"Starting agent as {self.bot_name} ({mode})")
         self.queue.start()
+        if handle_chat and self._chat_worker_task is None:
+            self._chat_worker_task = asyncio.create_task(self._chat_worker())
         await self.bridge.events(self._handle_event)
 
     async def _handle_event(self, event: dict) -> None:
-        if event.get("type") == "chat":
+        event_type = event.get("type")
+        if event_type == "chat":
             if not self._handle_chat_enabled:
                 return
-            await self._handle_chat(event["data"])
-        elif event.get("type") == "death":
+            self._enqueue_chat(event.get("data") or {})
+        elif event_type == "death":
             await self._handle_death()
-        elif event.get("type") == "respawn":
+        elif event_type == "respawn":
             await self._handle_respawn()
+        elif event_type in self.reflexes.known_types():
+            await self.reflexes.dispatch(event_type, event.get("data") or {})
+
+    async def _pre_interrupt_stop_bridge(self) -> None:
+        """Pre-interrupt hook: halt Baritone before worker cancellation."""
+        await self.bridge.stop()
+
+    async def _preempt(self) -> None:
+        """Halt everything in flight without erasing user input.
+
+        Called by reflex handlers (preempts=True) and by death. Cancels the
+        active Claude turn (kills the in-flight HTTP call + iteration loop),
+        clears the trigger so a stale set from before preempt doesn't
+        immediately fire a new turn, and interrupts the action queue (which
+        also halts Baritone via the pre-interrupt hook). `_pending_user_inputs`
+        is intentionally NOT touched — the user's queued words wait for the
+        next chat to flush them in.
+        """
+        task = self._active_chat_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._chat_trigger.clear()
+        try:
+            await self.queue.interrupt()
+        except Exception:
+            logger.exception("queue interrupt failed during preempt")
 
     async def _handle_death(self) -> None:
-        """Handle player death: stop all actions."""
-        logger.warning("Bot died! Clearing action queue.")
-        await self.queue.interrupt()
-        try:
-            await self.bridge.stop()
-        except Exception:
-            pass
+        """Handle player death: stop everything (including any in-flight chat)."""
+        logger.warning("Bot died! Preempting agent.")
+        await self._preempt()
 
     async def _handle_respawn(self) -> None:
         """Handle respawn: notify in chat."""
         logger.info("Bot respawned.")
         await self._send_chat("I died and respawned! Give me a moment to get my bearings.")
 
-    async def _handle_chat(self, data: dict) -> None:
+    def _enqueue_chat(self, data: dict) -> None:
+        """Receive a chat event without doing any awaiting work.
+
+        Filters self-echo, then stages the user message in the pending
+        buffer and pokes the trigger. The actual Claude turn runs on
+        `_chat_worker`, which serializes turns and is the only writer
+        that splices pending into `self.messages` (at safe boundaries —
+        never mid-iteration).
+        """
         username = data.get("username", "")
-
-        # Ignore own messages
-        if username.lower() == self.bot_name.lower():
+        message = data.get("message", "")
+        if not username or username.lower() == self.bot_name.lower():
             return
+        self._pending_user_inputs.append({
+            "role": "user",
+            "content": f"{username}: {message}",
+            "_username": username,  # carried through to session-logger setup
+        })
+        self._chat_trigger.set()
 
+    def _flush_pending_inputs(self) -> dict | None:
+        """Splice all pending user inputs into `self.messages` as a single
+        user message. Returns the data dict (`username`, `message`) of the
+        most-recent input for downstream session bookkeeping, or None if
+        nothing was pending.
+
+        Called only from `_chat_worker` at turn boundaries. Combining into
+        one message preserves user/assistant alternation when multiple
+        chats arrive without intervening responses (which can happen
+        after a reflex preempt drops a turn).
+        """
+        if not self._pending_user_inputs:
+            return None
+        snapshot = list(self._pending_user_inputs)
+        self._pending_user_inputs.clear()
+        combined = "\n".join(m["content"] for m in snapshot)
+        # Coalesce with a trailing string-content user message if one's already
+        # there (defensive; shouldn't happen in normal flow but keeps the
+        # invariant tight).
+        if (
+            self.messages
+            and self.messages[-1].get("role") == "user"
+            and isinstance(self.messages[-1].get("content"), str)
+        ):
+            self.messages[-1]["content"] += "\n" + combined
+        else:
+            self.messages.append({"role": "user", "content": combined})
+        last = snapshot[-1]
+        return {"username": last["_username"], "message": last["content"]}
+
+    async def _chat_worker(self) -> None:
+        """Single serialized consumer for chat triggers.
+
+        Wakes on `_chat_trigger`, flushes pending into history, runs one
+        Claude turn in a tracked task. Reflex preempt cancels that task
+        without touching the worker — the worker just sees CancelledError
+        from its `await`, loops, and waits for the next trigger.
+        """
+        while True:
+            try:
+                await self._chat_trigger.wait()
+                self._chat_trigger.clear()
+                last = self._flush_pending_inputs()
+                if last is None:
+                    # Trigger fired but pending was already drained
+                    # (e.g. preempt cleared then re-set in some edge case).
+                    continue
+                self._active_chat_task = asyncio.create_task(
+                    self._run_chat_turn(last)
+                )
+                try:
+                    await self._active_chat_task
+                except asyncio.CancelledError:
+                    # Reflex preempted this turn. The turn body already
+                    # truncated `self.messages` back to its snapshot, so
+                    # history is clean. Keep the worker alive.
+                    pass
+                finally:
+                    self._active_chat_task = None
+            except asyncio.CancelledError:
+                # The worker task itself was cancelled (shutdown). Exit.
+                raise
+            except Exception:
+                logger.exception("chat worker iteration failed")
+
+    async def _run_chat_turn(self, data: dict) -> None:
+        """One Claude turn. Wraps `_handle_chat_traced` with session-logger
+        setup, langfuse propagation, and snapshot/restore on cancellation.
+        """
+        username = data.get("username", "")
         self.last_activity_ts = time.monotonic()
 
         session_id = self._session_ids.setdefault(username, str(uuid.uuid4()))
@@ -139,11 +272,25 @@ class Agent:
             self._session_loggers[session_id] = SessionLogger(session_id)
         self._current_session_logger = self._session_loggers[session_id]
 
-        if _langfuse_available and propagate_attributes:
-            with propagate_attributes(user_id=username, session_id=session_id):
+        # Snapshot AFTER the user message has been spliced in (that happened
+        # in `_flush_pending_inputs` before this task spawned). Truncating to
+        # this point on cancellation removes plan/memory/gameState injections
+        # and any partial assistant/tool blocks, but keeps the user message.
+        snapshot_len = len(self.messages)
+        try:
+            if _langfuse_available and propagate_attributes:
+                with propagate_attributes(user_id=username, session_id=session_id):
+                    await self._handle_chat_traced(data)
+            else:
                 await self._handle_chat_traced(data)
-        else:
-            await self._handle_chat_traced(data)
+        except asyncio.CancelledError:
+            # Trim back to a clean message history. Crucially, this leaves
+            # the user message that was added pre-snapshot — preserving
+            # user input across preemption, per design.
+            del self.messages[snapshot_len:]
+            await self._emit("conversation:update", self.messages)
+            self._slog("chat_preempted", reason="cancelled")
+            raise
 
     def _slog(self, event: str, **data: Any) -> None:
         """Emit to the current session logger (no-op if none is set)."""
@@ -159,11 +306,10 @@ class Agent:
 
         self._slog("chat_in", username=username, message=message)
 
-        # Append user message
-        self.messages.append({
-            "role": "user",
-            "content": f"{username}: {message}",
-        })
+        # NOTE: the user message is already in `self.messages` — appended by
+        # `_flush_pending_inputs` in the chat worker before this task spawned.
+        # That split lets a reflex preempt drop a turn without losing the
+        # user's words.
 
         # Inject synthetic plan + memory tool_use/tool_result pairs (fresh from
         # disk each turn). Both are chat-level; gameState refreshes per Claude
@@ -184,7 +330,11 @@ class Agent:
             # the latest injection.
             status_resp = await self.bridge.get_status()
             queue_status = self.queue.status()
-            game_state = format_game_state(status_resp.data, queue_status)
+            game_state = format_game_state(
+                status_resp.data,
+                queue_status,
+                recent_reflexes=list(self.reflexes.recent),
+            )
             self.last_injected_status = status_resp.data
             self._inject_gamestate(game_state, iteration)
             await self._emit("conversation:update", self.messages)

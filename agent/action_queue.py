@@ -51,9 +51,19 @@ class ActionQueue:
         self._callbacks: dict[str, list[EventCallback]] = {}
         self._drain_event: asyncio.Event = asyncio.Event()
         self._drain_event.set()  # starts drained (empty)
+        self._pre_interrupt: Callable[[], Coroutine[Any, Any, None]] | None = None
 
     def set_executor(self, executor: Executor) -> None:
         self._executor = executor
+
+    def set_pre_interrupt(self, fn: Callable[[], Coroutine[Any, Any, None]] | None) -> None:
+        """Register a coroutine to run *before* interrupt() cancels the worker.
+
+        Used to halt out-of-band machinery (e.g. Baritone) that wouldn't
+        otherwise cooperate with asyncio task cancellation. Failures are
+        swallowed so a flaky pre-hook can't block interrupt itself.
+        """
+        self._pre_interrupt = fn
 
     def on(self, event: str, callback: EventCallback) -> None:
         self._callbacks.setdefault(event, []).append(callback)
@@ -166,6 +176,11 @@ class ActionQueue:
 
     async def interrupt(self) -> None:
         """Cancel running action + clear all pending."""
+        if self._pre_interrupt is not None:
+            try:
+                await self._pre_interrupt()
+            except Exception:
+                pass
         await self.clear()
         if self._worker_task:
             self._worker_task.cancel()

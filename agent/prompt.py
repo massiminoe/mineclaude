@@ -155,6 +155,17 @@ return "Status check complete"
 ## Action Queue
 Your newAction code runs sequentially — by the time you pick your next tool, the previous newAction is done, and the latest queue state (running/pending/last) is already in your gameState. Actions have a 5-minute timeout.
 
+## Reflexes (the fast-path system)
+A separate fast-loop watches for hazards and reacts in milliseconds — faster than you can. When it fires, you'll see an entry under `=== Recent reflex events ===` in gameState, and often a `cancelled` action in the queue (the reflex preempted whatever you were doing).
+
+What each event means and what was done for you:
+- `damage_taken` from a hostile mob → automatic attack (HP > 6) or flee 10 blocks opposite (HP ≤ 6). From fall/fire/drowning damage → recorded only, no action taken.
+- `entered_lava` / `started_drowning` → Baritone was told to climb up and out. May or may not have succeeded — check your position and health.
+- `tool_broke` → your action was cancelled, nothing else done. You decide whether to re-equip and continue.
+- `exited_lava` / `stopped_drowning` → informational, you're out now.
+
+Don't redo what the reflex already did, but verify it worked (gameState shows current position/HP). If your action was cancelled by a preempt, the cancellation was the reflex, not you — don't apologize for it.
+
 ## Planning
 You have a persistent plan document at ./state/plan.md, injected at the start of every turn inside <plan_document> tags.
 
@@ -219,7 +230,11 @@ writeMemory replaces the whole file. To remove one entry, omit it from the new c
 - If a task fails, explain what went wrong and offer alternatives"""
 
 
-def format_game_state(status: dict[str, Any], queue_status: dict[str, Any]) -> str:
+def format_game_state(
+    status: dict[str, Any],
+    queue_status: dict[str, Any],
+    recent_reflexes: list[dict] | None = None,
+) -> str:
     """Format bridge status + queue status into a readable gameState string."""
     pos = status.get("position", {})
     inv = status.get("inventory", [])
@@ -244,6 +259,14 @@ def format_game_state(status: dict[str, Any], queue_status: dict[str, Any]) -> s
     if recent:
         last = recent[-1]
         lines.append(f"Last action: [{last['id']}] {last['status']} — {last.get('result') or last.get('error') or 'no output'}")
+
+    if recent_reflexes:
+        # Avoid the import at module load — keeps prompt.py free of agent
+        # internals when format_game_state is reused outside the loop.
+        from agent.reflexes import format_recent
+        rendered = format_recent(recent_reflexes)
+        if rendered:
+            lines.append(rendered)
 
     return "\n".join(lines)
 
