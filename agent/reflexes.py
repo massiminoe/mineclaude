@@ -217,9 +217,19 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
         if attacker_id is None:
             return
         try:
-            await agent.bridge.attack(str(attacker_id))
+            resp = await agent.bridge.attack(str(attacker_id))
         except Exception:
             logger.exception("retaliation attack failed")
+            return
+        if resp.status == "error":
+            # Bridge non-2xx responses don't raise — surface them so silent
+            # failures (entity despawned, navigation failed, matcher miss)
+            # don't masquerade as successful retaliation.
+            logger.warning("retaliation attack rejected: %s", resp.message)
+            try:
+                agent._slog("retaliation_failed", attacker_id=attacker_id, attacker_kind=attacker_kind, message=resp.message)
+            except Exception:
+                pass
 
 
 async def _escape_to_shore(agent: "Agent") -> None:
