@@ -8,13 +8,13 @@ import { SessionDetailView } from "./components/SessionDetail";
 import "./App.css";
 
 export default function App() {
-  const { conversation, queue, gameState, plan, memory, reflexes, connected } = useSocket();
+  const { conversation, queue, gameState, plan, memory, reflexes, usage, connected } = useSocket();
   const [hash, navigate] = useHashRoute();
   const route = parseRoute(hash);
 
   return (
     <div className="app">
-      <TopBar connected={connected} view={route.view} onNavigate={navigate} />
+      <TopBar connected={connected} view={route.view} onNavigate={navigate} usage={usage} />
       {route.view === "monitor" && (
         <div className="main-content">
           <VideoPane conversation={conversation} connected={connected} />

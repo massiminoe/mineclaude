@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { SessionSummary } from "../trace";
 import { formatBytes, formatDuration, formatTs } from "../trace";
+import { formatCost, formatTokens } from "./TopBar";
 
 interface Props {
   onOpen: (stem: string) => void;
@@ -68,6 +69,18 @@ export function SessionList({ onOpen }: Props) {
                 <span>{s.iteration_count} iter</span>
                 <span>{s.tool_call_count} tools</span>
                 {s.screenshot_count > 0 && <span>{s.screenshot_count} img</span>}
+                {s.usage && s.usage.calls > 0 && (
+                  <span
+                    className="session-row-cost"
+                    title={`${formatTokens(s.usage.input_tokens)} in · ${formatTokens(
+                      s.usage.output_tokens,
+                    )} out · ${formatTokens(s.usage.cache_creation_input_tokens)} cache write · ${formatTokens(
+                      s.usage.cache_read_input_tokens,
+                    )} cache read`}
+                  >
+                    {formatCost(s.usage.cost_usd)}
+                  </span>
+                )}
                 {s.belief_mismatch_count > 0 && (
                   <span className="trace-warn">{s.belief_mismatch_count} mismatch</span>
                 )}

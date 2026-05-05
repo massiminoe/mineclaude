@@ -13,6 +13,7 @@ from agent.action_queue import ActionQueue
 from agent.bridge import BridgeClient
 from agent.claude import ClaudeClient
 from agent.compaction import compact, needs_compaction
+from agent.pricing import accumulate as accumulate_usage, compute_cost, empty_totals
 from agent.primitives import make_primitives
 from agent.memory import read_memory, write_memory
 from agent.plan import read_plan, write_plan
@@ -101,6 +102,12 @@ class Agent:
             "stop": self._cmd_stop,
         }
 
+        # Running token + cost totals across every Claude API call this
+        # process makes (main loop + compaction). Surfaced via the monitor.
+        self.usage_totals: dict[str, Any] = empty_totals()
+        if self.claude is not None:
+            self.claude.on_usage = self._on_claude_usage
+
         # Reflex layer: dispatches mod-emitted events (damage, lava, drowning,
         # tool-broke) to handlers configured in agent/reflexes.py.
         self.reflexes = ReflexRegistry(self)
@@ -123,6 +130,23 @@ class Agent:
                 await cb(event, data)
             except Exception:
                 pass
+
+    async def _on_claude_usage(self, model: str, usage: dict[str, int]) -> None:
+        """Called by ClaudeClient after every API response.
+
+        Updates the running totals, logs the per-call entry to the session
+        log, and broadcasts the new totals to monitor subscribers.
+        """
+        cost = compute_cost(model, usage)
+        accumulate_usage(self.usage_totals, model, usage)
+        self._slog(
+            "claude_usage",
+            model=model,
+            usage=usage,
+            cost_usd=cost,
+            totals=self.usage_totals,
+        )
+        await self._emit("usage:update", self.usage_totals)
 
     async def start(self, *, handle_chat: bool = True) -> None:
         """Start the agent: queue worker + chat worker + event listener.

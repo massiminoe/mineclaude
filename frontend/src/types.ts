@@ -62,3 +62,13 @@ export interface ReflexEvent {
   data: Record<string, unknown>;
   ts: number;
 }
+
+export interface UsageTotals {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  cost_usd: number;
+  calls: number;
+  by_model?: Record<string, Omit<UsageTotals, "by_model">>;
+}

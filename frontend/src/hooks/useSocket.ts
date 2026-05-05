@@ -6,6 +6,7 @@ import type {
   ActionItem,
   SubActionItem,
   ReflexEvent,
+  UsageTotals,
 } from "../types";
 
 const RECONNECT_BASE = 1000;
@@ -24,6 +25,7 @@ export function useSocket() {
   const [plan, setPlan] = useState<string>("");
   const [memory, setMemory] = useState<string>("");
   const [reflexes, setReflexes] = useState<ReflexEvent[]>([]);
+  const [usage, setUsage] = useState<UsageTotals | null>(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<number>(0);
@@ -42,6 +44,7 @@ export function useSocket() {
         if (data.plan !== undefined) setPlan(data.plan ?? "");
         if (data.memory !== undefined) setMemory(data.memory ?? "");
         if (Array.isArray(data.reflexes)) setReflexes(data.reflexes);
+        if (data.usage) setUsage(data.usage as UsageTotals);
       })
       .catch(() => {
         // Likely a race with the monitor coming up — retry a few times
@@ -126,6 +129,9 @@ export function useSocket() {
           break;
         case "memory:update":
           setMemory((data.memory as string) ?? "");
+          break;
+        case "usage:update":
+          setUsage(data as unknown as UsageTotals);
           break;
         case "reflex:fired":
           // Dedupe against the REST snapshot fetched on (re)connect: if the
@@ -218,5 +224,5 @@ export function useSocket() {
     };
   }, [connect]);
 
-  return { conversation, queue, gameState, plan, memory, reflexes, connected };
+  return { conversation, queue, gameState, plan, memory, reflexes, usage, connected };
 }

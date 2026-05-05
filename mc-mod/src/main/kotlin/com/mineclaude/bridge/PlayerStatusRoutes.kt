@@ -81,13 +81,20 @@ object PlayerStatusRoutes {
             // the legacy bridge does, e.g. `oak_planks` not `minecraft:oak_planks`.
             val name = Registries.ITEM.getId(stack.item).path
             if ("air" in name) continue
-            result.add(
-                mapOf(
-                    "name" to name,
-                    "count" to stack.count,
-                    "slot" to slot,
-                )
+            val entry = mutableMapOf<String, Any>(
+                "name" to name,
+                "count" to stack.count,
+                "slot" to slot,
             )
+            // Tools/armor only — surface durability so the agent can
+            // budget tool runs (iron pickaxe ≈ 250, broken at remaining=0).
+            if (stack.isDamageable) {
+                entry["durability"] = mapOf(
+                    "remaining" to (stack.maxDamage - stack.damage),
+                    "max" to stack.maxDamage,
+                )
+            }
+            result.add(entry)
         }
         return result
     }

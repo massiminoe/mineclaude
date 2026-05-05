@@ -14,6 +14,7 @@ from aiohttp import web
 from agent.belief_check import diff_belief_vs_actual
 from agent.memory import read_memory
 from agent.plan import read_plan
+from agent.pricing import compute_cost
 from agent.session_log import DEFAULT_BASE_DIR as SESSIONS_DIR, IMAGES_DIRNAME
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,14 @@ def _summarize_session(path: Path) -> dict[str, Any]:
         "exception_count": 0,
         "first_user_message": None,
         "session_id": None,
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cost_usd": 0.0,
+            "calls": 0,
+        },
     }
     try:
         st = path.stat()
@@ -94,6 +103,28 @@ def _summarize_session(path: Path) -> dict[str, Any]:
                     summary["belief_mismatch_count"] += 1
                 elif ev == "exception":
                     summary["exception_count"] += 1
+                elif ev == "claude_usage":
+                    u = summary["usage"]
+                    raw = data.get("usage") or {}
+                    for k in (
+                        "input_tokens",
+                        "output_tokens",
+                        "cache_creation_input_tokens",
+                        "cache_read_input_tokens",
+                    ):
+                        v = raw.get(k)
+                        if isinstance(v, (int, float)):
+                            u[k] += int(v)
+                    cost = data.get("cost_usd")
+                    if isinstance(cost, (int, float)):
+                        u["cost_usd"] += float(cost)
+                    else:
+                        # Older logs (pre-pricing rollout) won't have cost_usd
+                        # — fall back to recomputing from model+usage.
+                        m = data.get("model")
+                        if isinstance(m, str) and isinstance(raw, dict):
+                            u["cost_usd"] += compute_cost(m, raw)
+                    u["calls"] += 1
         summary["started_at"] = first_ts
         summary["ended_at"] = last_ts
     except Exception as e:
@@ -138,6 +169,7 @@ class MonitorServer:
         self.agent.on("plan:update", self._on_plan_update)
         self.agent.on("memory:update", self._on_memory_update)
         self.agent.on("reflex:fired", self._on_reflex_fired)
+        self.agent.on("usage:update", self._on_usage_update)
         self.agent.queue.on("action:enqueued", self._on_action_event)
         self.agent.queue.on("action:started", self._on_action_event)
         self.agent.queue.on("action:completed", self._on_action_event)
@@ -167,6 +199,7 @@ class MonitorServer:
             "plan": read_plan(),
             "memory": read_memory(),
             "reflexes": reflexes,
+            "usage": getattr(self.agent, "usage_totals", None),
             "video_url": f"{video_base}/video/stream?fps=10&quality=50" if video_base else None,
         })
 
@@ -300,6 +333,9 @@ class MonitorServer:
     async def _on_reflex_fired(self, event: str, entry: Any) -> None:
         # entry is the dict pushed onto reflexes.recent: {type, data, ts}.
         await self._broadcast("reflex:fired", entry if isinstance(entry, dict) else {})
+
+    async def _on_usage_update(self, event: str, totals: Any) -> None:
+        await self._broadcast("usage:update", totals if isinstance(totals, dict) else {})
 
     async def _on_action_event(self, event: str, action: Any, *_extra: Any) -> None:
         await self._broadcast(event.replace(":", "_"), {

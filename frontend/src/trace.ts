@@ -14,6 +14,16 @@ export interface SessionSummary {
   exception_count: number;
   first_user_message: string | null;
   session_id: string | null;
+  usage?: SessionUsage;
+}
+
+export interface SessionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  cost_usd: number;
+  calls: number;
 }
 
 export interface TraceEvent {
@@ -49,6 +59,7 @@ export interface Iteration {
   toolCalls: ToolCall[];
   // Belief mismatches / exceptions / subactions that happened during this iteration.
   sideEvents: TraceEvent[];
+  usage: TraceEvent | null;
 }
 
 export interface Turn {
@@ -79,6 +90,7 @@ export function buildTimeline(events: TraceEvent[]): SessionTimeline {
     response: null,
     toolCalls: [],
     sideEvents: [],
+    usage: null,
   });
 
   for (const ev of events) {
@@ -116,6 +128,19 @@ export function buildTimeline(events: TraceEvent[]): SessionTimeline {
         currentIter.response = ev;
       } else {
         current.loose.push(ev);
+      }
+      continue;
+    }
+    if (ev.event === "claude_usage") {
+      // claude_usage fires immediately after claude_response for the
+      // main-loop call; also fires during compaction (no surrounding
+      // request/response, so it falls through to loose).
+      if (currentIter) {
+        currentIter.usage = ev;
+      } else if (current) {
+        current.loose.push(ev);
+      } else {
+        preamble.push(ev);
       }
       continue;
     }

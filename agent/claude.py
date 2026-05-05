@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import anthropic
+
+from agent.pricing import usage_to_dict
+
+UsageCallback = Callable[[str, dict[str, int]], Awaitable[None]]
 
 try:
     from langfuse import observe
@@ -112,6 +116,19 @@ class ClaudeClient:
     def __init__(self, model: str = "claude-sonnet-4-6", api_key: str | None = None):
         self.model = model
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        # Set by Agent so every API call's token usage flows back into running
+        # totals + session log + monitor broadcast. Both send() and send_raw()
+        # pass the actual model used (send_raw can override per-call).
+        self.on_usage: UsageCallback | None = None
+
+    async def _emit_usage(self, model: str, response: anthropic.types.Message) -> None:
+        if self.on_usage is None:
+            return
+        try:
+            await self.on_usage(model, usage_to_dict(getattr(response, "usage", None)))
+        except Exception:
+            # Usage tracking must never break the agent loop.
+            pass
 
     @observe(as_type="generation")
     async def send(
@@ -120,7 +137,7 @@ class ClaudeClient:
         messages: list[dict[str, Any]],
         max_tokens: int = 4096,
     ) -> anthropic.types.Message:
-        return await self._client.messages.create(
+        response = await self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
             system=[
@@ -133,6 +150,8 @@ class ClaudeClient:
             tools=TOOLS,
             messages=messages,
         )
+        await self._emit_usage(self.model, response)
+        return response
 
     @observe(as_type="generation")
     async def send_raw(
@@ -151,13 +170,16 @@ class ClaudeClient:
         `model` to override the client's default model for this call (e.g.
         compaction running on a cheaper model than the main loop).
         """
-        return await self._client.messages.create(
-            model=model or self.model,
+        used_model = model or self.model
+        response = await self._client.messages.create(
+            model=used_model,
             max_tokens=max_tokens,
             system=system,
             tools=tools or [],
             messages=messages,
         )
+        await self._emit_usage(used_model, response)
+        return response
 
     async def close(self) -> None:
         await self._client.close()

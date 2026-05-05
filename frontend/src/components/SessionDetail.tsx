@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Iteration, SessionDetail, ToolCall, TraceEvent, Turn } from "../trace";
 import { buildTimeline, formatDuration, formatTs } from "../trace";
 import { JsonView } from "./JsonView";
+import { formatCost, formatTokens } from "./TopBar";
 
 interface Props {
   stem: string;
@@ -53,6 +54,20 @@ export function SessionDetailView({ stem, onBack }: Props) {
             {formatTs(summary.started_at)} · {duration} · {timeline.turns.length} turns ·{" "}
             {summary.iteration_count} iterations · {summary.tool_call_count} tools
             {summary.screenshot_count > 0 && ` · ${summary.screenshot_count} screenshots`}
+            {summary.usage && summary.usage.calls > 0 && (
+              <>
+                {" · "}
+                <span
+                  title={`${formatTokens(summary.usage.input_tokens)} in · ${formatTokens(
+                    summary.usage.output_tokens,
+                  )} out · ${formatTokens(summary.usage.cache_creation_input_tokens)} cache write · ${formatTokens(
+                    summary.usage.cache_read_input_tokens,
+                  )} cache read · ${summary.usage.calls} calls`}
+                >
+                  {formatCost(summary.usage.cost_usd)}
+                </span>
+              </>
+            )}
             {summary.belief_mismatch_count > 0 && (
               <span className="trace-warn"> · {summary.belief_mismatch_count} belief mismatches</span>
             )}
@@ -142,6 +157,18 @@ function IterationView({ iter, stem }: { iter: Iteration; stem: string }) {
     (iter.response?.data?.blocks as Array<{ type: string; text?: string | null; tool_name?: string | null; tool_input?: unknown }>) ??
     [];
   const stopReason = (iter.response?.data as { stop_reason?: string } | undefined)?.stop_reason;
+  const usage = iter.usage?.data as
+    | {
+        cost_usd?: number;
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_creation_input_tokens?: number;
+          cache_read_input_tokens?: number;
+        };
+      }
+    | undefined;
+  const u = usage?.usage;
 
   return (
     <div className="iteration-card">
@@ -152,6 +179,18 @@ function IterationView({ iter, stem }: { iter: Iteration; stem: string }) {
         <span className="iteration-tool-count">
           {iter.toolCalls.length} tool{iter.toolCalls.length === 1 ? "" : "s"}
         </span>
+        {u && typeof usage?.cost_usd === "number" && (
+          <span
+            className="iteration-cost"
+            title={`${formatTokens(u.input_tokens ?? 0)} in · ${formatTokens(
+              u.output_tokens ?? 0,
+            )} out · ${formatTokens(u.cache_creation_input_tokens ?? 0)} cache write · ${formatTokens(
+              u.cache_read_input_tokens ?? 0,
+            )} cache read`}
+          >
+            {formatCost(usage.cost_usd)}
+          </span>
+        )}
       </button>
       {open && (
         <div className="iteration-body">
