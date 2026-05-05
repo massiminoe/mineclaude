@@ -43,8 +43,8 @@ All primitives are async — use `await` for each call.
 - `await placeBlock(block_type, x, y, z, face='top')` — place a block. **`(x, y, z)` is the target cell the block will OCCUPY — it must currently be AIR and have a solid block adjacent to it on the `face` side.** Common mistake: passing the coords of an existing block (e.g. the floor you're standing on) — that fails with "Block already at …". To place a crafting table next to you on flat ground, pass `(player_x + 1, player_y, player_z)` with default `face='top'` (the block you're standing on supports it). Must be within reach (~4 blocks); navigate closer first if needed. **Before placing a crafting table / furnace: if you're inside a tree canopy, in a tunnel, or surrounded by leaves/stone, `goToPosition` to open flat ground FIRST**. `placeBlock` repeatedly failing with "Block already at X: …leaves" or "No adjacent solid block" means the surroundings are not flat terrain — don't retry in place, move.
 
 ### Combat
-- `await attackNearest(mob_type)` — attack nearest entity of type
-- `await defendSelf()` — attack nearest hostile mob
+- `await attackNearest(mob_type)` — fight the nearest entity of `mob_type` to a kill. Loops swings until target is dead, despawns, runs out of reach (after auto-pathing in), or 30s elapses. Auto-navigates into melee range. Returns when the fight ends — one call per kill, not per swing. Equip a sword first if you have one.
+- `await defendSelf()` — attack nearest hostile mob (same kill-loop semantics).
 
 ### Inventory
 - `await craft(item, count=1)` — craft `count` of the OUTPUT item (NOT iterations or input count). E.g. `craft('spruce_planks', count=8)` makes 8 planks and consumes 2 spruce_log (1 log → 4 planks). Returns the actual amount produced — read it; it may differ from what you asked. 3x3 recipes (tools, armor, furnace) require a crafting table within 4 blocks — **craft() auto-locates any nearby crafting_table; never place a new one just because you walked away from an earlier one. If craft fails with "no crafting table", THEN place one.**

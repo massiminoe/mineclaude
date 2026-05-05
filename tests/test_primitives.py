@@ -305,3 +305,50 @@ async def test_sleep(prims):
     await prims["sleep"](0.05)
     elapsed = time.monotonic() - start
     assert elapsed >= 0.04
+
+
+@pytest.mark.asyncio
+async def test_attack_loops_to_kill(bridge):
+    """Mock bridge mirrors the real /attack: loop swings until the target
+    is dead, then return killed + swing count."""
+    bridge._nearby_entities.append({
+        "name": "pig", "type": "pig", "x": 1, "y": 64, "z": 1, "distance": 1.4, "health": 10,
+    })
+    resp = await bridge.attack("pig")
+    assert resp.status == "success"
+    assert resp.data["reason"] == "killed"
+    assert resp.data["swings"] == 2  # 10 hp / 5-per-swing
+    assert resp.data["attacked"] is True
+    # Entity removed after kill.
+    assert all(e["name"] != "pig" for e in bridge._nearby_entities)
+
+
+@pytest.mark.asyncio
+async def test_attack_not_found_returns_error(bridge):
+    resp = await bridge.attack("nonexistent_mob")
+    assert resp.status == "error"
+    assert resp.data["reason"] == "not_found"
+    assert resp.data["swings"] == 0
+
+
+@pytest.mark.asyncio
+async def test_attack_stop_cancels_in_flight_loop(bridge):
+    """attack_stop sets the cancel flag; an in-flight attack returns
+    cancelled at the next loop boundary. Swing count depends on how many
+    iterations completed before the stop landed — could be 0 if the cancel
+    arrives before the first swing tick."""
+    bridge._nearby_entities.append({
+        "name": "iron_golem", "type": "iron_golem", "x": 1, "y": 64, "z": 1,
+        "distance": 1.4, "health": 100,
+    })
+    import asyncio as _asyncio
+    task = _asyncio.create_task(bridge.attack("iron_golem"))
+    # Yield enough for at least one swing to land before cancel.
+    for _ in range(3):
+        await _asyncio.sleep(0)
+    stop_resp = await bridge.attack_stop()
+    assert stop_resp.data["cancelled"] is True
+    resp = await task
+    assert resp.data["reason"] == "cancelled"
+    # Golem still alive (health 100, 5/swing → ≤20 swings) → not killed.
+    assert resp.data["swings"] < 20

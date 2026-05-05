@@ -142,8 +142,19 @@ class Agent:
             await self.reflexes.dispatch(event_type, event.get("data") or {})
 
     async def _pre_interrupt_stop_bridge(self) -> None:
-        """Pre-interrupt hook: halt Baritone before worker cancellation."""
-        await self.bridge.stop()
+        """Pre-interrupt hook: halt Baritone *and* any in-flight /attack loop
+        before worker cancellation. Both are fire-and-forget effects on the
+        bridge — preemption must reach into bridge-side state, not just
+        local-side awaiters, or a preempted reflex would still be swinging
+        in the background while the new reflex (e.g. flee) tries to path."""
+        try:
+            await self.bridge.stop()
+        except Exception:
+            logger.exception("bridge.stop in preempt failed")
+        try:
+            await self.bridge.attack_stop()
+        except Exception:
+            logger.exception("bridge.attack_stop in preempt failed")
 
     async def _preempt(self) -> None:
         """Halt everything in flight without erasing user input.

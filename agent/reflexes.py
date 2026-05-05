@@ -14,10 +14,19 @@ cancels the running newAction, and cancels any in-flight Claude
 iteration. Handlers that decide preemption conditionally (e.g.
 damage_taken, which only acts on hostile-mob hits) register with
 `preempts=False` and call `agent._preempt()` themselves.
+
+Latest-wins: handlers run as their own asyncio.Tasks. When a new reflex
+fires, the registry cancels any in-flight prior handler before running
+the new one. The rule is "the reaction to the latest event preempts
+the reaction to the prior event" — flee should interrupt retaliation
+in progress, lava-escape should interrupt flee, and so on. Without
+this, a long-running handler (notably the looping /attack call) would
+be insulated from later, more urgent reflexes.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
@@ -68,7 +77,40 @@ SHORE_MAX_DISTANCE = 12
 SHORE_MAX_Y_DELTA = 4
 
 
+# Weapon priority for damage_taken retaliation. Sword tier first (highest DPS
+# under the looping /attack — sword has 1.6 atk/sec vs axe's 1.0, so sword
+# wins for sustained combat even though axes hit harder per-swing). Within a
+# class, descend by material tier. Anything not on this list is considered
+# bare-handed for the purposes of the equip step.
+WEAPON_PRIORITY: tuple[str, ...] = (
+    "netherite_sword", "diamond_sword", "iron_sword",
+    "stone_sword", "golden_sword", "wooden_sword",
+    "netherite_axe", "diamond_axe", "iron_axe",
+    "stone_axe", "golden_axe", "wooden_axe",
+)
+
+
 HandlerFn = Callable[["Agent", dict], Coroutine[Any, Any, None]]
+
+
+def pick_best_weapon(inventory: list[dict]) -> str | None:
+    """Return the best-tier weapon name in inventory, or None.
+
+    Inventory entries follow the bridge wire format: dicts with `name`
+    and `count`. Strips the `minecraft:` prefix to be consistent with how
+    the rest of the agent handles registry paths.
+    """
+    have: set[str] = set()
+    for entry in inventory:
+        if entry.get("count", 0) <= 0:
+            continue
+        name = (entry.get("name") or "").removeprefix("minecraft:")
+        if name:
+            have.add(name)
+    for w in WEAPON_PRIORITY:
+        if w in have:
+            return w
+    return None
 
 
 @dataclass
@@ -88,12 +130,23 @@ async def stub_handler(agent: "Agent", data: dict) -> None:
 class ReflexRegistry:
     """Dispatches mod-emitted reflex events to handlers.
 
-    The registry owns three pieces of cross-cutting state:
+    The registry owns four pieces of cross-cutting state:
       * the handler table (event_type → ReflexHandler)
       * the `recent` buffer of the last N fires for gameState rendering
       * `last_fire_ts`, used by the monitor's belief check to apply a
         grace window after a reflex (handler may have mutated state
         without Claude knowing).
+      * `_active_handler_task`, the currently-running handler. A new
+        dispatch cancels this before spawning the new handler — the
+        latest reflex preempts the prior reflex's reaction.
+
+    `dispatch` is non-blocking with respect to the handler body: it
+    spawns the handler as a task and returns. Tests use `flush()` to
+    await the in-flight handler. Production callers (the events WS
+    consumer) MUST NOT await the handler from inside dispatch — that
+    would re-block the consumer on a long-running reflex (notably the
+    looping /attack call from damage_taken) and stop later events from
+    arriving.
     """
 
     def __init__(self, agent: "Agent"):
@@ -101,6 +154,7 @@ class ReflexRegistry:
         self.recent: deque[dict] = deque(maxlen=RECENT_MAXLEN)
         self._handlers: dict[str, ReflexHandler] = {}
         self.last_fire_ts: float = 0.0
+        self._active_handler_task: asyncio.Task | None = None
 
     def register(self, handler: ReflexHandler) -> None:
         self._handlers[handler.event_type] = handler
@@ -134,16 +188,53 @@ class ReflexRegistry:
         except Exception:
             logger.exception("reflex emit failed")
 
+        # Latest-wins: cancel any prior handler before this one runs. A
+        # long-running handler (looping /attack, /goto pathing) must yield
+        # to a newer reflex regardless of whether the new handler issues
+        # its own _preempt(). Awaiting the cancel ensures the prior task
+        # has actually unwound before we start the new handler — otherwise
+        # the new handler's bridge calls could race the old one's.
+        prior = self._active_handler_task
+        if prior is not None and not prior.done():
+            prior.cancel()
+            try:
+                await prior
+            except (asyncio.CancelledError, Exception):
+                pass
+
         if handler.preempts:
             try:
                 await self.agent._preempt()
             except Exception:
                 logger.exception("reflex preempt failed")
 
+        # Spawn the handler. We do NOT await it — the events consumer
+        # must stay responsive to subsequent events (notably so a more
+        # urgent reflex can cancel us via the prior-task cancel above).
+        self._active_handler_task = asyncio.create_task(
+            self._run_handler(handler, data),
+            name=f"reflex_handler:{event_type}",
+        )
+
+    async def _run_handler(self, handler: ReflexHandler, data: dict) -> None:
         try:
             await handler.handle(self.agent, data)
+        except asyncio.CancelledError:
+            # Cancelled by a newer reflex (or shutdown). Propagate so the
+            # task's done state reflects the cancellation — `prior.cancel()
+            # + await prior` upstream relies on this.
+            raise
         except Exception:
-            logger.exception(f"reflex handler {event_type} raised")
+            logger.exception(f"reflex handler {handler.event_type} raised")
+
+    async def flush(self) -> None:
+        """Test helper: await any in-flight handler. No-op in production."""
+        task = self._active_handler_task
+        if task is not None and not task.done():
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 # Event type names — the wire shape from the mod. Kept here so callers can
@@ -170,10 +261,11 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
 
     Hostile mob attacker:
       * post-hit HP ≤ LOW_HP_THRESHOLD → flee 10 blocks opposite the attacker
-      * otherwise → attack the attacker by entity id
+      * otherwise → equip the best weapon we have, then attack the
+        attacker by entity id (the bridge loops swings until kill)
 
     In both action branches we preempt first (cancel any in-flight nav /
-    Claude turn), then issue the bridge call ourselves.
+    Claude turn / prior /attack loop), then issue the bridge call ourselves.
     """
     attacker_kind = data.get("attacker_kind")
     if not attacker_kind:
@@ -213,23 +305,39 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
             await agent.bridge.goto(fx, py, fz)
         except Exception:
             logger.exception("flee goto failed")
-    else:
-        if attacker_id is None:
-            return
-        try:
-            resp = await agent.bridge.attack(str(attacker_id))
-        except Exception:
-            logger.exception("retaliation attack failed")
-            return
-        if resp.status == "error":
-            # Bridge non-2xx responses don't raise — surface them so silent
-            # failures (entity despawned, navigation failed, matcher miss)
-            # don't masquerade as successful retaliation.
-            logger.warning("retaliation attack rejected: %s", resp.message)
+        return
+
+    if attacker_id is None:
+        return
+
+    # Best-effort weapon equip. Skip if status fetch or equip fails — we'd
+    # rather retaliate bare-handed than do nothing, and bridge.equip is
+    # idempotent (held weapon → cheap re-verify, no swap).
+    try:
+        status = (await agent.bridge.get_status()).data
+        weapon = pick_best_weapon(status.get("inventory") or [])
+        if weapon is not None:
             try:
-                agent._slog("retaliation_failed", attacker_id=attacker_id, attacker_kind=attacker_kind, message=resp.message)
+                await agent.bridge.equip(weapon)
             except Exception:
-                pass
+                logger.exception("retaliation equip failed")
+    except Exception:
+        logger.exception("retaliation status fetch failed")
+
+    try:
+        resp = await agent.bridge.attack(str(attacker_id))
+    except Exception:
+        logger.exception("retaliation attack failed")
+        return
+    if resp.status == "error":
+        # Bridge non-2xx responses don't raise — surface them so silent
+        # failures (entity despawned, navigation failed, matcher miss)
+        # don't masquerade as successful retaliation.
+        logger.warning("retaliation attack rejected: %s", resp.message)
+        try:
+            agent._slog("retaliation_failed", attacker_id=attacker_id, attacker_kind=attacker_kind, message=resp.message)
+        except Exception:
+            pass
 
 
 async def _escape_to_shore(agent: "Agent") -> None:
@@ -289,7 +397,19 @@ async def entered_lava_handler(agent: "Agent", data: dict) -> None:
 
 
 async def started_drowning_handler(agent: "Agent", data: dict) -> None:
-    """Find shore and walk there. Preempt has already fired."""
+    """Surface, then find shore and walk there. Preempt has already fired.
+
+    The /surface call is a workaround for a Baritone limitation: from a
+    fully-submerged start position, `#goto` instantly fails (PathNode map
+    size: 1) and the bot floats in place until our stall detection bails.
+    Holding forward+jump+sprint via vanilla input keys gets the player to
+    the surface, after which Baritone can path normally to the shore tile
+    selected below.
+    """
+    try:
+        await agent.bridge.surface()
+    except Exception:
+        logger.exception("surface failed during drowning escape")
     await _escape_to_shore(agent)
 
 

@@ -48,6 +48,10 @@ class MineclaudeBridgeClient : ClientModInitializer {
         MovementRoutes.register(bridge)
         GotoRoute.register(bridge)
         CollectRoute.register(bridge)
+        // Direct-input swim-up. Used by the drowning reflex to surface the
+        // player before handing off to Baritone — Baritone can't path from
+        // a fully submerged start (PathNode map size: 1 → instant give-up).
+        SurfaceRoute.register(bridge)
         // Phase 7 vision — /screenshot and /video/stream. Both shell out
         // to ffmpeg x11grab from `:99` — the same approach as the legacy
         // bridge, because NativeImage.writeTo() produces 0-byte PNGs on

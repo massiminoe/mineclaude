@@ -35,6 +35,7 @@ class BridgeClient(Protocol):
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def collect(self, radius: float = 3) -> BridgeResponse: ...
     async def attack(self, entity_id: str) -> BridgeResponse: ...
+    async def attack_stop(self) -> BridgeResponse: ...
     async def craft(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def furnace_load(
         self,
@@ -61,6 +62,7 @@ class BridgeClient(Protocol):
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse: ...
     async def discard(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
+    async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
     async def screenshot(self) -> BridgeResponse: ...
     async def events(self, callback) -> None: ...
     async def close(self) -> None: ...
@@ -137,6 +139,9 @@ class RealBridgeClient:
     async def attack(self, entity_id: str) -> BridgeResponse:
         return self._parse(await self._http.post("/attack", json={"entity_id": entity_id}))
 
+    async def attack_stop(self) -> BridgeResponse:
+        return self._parse(await self._http.post("/attack/stop"))
+
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
         return self._parse(await self._http.post("/craft", json={"item": item, "count": count}))
 
@@ -190,6 +195,9 @@ class RealBridgeClient:
 
     async def chat(self, message: str) -> BridgeResponse:
         return self._parse(await self._http.post("/chat", json={"message": message}))
+
+    async def surface(self, timeout: float = 2.0) -> BridgeResponse:
+        return self._parse(await self._http.post("/surface", json={"timeout": timeout}))
 
     async def screenshot(self) -> BridgeResponse:
         return self._parse(await self._http.get("/screenshot", params={"format": "jpeg", "quality": "80"}))
@@ -332,11 +340,54 @@ class MockBridgeClient:
         return BridgeResponse("success", msg, {"collected": count})
 
     async def attack(self, entity_id: str) -> BridgeResponse:
-        for e in self._nearby_entities:
-            if e["name"] == entity_id:
-                e["health"] = max(0, e["health"] - 5)
-                return BridgeResponse("success", f"Attacked {entity_id}")
-        return BridgeResponse("error", f"Entity {entity_id} not found")
+        # Loop swings until the target is dead, despawns, or `attack_stop`
+        # is called — mirrors the real bridge's looping /attack so
+        # MOCK_BRIDGE=1 exercises the same agent contract.
+        self._attack_cancelled = False
+        swings = 0
+        max_swings = 100  # safety bound so a stuck mock can't spin forever
+        while swings < max_swings:
+            await asyncio.sleep(0)
+            if self._attack_cancelled:
+                return BridgeResponse(
+                    "success", f"Attack cancelled after {swings} swings",
+                    {"attacked": swings > 0, "swings": swings, "reason": "cancelled", "method": "simulated"},
+                )
+            target = next(
+                (e for e in self._nearby_entities if e["name"] == entity_id or str(e.get("id", "")) == entity_id),
+                None,
+            )
+            if target is None:
+                if swings == 0:
+                    return BridgeResponse(
+                        "error", f"Entity {entity_id} not found",
+                        {"attacked": False, "swings": 0, "reason": "not_found", "method": "simulated"},
+                    )
+                return BridgeResponse(
+                    "error", f"Target {entity_id} despawned after {swings} swings",
+                    {"attacked": True, "swings": swings, "reason": "despawned", "method": "simulated"},
+                )
+            target["health"] = max(0, target.get("health", 5) - 5)
+            swings += 1
+            if target["health"] <= 0:
+                self._nearby_entities.remove(target)
+                return BridgeResponse(
+                    "success", f"Killed {entity_id} in {swings} swings",
+                    {"attacked": True, "swings": swings, "reason": "killed", "method": "simulated"},
+                )
+        return BridgeResponse(
+            "error", f"Attack timed out after {swings} swings",
+            {"attacked": True, "swings": swings, "reason": "timeout", "method": "simulated"},
+        )
+
+    async def attack_stop(self) -> BridgeResponse:
+        was_running = not getattr(self, "_attack_cancelled", True)
+        self._attack_cancelled = True
+        return BridgeResponse(
+            "success",
+            "Attack cancelled" if was_running else "No attack in progress",
+            {"cancelled": was_running},
+        )
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
         from agent.recipes import get_recipe, get_required_ingredients, resolve_ingredients
@@ -528,6 +579,9 @@ class MockBridgeClient:
     async def chat(self, message: str) -> BridgeResponse:
         self._chat_log.append(message)
         return BridgeResponse("success", f"Sent: {message}")
+
+    async def surface(self, timeout: float = 2.0) -> BridgeResponse:
+        return BridgeResponse("success", "Surfaced", {"surfaced": True, "ticks": 0})
 
     async def screenshot(self) -> BridgeResponse:
         import base64

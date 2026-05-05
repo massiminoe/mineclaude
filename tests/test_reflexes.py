@@ -20,11 +20,13 @@ from agent.bridge import BridgeResponse
 from agent.prompt import format_game_state
 from agent.reflexes import (
     REFLEX_EVENT_TYPES,
+    WEAPON_PRIORITY,
     ReflexHandler,
     ReflexRegistry,
     damage_taken_handler,
     entered_lava_handler,
     format_recent,
+    pick_best_weapon,
     register_default_handlers,
     started_drowning_handler,
     stub_handler,
@@ -42,8 +44,13 @@ class _FakeBridge:
         self._blocks = blocks or []
         self.goto_calls: list[tuple[float, float, float]] = []
         self.attack_calls: list[str] = []
+        self.attack_blocking = False  # if True, attack() blocks forever (test cancellation)
+        self.attack_stop_calls = 0
+        self.equip_calls: list[str] = []
         self.stop_calls = 0
+        self.surface_calls = 0
         self.nearby_blocks_radii: list[int] = []
+        self.call_order: list[str] = []
 
     async def get_status(self) -> BridgeResponse:
         return BridgeResponse("success", "ok", dict(self._status))
@@ -56,15 +63,33 @@ class _FakeBridge:
 
     async def goto(self, x, y, z):
         self.goto_calls.append((x, y, z))
+        self.call_order.append("goto")
         return BridgeResponse("success", "ok", {})
 
     async def attack(self, entity_id):
         self.attack_calls.append(entity_id)
+        self.call_order.append("attack")
+        if self.attack_blocking:
+            await asyncio.Event().wait()  # never resolves; awaits cancellation
         return BridgeResponse("success", "ok", {})
+
+    async def attack_stop(self):
+        self.attack_stop_calls += 1
+        return BridgeResponse("success", "ok", {})
+
+    async def equip(self, item, slot="hand"):
+        self.equip_calls.append(item)
+        self.call_order.append(f"equip:{item}")
+        return BridgeResponse("success", f"Equipped {item}", {"equipped": True})
 
     async def stop(self):
         self.stop_calls += 1
         return BridgeResponse("success", "ok", {})
+
+    async def surface(self, timeout: float = 2.0):
+        self.surface_calls += 1
+        self.call_order.append("surface")
+        return BridgeResponse("success", "ok", {"surfaced": True, "ticks": 0})
 
 
 def _block(name: str, x: int, y: int, z: int, distance: float = 1.0) -> dict:
@@ -118,6 +143,7 @@ async def test_dispatch_records_to_recent_buffer_and_slog():
     reg.register(ReflexHandler(event_type="damage_taken", handle=stub_handler))
 
     await reg.dispatch("damage_taken", {"amount": 3.0})
+    await reg.flush()
     assert len(reg.recent) == 1
     entry = reg.recent[0]
     assert entry["type"] == "damage_taken"
@@ -171,7 +197,15 @@ async def test_dispatch_handler_exception_does_not_propagate():
 
     reg.register(ReflexHandler(event_type="damage_taken", handle=bad_handler))
     await reg.dispatch("damage_taken", {})
+    await reg.flush()  # the exception happens inside the spawned task
     assert len(reg.recent) == 1
+    # Subsequent dispatch must still work — the registry's _active_handler_task
+    # being in a failed state shouldn't poison the next dispatch's cancel-prior
+    # step.
+    reg.register(ReflexHandler(event_type="entered_lava", handle=stub_handler))
+    await reg.dispatch("entered_lava", {})
+    await reg.flush()
+    assert len(reg.recent) == 2
 
 
 async def test_recent_buffer_capped():
@@ -293,6 +327,199 @@ async def test_damage_taken_high_hp_no_attacker_id_no_attack():
     assert agent.bridge.attack_calls == []
 
 
+async def test_damage_taken_high_hp_equips_best_weapon_before_attack():
+    """When retaliating, scan inventory and equip the best weapon, then
+    attack. The equip must happen before the attack call so the bridge
+    swing uses the right item."""
+    bridge = _FakeBridge({
+        "position": {"x": 10.0, "y": 64.0, "z": 5.0},
+        "inventory": [
+            {"name": "wooden_sword", "count": 1},
+            {"name": "iron_sword", "count": 1},  # best available
+            {"name": "stone_axe", "count": 1},
+        ],
+    })
+    agent = FakeAgent(bridge)
+    await damage_taken_handler(agent, {
+        "attacker_kind": "zombie",
+        "attacker_id": 42,
+        "attacker_pos": {"x": 12.0, "y": 64.0, "z": 5.0},
+        "amount": 2.0,
+        "hp_before": 18.0,
+    })
+    assert bridge.equip_calls == ["iron_sword"]
+    assert bridge.attack_calls == ["42"]
+    # Equip happens before attack — verify call order.
+    assert bridge.call_order.index("equip:iron_sword") < bridge.call_order.index("attack")
+
+
+async def test_damage_taken_high_hp_no_weapon_retaliates_bare_handed():
+    """No weapon in inventory → skip equip, still retaliate."""
+    bridge = _FakeBridge({
+        "position": {"x": 10.0, "y": 64.0, "z": 5.0},
+        "inventory": [{"name": "dirt", "count": 64}],
+    })
+    agent = FakeAgent(bridge)
+    await damage_taken_handler(agent, {
+        "attacker_kind": "zombie",
+        "attacker_id": 42,
+        "attacker_pos": {"x": 12.0, "y": 64.0, "z": 5.0},
+        "amount": 2.0,
+        "hp_before": 18.0,
+    })
+    assert bridge.equip_calls == []
+    assert bridge.attack_calls == ["42"]
+
+
+async def test_damage_taken_high_hp_equip_failure_still_retaliates():
+    """Equip raising must not block retaliation — bare-handed beats nothing."""
+    class _BoomEquipBridge(_FakeBridge):
+        async def equip(self, item, slot="hand"):
+            raise RuntimeError("equip failed")
+
+    bridge = _BoomEquipBridge({
+        "position": {"x": 10.0, "y": 64.0, "z": 5.0},
+        "inventory": [{"name": "iron_sword", "count": 1}],
+    })
+    agent = FakeAgent(bridge)
+    await damage_taken_handler(agent, {
+        "attacker_kind": "zombie",
+        "attacker_id": 42,
+        "attacker_pos": {"x": 12.0, "y": 64.0, "z": 5.0},
+        "amount": 2.0,
+        "hp_before": 18.0,
+    })
+    assert bridge.attack_calls == ["42"]
+
+
+def test_pick_best_weapon_picks_highest_tier_sword():
+    inv = [
+        {"name": "wooden_sword", "count": 1},
+        {"name": "diamond_sword", "count": 1},
+        {"name": "iron_sword", "count": 1},
+    ]
+    assert pick_best_weapon(inv) == "diamond_sword"
+
+
+def test_pick_best_weapon_falls_back_to_axe_when_no_sword():
+    inv = [{"name": "stone_axe", "count": 1}, {"name": "iron_axe", "count": 1}]
+    assert pick_best_weapon(inv) == "iron_axe"
+
+
+def test_pick_best_weapon_prefers_any_sword_over_any_axe():
+    inv = [{"name": "netherite_axe", "count": 1}, {"name": "wooden_sword", "count": 1}]
+    # Sword tier sorts above axe tier — sustained DPS via 1.6 atk/sec wins
+    # over per-swing damage in a looping fight.
+    assert pick_best_weapon(inv) == "wooden_sword"
+
+
+def test_pick_best_weapon_strips_minecraft_prefix():
+    inv = [{"name": "minecraft:iron_sword", "count": 1}]
+    assert pick_best_weapon(inv) == "iron_sword"
+
+
+def test_pick_best_weapon_ignores_zero_count_entries():
+    inv = [{"name": "diamond_sword", "count": 0}, {"name": "iron_sword", "count": 1}]
+    assert pick_best_weapon(inv) == "iron_sword"
+
+
+def test_pick_best_weapon_returns_none_for_no_weapons():
+    assert pick_best_weapon([{"name": "dirt", "count": 64}]) is None
+    assert pick_best_weapon([]) is None
+
+
+def test_weapon_priority_is_complete_sword_then_axe_descending():
+    """Pin the order so future edits don't accidentally reshuffle tiers."""
+    assert WEAPON_PRIORITY[:6] == (
+        "netherite_sword", "diamond_sword", "iron_sword",
+        "stone_sword", "golden_sword", "wooden_sword",
+    )
+    assert WEAPON_PRIORITY[6:] == (
+        "netherite_axe", "diamond_axe", "iron_axe",
+        "stone_axe", "golden_axe", "wooden_axe",
+    )
+
+
+# --- latest-reflex preempts prior handler ----------------------------------
+
+
+async def test_dispatch_cancels_prior_handler_task_on_new_dispatch():
+    """A new reflex must cancel the prior handler before its own runs.
+
+    Without this, a long-running handler (looping /attack from
+    damage_taken) would survive across newer reflexes — the bot would
+    keep swinging while a flee handler tried to path away.
+    """
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+
+    cancelled = asyncio.Event()
+    started = asyncio.Event()
+
+    async def long_running(_a, _d):
+        started.set()
+        try:
+            await asyncio.Event().wait()  # park forever
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def quick(_a, _d):
+        return None
+
+    reg.register(ReflexHandler(event_type="damage_taken", handle=long_running))
+    reg.register(ReflexHandler(event_type="entered_lava", handle=quick))
+
+    await reg.dispatch("damage_taken", {})
+    await started.wait()  # ensure the long handler is actually running
+
+    await reg.dispatch("entered_lava", {})  # latest wins → cancels long_running
+    assert cancelled.is_set()
+    await reg.flush()
+
+
+async def test_dispatch_awaits_prior_cancel_before_new_handler_starts():
+    """The dispatch contract is: prior task is fully unwound before the new
+    handler's body starts. This prevents bridge calls racing across
+    reflexes."""
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    order: list[str] = []
+
+    async def slow(_a, _d):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)  # let cleanup interleave
+            order.append("slow_unwind")
+            raise
+
+    async def quick(_a, _d):
+        order.append("quick_start")
+
+    reg.register(ReflexHandler(event_type="damage_taken", handle=slow))
+    reg.register(ReflexHandler(event_type="entered_lava", handle=quick))
+
+    await reg.dispatch("damage_taken", {})
+    # Yield so the slow handler actually starts — otherwise the cancel hits
+    # a not-yet-started task and there's nothing to unwind.
+    await asyncio.sleep(0)
+
+    await reg.dispatch("entered_lava", {})
+    await reg.flush()
+    assert order == ["slow_unwind", "quick_start"]
+
+
+async def test_dispatch_first_dispatch_no_prior_to_cancel():
+    """Smoke: registry handles the no-prior case cleanly."""
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    reg.register(ReflexHandler(event_type="damage_taken", handle=stub_handler))
+    await reg.dispatch("damage_taken", {})
+    await reg.flush()
+    assert len(reg.recent) == 1
+
+
 # --- lava + drowning escape handlers ---------------------------------------
 
 
@@ -309,6 +536,31 @@ async def test_started_drowning_walks_to_nearest_shore():
     agent = FakeAgent(bridge)
     await started_drowning_handler(agent, {})
     # Goto target is y+1 (top of the block — where the player stands).
+    assert bridge.goto_calls == [(2.0, 62.0, 0.0)]
+
+
+async def test_started_drowning_surfaces_before_walking_to_shore():
+    """Baritone can't path from a submerged start (PathNode map size: 1), so the
+    handler must drive direct-input swim-up first, *then* hand off to goto."""
+    blocks = [_block("dirt", 2, 61, 0, 2.5)]
+    bridge = _FakeBridge({"position": {"x": 0.0, "y": 62.0, "z": 0.0}}, blocks=blocks)
+    agent = FakeAgent(bridge)
+    await started_drowning_handler(agent, {})
+    assert bridge.surface_calls == 1
+    assert bridge.call_order == ["surface", "goto"]
+
+
+async def test_started_drowning_still_walks_when_surface_fails():
+    """Surface failure shouldn't abort the escape — Baritone might still
+    succeed if the player happened to drift to the surface, and even a failed
+    goto leaves a useful reflex entry for Claude to react to next iteration."""
+    class _NoSurfaceBridge(_FakeBridge):
+        async def surface(self, timeout: float = 2.0):
+            raise RuntimeError("bridge down")
+    blocks = [_block("dirt", 2, 61, 0, 2.5)]
+    bridge = _NoSurfaceBridge({"position": {"x": 0.0, "y": 62.0, "z": 0.0}}, blocks=blocks)
+    agent = FakeAgent(bridge)
+    await started_drowning_handler(agent, {})
     assert bridge.goto_calls == [(2.0, 62.0, 0.0)]
 
 
