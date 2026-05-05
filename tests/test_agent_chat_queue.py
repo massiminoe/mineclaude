@@ -362,6 +362,100 @@ async def test_chat_arriving_during_turn_waits_for_next_trigger_after_preempt():
         await agent.queue.stop()
 
 
+    # --- ! commands --------------------------------------------------------
+
+
+async def test_bang_command_does_not_buffer_or_trigger():
+    """`!`-prefixed messages are commands, not chat — they never land in
+    pending or set the chat trigger."""
+    agent = _make_agent()
+    agent._enqueue_chat({"username": "Steve", "message": "!stop"})
+    # Let the spawned command task start.
+    await asyncio.sleep(0)
+    assert agent._pending_user_inputs == []
+    assert not agent._chat_trigger.is_set()
+
+
+async def test_bang_stop_cancels_active_chat_task_and_clears_pending():
+    agent = _make_agent()
+    agent.queue.start()
+    try:
+        async def long_running():
+            await asyncio.sleep(10)
+        task = asyncio.create_task(long_running())
+        agent._active_chat_task = task
+        # Pre-queued chat that should be wiped by !stop.
+        agent._pending_user_inputs.append({
+            "role": "user", "content": "Steve: queued", "_username": "Steve",
+        })
+
+        agent._enqueue_chat({"username": "Steve", "message": "!stop"})
+        # Give the command task time to run.
+        await asyncio.sleep(0.05)
+
+        assert task.cancelled() or task.done()
+        assert agent._pending_user_inputs == []
+        assert not agent._chat_trigger.is_set()
+    finally:
+        await agent.queue.stop()
+
+
+async def test_bang_stop_does_not_appear_in_messages():
+    """The whole point: a command never pollutes Claude's view."""
+    claude = _StubClaude()
+    agent = _make_agent(claude)
+    agent.queue.start()
+    worker = asyncio.create_task(agent._chat_worker())
+    try:
+        agent._enqueue_chat({"username": "Steve", "message": "!stop"})
+        await asyncio.sleep(0.05)
+        assert claude.calls == []
+        assert agent.messages == []
+    finally:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+        await agent.queue.stop()
+
+
+async def test_normal_chat_after_bang_stop_runs_a_turn():
+    """!stop is a one-shot interrupt — no lingering paused state."""
+    claude = _StubClaude()
+    agent = _make_agent(claude)
+    agent.queue.start()
+    worker = asyncio.create_task(agent._chat_worker())
+    try:
+        agent._enqueue_chat({"username": "Steve", "message": "!stop"})
+        await asyncio.sleep(0.05)
+        agent._enqueue_chat({"username": "Steve", "message": "hi"})
+        for _ in range(50):
+            if claude.calls:
+                break
+            await asyncio.sleep(0.02)
+        assert len(claude.calls) == 1
+    finally:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+        await agent.queue.stop()
+
+
+async def test_unknown_bang_command_replies_and_skips_claude():
+    claude = _StubClaude()
+    agent = _make_agent(claude)
+    agent._enqueue_chat({"username": "Steve", "message": "!frobnicate now"})
+    await asyncio.sleep(0.05)
+    assert agent.messages == []
+    assert agent._pending_user_inputs == []
+    assert claude.calls == []
+    # MockBridgeClient records sent chat in _chat_log.
+    assert any("unknown command: !frobnicate" in m for m in agent.bridge._chat_log)
+
+
 async def test_handle_death_uses_preempt():
     """Death should cancel an in-flight chat too, not just halt the queue."""
     agent = _make_agent()

@@ -95,6 +95,12 @@ class Agent:
         self._chat_worker_task: asyncio.Task | None = None
         self._active_chat_task: asyncio.Task | None = None
 
+        # `!`-prefixed chat messages are reserved as agent commands. They
+        # never reach Claude or `self.messages`. Add new commands here.
+        self._commands: dict[str, Callable[[str, str], Coroutine[Any, Any, None]]] = {
+            "stop": self._cmd_stop,
+        }
+
         # Reflex layer: dispatches mod-emitted events (damage, lava, drowning,
         # tool-broke) to handlers configured in agent/reflexes.py.
         self.reflexes = ReflexRegistry(self)
@@ -225,12 +231,42 @@ class Agent:
         message = data.get("message", "")
         if not username or username.lower() == self.bot_name.lower():
             return
+        if message.startswith("!"):
+            asyncio.create_task(self._handle_command(username, message))
+            return
         self._pending_user_inputs.append({
             "role": "user",
             "content": f"{username}: {message}",
             "_username": username,  # carried through to session-logger setup
         })
         self._chat_trigger.set()
+
+    async def _handle_command(self, username: str, raw: str) -> None:
+        """Dispatch a `!`-prefixed command. Commands never reach Claude or
+        `self.messages` — they're agent-control verbs, like Ctrl+C.
+        """
+        parts = raw[1:].split(maxsplit=1)
+        if not parts or not parts[0]:
+            return
+        name = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+        self._slog("command", name=name, by=username, args=args)
+        logger.info(f"command from {username}: !{name} {args}".rstrip())
+        handler = self._commands.get(name)
+        if handler is None:
+            await self._send_chat(f"unknown command: !{name}")
+            return
+        try:
+            await handler(username, args)
+        except Exception:
+            logger.exception(f"command !{name} failed")
+
+    async def _cmd_stop(self, username: str, args: str) -> None:
+        """`!stop` — interrupt the in-flight turn and drop anything queued.
+        Subsequent user chat re-engages Claude through the normal path.
+        """
+        self._pending_user_inputs.clear()
+        await self._preempt()
 
     def _flush_pending_inputs(self) -> dict | None:
         """Splice all pending user inputs into `self.messages` as a single
