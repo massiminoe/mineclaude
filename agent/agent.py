@@ -38,7 +38,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 20
+MAX_ITERATIONS = 150
 CHAT_MAX_LEN = 240
 LOG_TRIM = 4096
 # Settle delay after a newAction completes, before the next Claude iteration
@@ -393,9 +393,21 @@ class Agent:
         await self._emit("conversation:update", self.messages)
 
         # Claude loop
+        hit_cap = True
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"Claude iteration {iteration + 1}/{MAX_ITERATIONS}")
             self.last_activity_ts = time.monotonic()
+
+            # Mid-turn compaction. With a high MAX_ITERATIONS the message list
+            # can grow past the budget within a single turn; compact before the
+            # next Claude call to keep prompt size in check. After compaction
+            # we re-inject plan + memory so the post-summary view has the
+            # current docs (and picks up any writePlan/writeMemory done in
+            # the now-evicted iterations).
+            if await self._compact_if_needed():
+                self._inject_plan()
+                self._inject_memory()
+                await self._emit("conversation:update", self.messages)
 
             # Refresh gameState on every iteration so Claude sees the current
             # world, not a snapshot from 10 tool calls ago. Each iteration gets
@@ -474,6 +486,16 @@ class Agent:
             self.messages.append({"role": "assistant", "content": assistant_content})
             await self._emit("conversation:update", self.messages)
 
+            # Any text Claude emitted goes to MC chat — both mid-turn status
+            # updates (text alongside tool_uses) and final replies (text-only,
+            # no tool_use). Without this, multi-iteration runs are silent until
+            # Claude yields, and the player sees no narration of work in flight.
+            if text_parts:
+                full_text = " ".join(text_parts)
+                logger.info(f"Sending chat: {full_text[:LOG_TRIM]}")
+                self._slog("chat_out", text=full_text, iteration=iteration + 1)
+                await self._send_chat(full_text)
+
             if tool_uses:
                 # Dispatch all tool calls and collect results
                 tool_results = []
@@ -537,13 +559,17 @@ class Agent:
                 # Continue loop for Claude to process results
                 continue
 
-            # end_turn with text — send as chat
-            if text_parts:
-                full_text = " ".join(text_parts)
-                logger.info(f"Sending chat: {full_text[:LOG_TRIM]}")
-                self._slog("chat_out", text=full_text, iteration=iteration + 1)
-                await self._send_chat(full_text)
+            # No tool_use — Claude is yielding back to the player. Any text
+            # was already sent to chat above.
+            hit_cap = False
             break
+
+        if hit_cap:
+            logger.warning(f"hit MAX_ITERATIONS={MAX_ITERATIONS} — forcing yield")
+            self._slog("hit_iteration_cap", max_iterations=MAX_ITERATIONS)
+            await self._send_chat(
+                f"Hit my work limit ({MAX_ITERATIONS} steps). Pausing — let me know if you want me to continue."
+            )
 
         # Compact conversation history if it's grown past the budget. A single
         # Claude call summarizes the older portion and may also call writeMemory
@@ -779,23 +805,24 @@ class Agent:
             ],
         })
 
-    async def _compact_if_needed(self) -> None:
+    async def _compact_if_needed(self) -> bool:
         """Run history compaction if message count is past the budget.
 
         Compaction replaces the older portion of `self.messages` with a
         summary produced by a single Claude call (see agent/compaction.py).
-        We do this AFTER the agent has finished its turn — so the user
-        doesn't pay the latency, and the in-progress turn always sees the
-        full history.
+        Called both mid-turn (top of the iteration loop, when a single long
+        turn has pushed history over budget) and at end-of-turn cleanup.
 
         On failure (Claude error, no safe cut boundary) we leave history
         as-is and try again next turn. We never silently slice — better
         to have one over-budget turn than a corrupted history shape.
+
+        Returns True if compaction actually ran and rewrote `self.messages`.
         """
         if not needs_compaction(self.messages):
-            return
+            return False
         if self.claude is None:
-            return
+            return False
         try:
             new_messages = await compact(
                 self.claude,
@@ -805,9 +832,9 @@ class Agent:
         except Exception:
             logger.exception("compaction failed — history left unchanged")
             self._slog("compaction_failed", message_count=len(self.messages))
-            return
+            return False
         if new_messages is None:
-            return
+            return False
         before = len(self.messages)
         self.messages = new_messages
         self._slog(
@@ -816,3 +843,4 @@ class Agent:
             messages_after=len(self.messages),
         )
         await self._emit("conversation:update", self.messages)
+        return True

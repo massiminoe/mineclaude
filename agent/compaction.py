@@ -49,6 +49,8 @@ Your job is twofold:
 
 Do NOT include things that are already in gameState every turn (current position, health, inventory, time). Do NOT include in-progress plan steps — those live in plan.md, which the agent re-reads each turn.
 
+The conversation may be in the middle of an active task — the agent could be partway through a long autonomous run when compaction fired. If so, capture in-flight intent: what the agent was doing, what it had completed, what it was about to do next, any partial results that haven't been collected yet. The post-summary continuation must be able to resume cleanly without re-deriving plan from scratch.
+
 Be terse. A good summary is much shorter than the transcript."""
 
 
@@ -61,18 +63,34 @@ def needs_compaction(messages: list[dict[str, Any]], threshold: int | None = Non
 def _find_cut_index(messages: list[dict[str, Any]], keep_recent: int) -> int | None:
     """Find the index where the kept slice should start.
 
-    The kept slice must begin at a chat-turn boundary — a user message with
-    plain-string content (one inbound chat). Anything earlier is summarized.
+    Two valid boundary types:
+    - Chat-turn boundary: a user message with plain-string content (one
+      inbound chat). Always safe — no pending tool_use chain.
+    - Mid-turn boundary: an assistant message whose immediately-preceding
+      user message is a complete tool_results list. Cutting here keeps the
+      assistant↔tool_results pair intact in the evicted slice and starts
+      kept cleanly with a new assistant turn.
 
     We search from `len - keep_recent` forward looking for the first such
-    boundary. Returns None if no boundary exists in the search window (one
-    very long turn dominating the history) — caller should skip compaction
-    that round and try again next turn when more boundaries appear.
+    boundary. Returns None if no boundary exists in the search window (the
+    cut would otherwise strand a tool_use without its tool_result, or vice
+    versa) — caller should skip compaction that round.
     """
     start = max(0, len(messages) - keep_recent)
     for i in range(start, len(messages)):
         msg = messages[i]
         if msg["role"] == "user" and isinstance(msg.get("content"), str):
+            return i
+        if (
+            msg["role"] == "assistant"
+            and i > 0
+            and messages[i - 1]["role"] == "user"
+            and isinstance(messages[i - 1].get("content"), list)
+            and all(
+                isinstance(b, dict) and b.get("type") == "tool_result"
+                for b in messages[i - 1]["content"]
+            )
+        ):
             return i
     return None
 
@@ -241,16 +259,20 @@ async def compact(
         f"(memory_writes={memory_writes}, kept={len(kept)})"
     )
 
-    synthetic = [
-        {
-            "role": "user",
-            "content": (
-                f"<conversation_summary>\n{summary}\n</conversation_summary>"
-            ),
-        },
-        {
-            "role": "assistant",
-            "content": "Continuing from compacted context.",
-        },
-    ]
+    summary_msg = {
+        "role": "user",
+        "content": f"<conversation_summary>\n{summary}\n</conversation_summary>",
+    }
+    # If kept starts with a user message (chat-turn cut), we need an
+    # assistant ack between them to keep roles alternating. If kept starts
+    # with an assistant message (mid-turn cut), the summary user message
+    # flows directly into it — no ack needed (and adding one would create
+    # an assistant→assistant violation).
+    if kept[0]["role"] == "user":
+        synthetic = [
+            summary_msg,
+            {"role": "assistant", "content": "Continuing from compacted context."},
+        ]
+    else:
+        synthetic = [summary_msg]
     return synthetic + kept

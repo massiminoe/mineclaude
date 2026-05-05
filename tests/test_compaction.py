@@ -89,6 +89,38 @@ def test_find_cut_zero_when_first_message_is_boundary_in_window():
     assert cut == 0
 
 
+def test_find_cut_accepts_mid_turn_assistant_after_tool_results():
+    """Mid-turn boundary: an assistant message right after a user-tool_results
+    list is a valid cut point. The evicted slice keeps its assistant↔tool_results
+    pair intact, kept starts cleanly with a new assistant turn."""
+    msgs = (
+        [_user_str("start")]
+        + [_tool_use("newAction", id_="t1"), _tool_result(id_="t1")]
+        + [_tool_use("newAction", id_="t2"), _tool_result(id_="t2")]
+        + [_tool_use("newAction", id_="t3"), _tool_result(id_="t3")]
+    )
+    # Window covers only the last few messages — no string-user boundary in
+    # window, but the assistants-after-tool_results boundaries qualify.
+    cut = _find_cut_index(msgs, keep_recent=4)
+    assert cut is not None
+    assert msgs[cut]["role"] == "assistant"
+    assert msgs[cut - 1]["role"] == "user"
+    assert isinstance(msgs[cut - 1]["content"], list)
+
+
+def test_find_cut_does_not_pick_assistant_after_non_tool_result_user():
+    """Mid-turn boundary requires the preceding user message to be a
+    tool_results list — a string-user (chat) preceding the assistant is
+    already handled by the chat-turn rule, and the assistant-after-string-user
+    case alone shouldn't qualify (we want kept to start at the chat, not
+    one past it)."""
+    msgs = [_user_str("hi"), _assistant_text("hello"), _user_str("again"), _assistant_text("yo")]
+    cut = _find_cut_index(msgs, keep_recent=3)
+    # Should pick the string-user "again" at index 2, not the assistant at 1 or 3.
+    assert cut == 2
+    assert msgs[cut]["content"] == "again"
+
+
 # ---- render_transcript ------------------------------------------------------
 
 
@@ -218,6 +250,34 @@ async def test_compact_replaces_older_portion_with_summary(isolated_memory):
     )
     # Result should be much shorter than input
     assert len(new) < len(msgs)
+
+
+async def test_compact_mid_turn_synthetic_prefix_omits_assistant_ack(isolated_memory):
+    """Mid-turn cut: kept[0] is an assistant message, so the synthetic prefix
+    must end with the user-summary alone — adding an assistant ack would create
+    an assistant→assistant adjacency the API rejects."""
+    # No chat-turn boundary in the keep window — only assistant↔tool_results pairs.
+    msgs = [_user_str("start")]
+    for i in range(8):
+        msgs.append(_tool_use(id_=f"t{i}"))
+        msgs.append(_tool_result(id_=f"t{i}"))
+
+    response = _Response([
+        _Block("text", text="<conversation_summary>\nMid-turn work in progress.\n</conversation_summary>"),
+    ])
+    claude = _MockClaude(response)
+
+    new = await compact(claude, msgs, keep_recent=6)
+
+    assert new is not None
+    # Synthetic prefix is just the summary user message — no assistant ack.
+    assert new[0]["role"] == "user"
+    assert "<conversation_summary>" in new[0]["content"]
+    assert new[1]["role"] == "assistant"
+    # The assistant at index 1 must be from the kept slice (a real tool_use),
+    # not the "Continuing from compacted context" ack.
+    assert isinstance(new[1]["content"], list)
+    assert new[1]["content"][0]["type"] == "tool_use"
 
 
 async def test_compact_executes_writeMemory_tool_call(isolated_memory):
