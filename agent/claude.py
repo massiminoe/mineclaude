@@ -134,5 +134,30 @@ class ClaudeClient:
             messages=messages,
         )
 
+    @observe(as_type="generation")
+    async def send_raw(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        max_tokens: int = 2048,
+        model: str | None = None,
+    ) -> anthropic.types.Message:
+        """Generic Claude call without the agent's main system prompt or tool set.
+
+        Used by compaction (and potentially other one-off Claude calls) where
+        the main system prompt + full tool list would be wasted tokens. Pass
+        `model` to override the client's default model for this call (e.g.
+        compaction running on a cheaper model than the main loop).
+        """
+        return await self._client.messages.create(
+            model=model or self.model,
+            max_tokens=max_tokens,
+            system=system,
+            tools=tools or [],
+            messages=messages,
+        )
+
     async def close(self) -> None:
         await self._client.close()

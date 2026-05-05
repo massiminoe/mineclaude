@@ -12,6 +12,7 @@ from typing import Any, Callable, Coroutine
 from agent.action_queue import ActionQueue
 from agent.bridge import BridgeClient
 from agent.claude import ClaudeClient
+from agent.compaction import compact, needs_compaction
 from agent.primitives import make_primitives
 from agent.memory import read_memory, write_memory
 from agent.plan import read_plan, write_plan
@@ -52,10 +53,15 @@ class Agent:
         bridge: BridgeClient,
         claude: ClaudeClient | None,
         bot_name: str = "Claude",
+        compaction_model: str | None = None,
     ):
         self.bridge = bridge
         self.claude = claude
         self.bot_name = bot_name
+        # When None, compaction reuses the main client's model. Override via
+        # COMPACTION_MODEL env var (e.g. claude-haiku-4-5-20251001) to run
+        # compaction on a cheaper/faster model than the main loop.
+        self.compaction_model = compaction_model
         self._handle_chat_enabled = True
         self.system_prompt = build_system_prompt(bot_name)
         self.messages: list[dict[str, Any]] = []
@@ -483,8 +489,10 @@ class Agent:
                 await self._send_chat(full_text)
             break
 
-        # Trim conversation history to avoid unbounded growth
-        self._trim_history()
+        # Compact conversation history if it's grown past the budget. A single
+        # Claude call summarizes the older portion and may also call writeMemory
+        # to promote durable knowledge — see agent/compaction.py.
+        await self._compact_if_needed()
 
     @observe(as_type="tool")
     async def _dispatch_tool(self, name: str, input_data: dict) -> str | dict:
@@ -715,27 +723,40 @@ class Agent:
             ],
         })
 
-    def _trim_history(self, max_messages: int = 50) -> None:
-        """Keep conversation history bounded.
+    async def _compact_if_needed(self) -> None:
+        """Run history compaction if message count is past the budget.
 
-        A naive `messages[-N:]` slice can land between a `tool_use` and its
-        matching `tool_result`, leaving an orphaned tool_result at messages[0]
-        which 400s the next API call. We trim only at chat-turn boundaries —
-        user messages with plain-string content (one per inbound chat).
+        Compaction replaces the older portion of `self.messages` with a
+        summary produced by a single Claude call (see agent/compaction.py).
+        We do this AFTER the agent has finished its turn — so the user
+        doesn't pay the latency, and the in-progress turn always sees the
+        full history.
+
+        On failure (Claude error, no safe cut boundary) we leave history
+        as-is and try again next turn. We never silently slice — better
+        to have one over-budget turn than a corrupted history shape.
         """
-        if len(self.messages) <= max_messages:
+        if not needs_compaction(self.messages):
             return
-
-        candidates = self.messages[-max_messages:]
-        for i, msg in enumerate(candidates):
-            if msg["role"] == "user" and isinstance(msg.get("content"), str):
-                self.messages = candidates[i:]
-                return
-
-        # No chat-turn boundary in the kept window (one very long turn).
-        # Fall back to the most recent boundary in the full history.
-        for i in range(len(self.messages) - 1, -1, -1):
-            msg = self.messages[i]
-            if msg["role"] == "user" and isinstance(msg.get("content"), str):
-                self.messages = self.messages[i:]
-                return
+        if self.claude is None:
+            return
+        try:
+            new_messages = await compact(
+                self.claude,
+                self.messages,
+                model=self.compaction_model,
+            )
+        except Exception:
+            logger.exception("compaction failed — history left unchanged")
+            self._slog("compaction_failed", message_count=len(self.messages))
+            return
+        if new_messages is None:
+            return
+        before = len(self.messages)
+        self.messages = new_messages
+        self._slog(
+            "compaction",
+            messages_before=before,
+            messages_after=len(self.messages),
+        )
+        await self._emit("conversation:update", self.messages)

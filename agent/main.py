@@ -77,6 +77,9 @@ def main() -> None:
     bridge_ws_url = os.environ.get("BRIDGE_WS_URL", "ws://localhost:8082/events")
     bot_name = os.environ.get("BOT_NAME", "Claude")
     claude_model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+    # Compaction defaults to the main model when unset. Set COMPACTION_MODEL
+    # to e.g. claude-haiku-4-5-20251001 to run compaction on a cheaper model.
+    compaction_model = os.environ.get("COMPACTION_MODEL") or None
     api_key = os.environ.get("ANTHROPIC_API_KEY")
 
     if not mock_bridge and not no_claude and not api_key:
@@ -101,12 +104,18 @@ def main() -> None:
         ws_url=bridge_ws_url,
     )
     claude = None if no_claude else ClaudeClient(model=claude_model, api_key=api_key)
-    agent = Agent(bridge=bridge, claude=claude, bot_name=bot_name)
+    agent = Agent(
+        bridge=bridge,
+        claude=claude,
+        bot_name=bot_name,
+        compaction_model=compaction_model,
+    )
     monitor = MonitorServer(agent, port=monitor_port)
 
     logger.info(
         f"Mineclaude agent starting (mock={mock_bridge}, no_claude={no_claude}, "
-        f"bot={bot_name}, model={'<disabled>' if no_claude else claude_model})"
+        f"bot={bot_name}, model={'<disabled>' if no_claude else claude_model}, "
+        f"compaction_model={compaction_model or claude_model})"
     )
 
     try:

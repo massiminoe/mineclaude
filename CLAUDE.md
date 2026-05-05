@@ -56,7 +56,9 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `POST /follow` `{player}` — Baritone follow
 - `POST /stop` / `POST /explore` — Baritone control
 - `POST /chat` `{message}` — send chat (`#`/`\` via `sendChatMessage`, `/cmd` via `sendChatCommand`, plain text wrapped in `/tellraw` to dodge signed-chat disconnect)
-- `POST /place`, `/break`, `/attack`, `/equip`, `/discard` — world + inventory mutations via `interactionManager`
+- `POST /place`, `/break`, `/equip`, `/discard` — world + inventory mutations via `interactionManager`
+- `POST /attack` `{entity_id}` — loops swings until target dies, despawns, leaves reach, or 30s elapses (auto-paths into melee). `POST /attack/stop` cancels the in-flight loop (used by reflex preempt)
+- `POST /surface` — hold forward+jump+sprint via vanilla input keys to surface from full submersion (drowning escape; Baritone can't path from a fully-submerged start)
 - `POST /craft` `{item, count}` — opens crafting screen, places ingredients, extracts output
 - `POST /furnace/load`, `GET /furnace/inspect`, `POST /furnace/extract` — furnace lifecycle
 - `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius
