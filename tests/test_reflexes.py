@@ -520,6 +520,42 @@ async def test_dispatch_first_dispatch_no_prior_to_cancel():
     assert len(reg.recent) == 1
 
 
+async def test_dispatch_cancels_prior_false_lets_recovery_finish():
+    """End-of-hazard events (stopped_drowning, exited_lava) fire because the
+    prior handler succeeded. They must not cancel its follow-through, or the
+    drowning recovery's post-surface goto gets aborted mid-flight — exactly
+    the bug observed in production where surface() worked, head emerged,
+    stopped_drowning fired, and goto never ran."""
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    cancelled = asyncio.Event()
+    completed = asyncio.Event()
+    started = asyncio.Event()
+
+    async def recovery(_a, _d):
+        started.set()
+        try:
+            await asyncio.sleep(0.05)
+            completed.set()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    reg.register(ReflexHandler(event_type="started_drowning", handle=recovery))
+    reg.register(ReflexHandler(
+        event_type="stopped_drowning", handle=stub_handler, cancels_prior=False,
+    ))
+
+    await reg.dispatch("started_drowning", {})
+    await started.wait()
+    recovery_task = reg._active_handler_task  # remember before it gets replaced
+    await reg.dispatch("stopped_drowning", {})  # must NOT cancel recovery
+    await reg.flush()  # awaits the stopped_drowning stub
+    await recovery_task  # let the recovery finish
+    assert completed.is_set()
+    assert not cancelled.is_set()
+
+
 # --- lava + drowning escape handlers ---------------------------------------
 
 

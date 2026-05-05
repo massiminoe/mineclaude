@@ -172,6 +172,7 @@ object NearbyRoutes {
             val health = if (entity is net.minecraft.entity.LivingEntity) entity.health.toDouble() else 0.0
             out.add(
                 mapOf(
+                    "id" to entity.id,
                     "name" to name,
                     "type" to type,
                     "x" to entity.x,

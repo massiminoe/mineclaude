@@ -119,6 +119,13 @@ class ReflexHandler:
     handle: HandlerFn
     preempts: bool = False
     cooldown_s: float = 0.0
+    # Whether dispatching this event cancels any in-flight prior handler.
+    # Default True (latest-wins). Set False for "end-of-hazard" announcements
+    # like stopped_drowning / exited_lava — those fire *because* the prior
+    # handler succeeded at resolving the hazard, so cancelling its
+    # follow-through (e.g. the post-surface walk to shore) defeats the
+    # recovery.
+    cancels_prior: bool = True
     _last_fire: float = field(default=0.0, repr=False)
 
 
@@ -194,13 +201,17 @@ class ReflexRegistry:
         # its own _preempt(). Awaiting the cancel ensures the prior task
         # has actually unwound before we start the new handler — otherwise
         # the new handler's bridge calls could race the old one's.
-        prior = self._active_handler_task
-        if prior is not None and not prior.done():
-            prior.cancel()
-            try:
-                await prior
-            except (asyncio.CancelledError, Exception):
-                pass
+        # Skipped for handlers marked cancels_prior=False (end-of-hazard
+        # events whose entire purpose is to announce that the in-flight
+        # recovery worked).
+        if handler.cancels_prior:
+            prior = self._active_handler_task
+            if prior is not None and not prior.done():
+                prior.cancel()
+                try:
+                    await prior
+                except (asyncio.CancelledError, Exception):
+                    pass
 
         if handler.preempts:
             try:
@@ -440,6 +451,10 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
     registry.register(ReflexHandler(
         event_type="exited_lava",
         handle=stub_handler,
+        # cancels_prior=False: this fires *because* entered_lava's handler
+        # surfaced/walked us out — cancelling its follow-through would abort
+        # the post-escape goto mid-flight.
+        cancels_prior=False,
     ))
     registry.register(ReflexHandler(
         event_type="started_drowning",
@@ -450,6 +465,8 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
     registry.register(ReflexHandler(
         event_type="stopped_drowning",
         handle=stub_handler,
+        # See exited_lava: same recovery-follow-through issue.
+        cancels_prior=False,
     ))
     registry.register(ReflexHandler(
         event_type="tool_broke",

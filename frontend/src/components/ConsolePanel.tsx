@@ -20,8 +20,7 @@ const PRIMITIVE_GROUPS: { label: string; items: string[] }[] = [
       "await placeBlock(block_type, x, y, z, face='top')",
       "await breakBlockAt(x, y, z)",
       "await collectItems(radius=6)",
-      "await attackNearest(mob_type)",
-      "await defendSelf()",
+      "await attack(entity_id)",
     ],
   },
   {

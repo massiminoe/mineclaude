@@ -94,11 +94,8 @@ def make_primitives(
     async def collectItems(radius: float = 6) -> str:
         return _check(await bridge.collect(radius))
 
-    async def attackNearest(mob_type: str) -> str:
-        return _check(await bridge.attack(mob_type))
-
-    async def defendSelf() -> str:
-        return _check(await bridge.attack("hostile"))
+    async def attack(entity_id: int | str) -> str:
+        return _check(await bridge.attack(str(entity_id)))
 
     async def craft(item: str, count: int = 1) -> str:
         return _check(await bridge.craft(item, count))
@@ -192,8 +189,7 @@ def make_primitives(
         "placeBlock": placeBlock,
         "breakBlockAt": breakBlockAt,
         "collectItems": collectItems,
-        "attackNearest": attackNearest,
-        "defendSelf": defendSelf,
+        "attack": attack,
         "craft": craft,
         "furnaceLoad": furnaceLoad,
         "furnaceInspect": furnaceInspect,
