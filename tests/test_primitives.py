@@ -120,7 +120,7 @@ async def test_craft_partial_ingredients(bridge, prims):
 @pytest.mark.asyncio
 async def test_craft_unknown_recipe(bridge, prims):
     with pytest.raises(RuntimeError, match="Unknown recipe"):
-        await prims["craft"]("diamond_block", 1)
+        await prims["craft"]("totally_made_up_item", 1)
 
 
 @pytest.mark.asyncio

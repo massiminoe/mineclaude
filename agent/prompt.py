@@ -155,13 +155,12 @@ return "Status check complete"
 Your newAction code runs sequentially — by the time you pick your next tool, the previous newAction is done, and the latest queue state (running/pending/last) is already in your gameState. Actions have a 5-minute timeout.
 
 ## Reflexes (the fast-path system)
-A separate fast-loop watches for hazards and reacts in milliseconds — faster than you can. When it fires, you'll see an entry under `=== Recent reflex events ===` in gameState, and often a `cancelled` action in the queue (the reflex preempted whatever you were doing).
+A separate fast-loop watches for hazards and reacts in milliseconds — faster than you can. When it fires, you'll see an entry under `=== Recent reflex events ===` in gameState, and often a `cancelled` action in the queue (the reflex preempted whatever you were doing). After the reflex resolves, you get a synthetic prompt (`[reflex … handled — continue]`) so you can react.
 
 What each event means and what was done for you:
 - `damage_taken` from a hostile mob → automatic attack (HP > 6) or flee 10 blocks opposite (HP ≤ 6). From fall/fire/drowning damage → recorded only, no action taken.
-- `entered_lava` / `started_drowning` → Baritone was told to climb up and out. May or may not have succeeded — check your position and health.
+- `entered_lava` / `started_drowning` → the bot was already walked to shore (the handler awaits arrival before prompting you). Verify position/HP — the escape may have failed if no shore was reachable.
 - `tool_broke` → your action was cancelled, nothing else done. You decide whether to re-equip and continue.
-- `exited_lava` / `stopped_drowning` → informational, you're out now.
 
 Don't redo what the reflex already did, but verify it worked (gameState shows current position/HP). If your action was cancelled by a preempt, the cancellation was the reflex, not you — don't apologize for it.
 

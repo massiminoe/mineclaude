@@ -192,6 +192,26 @@ class Agent:
         logger.info("Bot respawned.")
         await self._send_chat("I died and respawned! Give me a moment to get my bearings.")
 
+    def _stage_resume(self, event_type: str) -> None:
+        """Stage a synthetic resume turn after a reflex handler completes.
+
+        Sync by design: the registry calls this immediately after the
+        handler's `await` returns, with no `await` in between, so a
+        cancellation arriving in this window is impossible (Python only
+        checks for cancellation at await points). That makes the
+        append+set pair atomic — no lost wakeup.
+
+        Coalesces with any pending user input on the next flush, so a
+        burst of reflexes (or a reflex landing alongside a player chat)
+        produces a single Claude turn that sees all of them.
+        """
+        self._pending_user_inputs.append({
+            "role": "user",
+            "content": f"[reflex {event_type} handled — continue]",
+            "_username": "reflex",
+        })
+        self._chat_trigger.set()
+
     def _enqueue_chat(self, data: dict) -> None:
         """Receive a chat event without doing any awaiting work.
 

@@ -22,6 +22,13 @@ the reaction to the prior event" — flee should interrupt retaliation
 in progress, lava-escape should interrupt flee, and so on. Without
 this, a long-running handler (notably the looping /attack call) would
 be insulated from later, more urgent reflexes.
+
+Resume: a handler with `resumes_on_complete=True` causes the registry
+to stage a synthetic user message and set the chat trigger after the
+handler returns successfully (not on cancellation). This restarts the
+Claude loop so it can react to whatever the reflex just did. Handlers
+should only return once the recovery is actually complete — e.g. the
+drowning handler awaits its escape goto rather than fire-and-forget.
 """
 
 from __future__ import annotations
@@ -119,13 +126,12 @@ class ReflexHandler:
     handle: HandlerFn
     preempts: bool = False
     cooldown_s: float = 0.0
-    # Whether dispatching this event cancels any in-flight prior handler.
-    # Default True (latest-wins). Set False for "end-of-hazard" announcements
-    # like stopped_drowning / exited_lava — those fire *because* the prior
-    # handler succeeded at resolving the hazard, so cancelling its
-    # follow-through (e.g. the post-surface walk to shore) defeats the
-    # recovery.
-    cancels_prior: bool = True
+    # When True, the registry stages a synthetic user message and sets the
+    # chat trigger after the handler completes successfully — Claude wakes
+    # up and reacts to whatever the reflex did. Skipped when the handler
+    # raises or is cancelled by a newer reflex (the newer reflex will fire
+    # its own resume).
+    resumes_on_complete: bool = False
     _last_fire: float = field(default=0.0, repr=False)
 
 
@@ -201,17 +207,13 @@ class ReflexRegistry:
         # its own _preempt(). Awaiting the cancel ensures the prior task
         # has actually unwound before we start the new handler — otherwise
         # the new handler's bridge calls could race the old one's.
-        # Skipped for handlers marked cancels_prior=False (end-of-hazard
-        # events whose entire purpose is to announce that the in-flight
-        # recovery worked).
-        if handler.cancels_prior:
-            prior = self._active_handler_task
-            if prior is not None and not prior.done():
-                prior.cancel()
-                try:
-                    await prior
-                except (asyncio.CancelledError, Exception):
-                    pass
+        prior = self._active_handler_task
+        if prior is not None and not prior.done():
+            prior.cancel()
+            try:
+                await prior
+            except (asyncio.CancelledError, Exception):
+                pass
 
         if handler.preempts:
             try:
@@ -233,10 +235,22 @@ class ReflexRegistry:
         except asyncio.CancelledError:
             # Cancelled by a newer reflex (or shutdown). Propagate so the
             # task's done state reflects the cancellation — `prior.cancel()
-            # + await prior` upstream relies on this.
+            # + await prior` upstream relies on this. The newer reflex will
+            # fire its own resume, so we deliberately skip resume here.
             raise
         except Exception:
             logger.exception(f"reflex handler {handler.event_type} raised")
+            return
+        # Handler completed successfully. Stage a resume so Claude wakes
+        # up and reacts. _stage_resume is sync — no await between the
+        # handler returning and the trigger flipping, so a cancellation
+        # arriving in this window is impossible (Python only checks at
+        # await points).
+        if handler.resumes_on_complete:
+            try:
+                self.agent._stage_resume(handler.event_type)
+            except Exception:
+                logger.exception("reflex resume staging failed")
 
     async def flush(self) -> None:
         """Test helper: await any in-flight handler. No-op in production."""
@@ -254,9 +268,7 @@ class ReflexRegistry:
 REFLEX_EVENT_TYPES = (
     "damage_taken",
     "entered_lava",
-    "exited_lava",
     "started_drowning",
-    "stopped_drowning",
     "tool_broke",
 )
 
@@ -429,50 +441,42 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
 
     Notes per event:
       * damage_taken: preempts=False here because the handler decides
-        conditionally (no preempt for fall damage etc.).
-      * entered_lava / started_drowning: always preempt + escape.
-      * tool_broke: preempt only — handler is a stub. Claude sees the
-        cancelled action + the entry in `recent` and decides whether to
-        re-equip / continue.
-      * exited_lava / stopped_drowning: record-only.
+        conditionally (no preempt for fall damage etc.). Resume only fires
+        when the handler took an action — record-only paths return before
+        the resume staging.
+      * entered_lava / started_drowning: always preempt + escape. The
+        handler awaits goto arrival (bridge.goto polls) before returning,
+        so resume fires once the bot is actually on shore.
+      * tool_broke: preempt only — handler is a stub. Resume fires
+        immediately so Claude can decide whether to re-equip and continue.
     """
     registry.register(ReflexHandler(
         event_type="damage_taken",
         handle=damage_taken_handler,
         preempts=False,
         cooldown_s=0.5,
+        resumes_on_complete=True,
     ))
     registry.register(ReflexHandler(
         event_type="entered_lava",
         handle=entered_lava_handler,
         preempts=True,
         cooldown_s=5.0,
-    ))
-    registry.register(ReflexHandler(
-        event_type="exited_lava",
-        handle=stub_handler,
-        # cancels_prior=False: this fires *because* entered_lava's handler
-        # surfaced/walked us out — cancelling its follow-through would abort
-        # the post-escape goto mid-flight.
-        cancels_prior=False,
+        resumes_on_complete=True,
     ))
     registry.register(ReflexHandler(
         event_type="started_drowning",
         handle=started_drowning_handler,
         preempts=True,
         cooldown_s=10.0,
-    ))
-    registry.register(ReflexHandler(
-        event_type="stopped_drowning",
-        handle=stub_handler,
-        # See exited_lava: same recovery-follow-through issue.
-        cancels_prior=False,
+        resumes_on_complete=True,
     ))
     registry.register(ReflexHandler(
         event_type="tool_broke",
         handle=stub_handler,
         preempts=True,
         cooldown_s=1.0,
+        resumes_on_complete=True,
     ))
 
 

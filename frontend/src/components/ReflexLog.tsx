@@ -9,9 +9,7 @@ interface Props {
 const TYPE_TONE: Record<string, string> = {
   damage_taken: "danger",
   entered_lava: "lava",
-  exited_lava: "muted",
   started_drowning: "water",
-  stopped_drowning: "muted",
   tool_broke: "tool",
 };
 

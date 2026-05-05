@@ -98,12 +98,13 @@ def _block(name: str, x: int, y: int, z: int, distance: float = 1.0) -> dict:
 
 class FakeAgent:
     """Minimal Agent stand-in. The registry only touches `_slog`,
-    `_emit`, `_preempt`, and (via handlers) `bridge`."""
+    `_emit`, `_preempt`, `_stage_resume`, and (via handlers) `bridge`."""
 
     def __init__(self, bridge: _FakeBridge | None = None):
         self.slog_calls: list[tuple[str, dict]] = []
         self.emit_calls: list[tuple[str, dict]] = []
         self.preempt_calls = 0
+        self.resume_calls: list[str] = []
         self.queue = _FakeQueue()
         self.bridge = bridge or _FakeBridge()
 
@@ -115,6 +116,9 @@ class FakeAgent:
 
     async def _preempt(self) -> None:
         self.preempt_calls += 1
+
+    def _stage_resume(self, event_type: str) -> None:
+        self.resume_calls.append(event_type)
 
 
 class _FakeQueue:
@@ -245,8 +249,18 @@ async def test_register_default_handlers_preempt_flags():
     assert by_type["entered_lava"].preempts is True
     assert by_type["started_drowning"].preempts is True
     assert by_type["tool_broke"].preempts is True
-    assert by_type["exited_lava"].preempts is False  # record-only
-    assert by_type["stopped_drowning"].preempts is False
+
+
+async def test_register_default_handlers_all_resume_on_complete():
+    """Every default handler reprompts Claude after recovery so the agent
+    can react to whatever the reflex did. If a future handler shouldn't
+    resume (e.g. a hypothetical stop event), flip resumes_on_complete to
+    False at registration time."""
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    register_default_handlers(reg)
+    for et in REFLEX_EVENT_TYPES:
+        assert reg._handlers[et].resumes_on_complete is True, et
 
 
 # --- damage_taken handler --------------------------------------------------
@@ -520,40 +534,74 @@ async def test_dispatch_first_dispatch_no_prior_to_cancel():
     assert len(reg.recent) == 1
 
 
-async def test_dispatch_cancels_prior_false_lets_recovery_finish():
-    """End-of-hazard events (stopped_drowning, exited_lava) fire because the
-    prior handler succeeded. They must not cancel its follow-through, or the
-    drowning recovery's post-surface goto gets aborted mid-flight — exactly
-    the bug observed in production where surface() worked, head emerged,
-    stopped_drowning fired, and goto never ran."""
+async def test_resume_fires_after_handler_completes():
+    """A handler with resumes_on_complete=True triggers _stage_resume on
+    successful completion."""
     agent = FakeAgent()
     reg = ReflexRegistry(agent)
-    cancelled = asyncio.Event()
-    completed = asyncio.Event()
+    reg.register(ReflexHandler(
+        event_type="tool_broke", handle=stub_handler, resumes_on_complete=True,
+    ))
+    await reg.dispatch("tool_broke", {"item": "iron_pickaxe"})
+    await reg.flush()
+    assert agent.resume_calls == ["tool_broke"]
+
+
+async def test_resume_skipped_when_handler_cancelled_by_newer_reflex():
+    """If a newer reflex cancels the in-flight handler, the cancelled
+    handler must NOT fire its resume — the newer reflex will fire its own
+    resume after its handler completes. Without this, both reflexes would
+    stage resumes and Claude would see a double prompt for one logical
+    event sequence."""
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
     started = asyncio.Event()
 
-    async def recovery(_a, _d):
+    async def parked(_a, _d):
         started.set()
-        try:
-            await asyncio.sleep(0.05)
-            completed.set()
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
+        await asyncio.Event().wait()  # park forever, awaits cancellation
 
-    reg.register(ReflexHandler(event_type="started_drowning", handle=recovery))
     reg.register(ReflexHandler(
-        event_type="stopped_drowning", handle=stub_handler, cancels_prior=False,
+        event_type="damage_taken", handle=parked, resumes_on_complete=True,
+    ))
+    reg.register(ReflexHandler(
+        event_type="entered_lava", handle=stub_handler, resumes_on_complete=True,
     ))
 
-    await reg.dispatch("started_drowning", {})
+    await reg.dispatch("damage_taken", {})
     await started.wait()
-    recovery_task = reg._active_handler_task  # remember before it gets replaced
-    await reg.dispatch("stopped_drowning", {})  # must NOT cancel recovery
-    await reg.flush()  # awaits the stopped_drowning stub
-    await recovery_task  # let the recovery finish
-    assert completed.is_set()
-    assert not cancelled.is_set()
+    await reg.dispatch("entered_lava", {})  # cancels parked, runs stub
+    await reg.flush()
+    # Only the new (winning) reflex resumed.
+    assert agent.resume_calls == ["entered_lava"]
+
+
+async def test_resume_skipped_when_handler_raises():
+    """A raised handler shouldn't trigger resume — recovery is incomplete
+    by definition."""
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+
+    async def boom(_a, _d):
+        raise RuntimeError("nope")
+
+    reg.register(ReflexHandler(
+        event_type="tool_broke", handle=boom, resumes_on_complete=True,
+    ))
+    await reg.dispatch("tool_broke", {})
+    await reg.flush()
+    assert agent.resume_calls == []
+
+
+async def test_resume_skipped_when_flag_false():
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    reg.register(ReflexHandler(
+        event_type="tool_broke", handle=stub_handler, resumes_on_complete=False,
+    ))
+    await reg.dispatch("tool_broke", {})
+    await reg.flush()
+    assert agent.resume_calls == []
 
 
 # --- lava + drowning escape handlers ---------------------------------------

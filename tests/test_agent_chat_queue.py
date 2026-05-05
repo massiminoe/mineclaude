@@ -90,6 +90,37 @@ def test_enqueue_chat_ignores_empty_username():
     assert agent._pending_user_inputs == []
 
 
+# --- _stage_resume ---------------------------------------------------------
+
+
+def test_stage_resume_appends_pending_and_sets_trigger():
+    """Reflex resume looks the same to the chat worker as a player chat:
+    a row in pending + the trigger flipped."""
+    agent = _make_agent()
+    assert not agent._chat_trigger.is_set()
+    agent._stage_resume("tool_broke")
+    assert agent._chat_trigger.is_set()
+    assert len(agent._pending_user_inputs) == 1
+    pend = agent._pending_user_inputs[0]
+    assert pend["role"] == "user"
+    assert "tool_broke" in pend["content"]
+    assert pend["_username"] == "reflex"
+
+
+def test_stage_resume_coalesces_with_pending_chat_on_flush():
+    """A reflex landing alongside a pending player chat produces a single
+    user turn that contains both — preserves user/assistant alternation
+    and lets Claude see them in one batch."""
+    agent = _make_agent()
+    agent._enqueue_chat({"username": "Steve", "message": "go mine"})
+    agent._stage_resume("tool_broke")
+    agent._flush_pending_inputs()
+    assert len(agent.messages) == 1
+    content = agent.messages[0]["content"]
+    assert "Steve: go mine" in content
+    assert "tool_broke" in content
+
+
 # --- _flush_pending_inputs -------------------------------------------------
 
 

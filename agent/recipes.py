@@ -137,6 +137,12 @@ RECIPES: dict[str, Recipe] = {
         key={"#": "cobblestone", "S": "stick"},
         needs_table=True,
     ),
+    "stone_hoe": Recipe(
+        output="stone_hoe", output_count=1,
+        pattern=["##", " S", " S"],
+        key={"#": "cobblestone", "S": "stick"},
+        needs_table=True,
+    ),
 
     # --- Iron tools ---
     "iron_pickaxe": Recipe(
@@ -163,8 +169,78 @@ RECIPES: dict[str, Recipe] = {
         key={"#": "iron_ingot", "S": "stick"},
         needs_table=True,
     ),
+    "iron_hoe": Recipe(
+        output="iron_hoe", output_count=1,
+        pattern=["##", " S", " S"],
+        key={"#": "iron_ingot", "S": "stick"},
+        needs_table=True,
+    ),
 
-    # --- Armor ---
+    # --- Diamond tools ---
+    "diamond_pickaxe": Recipe(
+        output="diamond_pickaxe", output_count=1,
+        pattern=["###", " S ", " S "],
+        key={"#": "diamond", "S": "stick"},
+        needs_table=True,
+    ),
+    "diamond_axe": Recipe(
+        output="diamond_axe", output_count=1,
+        pattern=["##", "#S", " S"],
+        key={"#": "diamond", "S": "stick"},
+        needs_table=True,
+    ),
+    "diamond_shovel": Recipe(
+        output="diamond_shovel", output_count=1,
+        pattern=["#", "S", "S"],
+        key={"#": "diamond", "S": "stick"},
+        needs_table=True,
+    ),
+    "diamond_sword": Recipe(
+        output="diamond_sword", output_count=1,
+        pattern=["#", "#", "S"],
+        key={"#": "diamond", "S": "stick"},
+        needs_table=True,
+    ),
+    "diamond_hoe": Recipe(
+        output="diamond_hoe", output_count=1,
+        pattern=["##", " S", " S"],
+        key={"#": "diamond", "S": "stick"},
+        needs_table=True,
+    ),
+
+    # --- Golden tools ---
+    "golden_pickaxe": Recipe(
+        output="golden_pickaxe", output_count=1,
+        pattern=["###", " S ", " S "],
+        key={"#": "gold_ingot", "S": "stick"},
+        needs_table=True,
+    ),
+    "golden_axe": Recipe(
+        output="golden_axe", output_count=1,
+        pattern=["##", "#S", " S"],
+        key={"#": "gold_ingot", "S": "stick"},
+        needs_table=True,
+    ),
+    "golden_shovel": Recipe(
+        output="golden_shovel", output_count=1,
+        pattern=["#", "S", "S"],
+        key={"#": "gold_ingot", "S": "stick"},
+        needs_table=True,
+    ),
+    "golden_sword": Recipe(
+        output="golden_sword", output_count=1,
+        pattern=["#", "#", "S"],
+        key={"#": "gold_ingot", "S": "stick"},
+        needs_table=True,
+    ),
+    "golden_hoe": Recipe(
+        output="golden_hoe", output_count=1,
+        pattern=["##", " S", " S"],
+        key={"#": "gold_ingot", "S": "stick"},
+        needs_table=True,
+    ),
+
+    # --- Iron armor ---
     "iron_helmet": Recipe(
         output="iron_helmet", output_count=1,
         pattern=["###", "# #"],
@@ -190,7 +266,311 @@ RECIPES: dict[str, Recipe] = {
         needs_table=True,
     ),
 
-    # --- Misc ---
+    # --- Diamond armor ---
+    "diamond_helmet": Recipe(
+        output="diamond_helmet", output_count=1,
+        pattern=["###", "# #"],
+        key={"#": "diamond"},
+        needs_table=True,
+    ),
+    "diamond_chestplate": Recipe(
+        output="diamond_chestplate", output_count=1,
+        pattern=["# #", "###", "###"],
+        key={"#": "diamond"},
+        needs_table=True,
+    ),
+    "diamond_leggings": Recipe(
+        output="diamond_leggings", output_count=1,
+        pattern=["###", "# #", "# #"],
+        key={"#": "diamond"},
+        needs_table=True,
+    ),
+    "diamond_boots": Recipe(
+        output="diamond_boots", output_count=1,
+        pattern=["# #", "# #"],
+        key={"#": "diamond"},
+        needs_table=True,
+    ),
+
+    # --- Golden armor ---
+    "golden_helmet": Recipe(
+        output="golden_helmet", output_count=1,
+        pattern=["###", "# #"],
+        key={"#": "gold_ingot"},
+        needs_table=True,
+    ),
+    "golden_chestplate": Recipe(
+        output="golden_chestplate", output_count=1,
+        pattern=["# #", "###", "###"],
+        key={"#": "gold_ingot"},
+        needs_table=True,
+    ),
+    "golden_leggings": Recipe(
+        output="golden_leggings", output_count=1,
+        pattern=["###", "# #", "# #"],
+        key={"#": "gold_ingot"},
+        needs_table=True,
+    ),
+    "golden_boots": Recipe(
+        output="golden_boots", output_count=1,
+        pattern=["# #", "# #"],
+        key={"#": "gold_ingot"},
+        needs_table=True,
+    ),
+
+    # --- Leather armor ---
+    "leather_helmet": Recipe(
+        output="leather_helmet", output_count=1,
+        pattern=["###", "# #"],
+        key={"#": "leather"},
+        needs_table=True,
+    ),
+    "leather_chestplate": Recipe(
+        output="leather_chestplate", output_count=1,
+        pattern=["# #", "###", "###"],
+        key={"#": "leather"},
+        needs_table=True,
+    ),
+    "leather_leggings": Recipe(
+        output="leather_leggings", output_count=1,
+        pattern=["###", "# #", "# #"],
+        key={"#": "leather"},
+        needs_table=True,
+    ),
+    "leather_boots": Recipe(
+        output="leather_boots", output_count=1,
+        pattern=["# #", "# #"],
+        key={"#": "leather"},
+        needs_table=True,
+    ),
+
+    # --- Storage blocks (compress 9 → 1) ---
+    "iron_block": Recipe(
+        output="iron_block", output_count=1,
+        pattern=["###", "###", "###"],
+        key={"#": "iron_ingot"},
+        needs_table=True,
+    ),
+    "gold_block": Recipe(
+        output="gold_block", output_count=1,
+        pattern=["###", "###", "###"],
+        key={"#": "gold_ingot"},
+        needs_table=True,
+    ),
+    "diamond_block": Recipe(
+        output="diamond_block", output_count=1,
+        pattern=["###", "###", "###"],
+        key={"#": "diamond"},
+        needs_table=True,
+    ),
+    "redstone_block": Recipe(
+        output="redstone_block", output_count=1,
+        pattern=["###", "###", "###"],
+        key={"#": "redstone"},
+        needs_table=True,
+    ),
+    "emerald_block": Recipe(
+        output="emerald_block", output_count=1,
+        pattern=["###", "###", "###"],
+        key={"#": "emerald"},
+        needs_table=True,
+    ),
+    "lapis_block": Recipe(
+        output="lapis_block", output_count=1,
+        pattern=["###", "###", "###"],
+        key={"#": "lapis_lazuli"},
+        needs_table=True,
+    ),
+    "coal_block": Recipe(
+        output="coal_block", output_count=1,
+        pattern=["###", "###", "###"],
+        key={"#": "coal"},
+        needs_table=True,
+    ),
+
+    # --- Survival essentials ---
+    # `bed` aliases white_bed. Other-colored beds need the matching wool color.
+    "bed": Recipe(
+        output="white_bed", output_count=1,
+        pattern=["WWW", "###"],
+        key={"W": "white_wool", "#": "oak_planks"},
+        needs_table=True,
+    ),
+    "white_bed": Recipe(
+        output="white_bed", output_count=1,
+        pattern=["WWW", "###"],
+        key={"W": "white_wool", "#": "oak_planks"},
+        needs_table=True,
+    ),
+    "shield": Recipe(
+        output="shield", output_count=1,
+        pattern=["#I#", "###", " # "],
+        key={"#": "oak_planks", "I": "iron_ingot"},
+        needs_table=True,
+    ),
+    "bread": Recipe(
+        output="bread", output_count=1,
+        pattern=["###"],
+        key={"#": "wheat"},
+        needs_table=True,
+    ),
+    "flint_and_steel": Recipe(
+        output="flint_and_steel", output_count=1,
+        pattern=["I ", " F"],
+        key={"I": "iron_ingot", "F": "flint"},
+        needs_table=False,
+    ),
+    "fishing_rod": Recipe(
+        output="fishing_rod", output_count=1,
+        pattern=["  #", " #X", "# X"],
+        key={"#": "stick", "X": "string"},
+        needs_table=True,
+    ),
+    "bow": Recipe(
+        output="bow", output_count=1,
+        pattern=[" #X", "# X", " #X"],
+        key={"#": "stick", "X": "string"},
+        needs_table=True,
+    ),
+    "arrow": Recipe(
+        output="arrow", output_count=4,
+        pattern=["F", "S", "T"],
+        key={"F": "flint", "S": "stick", "T": "feather"},
+        needs_table=True,
+    ),
+    "cake": Recipe(
+        output="cake", output_count=1,
+        pattern=["MMM", "SES", "WWW"],
+        key={"M": "milk_bucket", "S": "sugar", "E": "egg", "W": "wheat"},
+        needs_table=True,
+    ),
+
+    # --- Wool & decoration ---
+    "white_wool": Recipe(
+        output="white_wool", output_count=1,
+        pattern=["##", "##"],
+        key={"#": "string"},
+        needs_table=False,
+    ),
+    "bricks": Recipe(
+        output="bricks", output_count=1,
+        pattern=["##", "##"],
+        key={"#": "brick"},
+        needs_table=False,
+    ),
+    "jack_o_lantern": Recipe(
+        output="jack_o_lantern", output_count=1,
+        pattern=["P", "T"],
+        key={"P": "carved_pumpkin", "T": "torch"},
+        needs_table=False,
+    ),
+
+    # --- Paper, books, navigation ---
+    "paper": Recipe(
+        output="paper", output_count=3,
+        pattern=["###"],
+        key={"#": "sugar_cane"},
+        needs_table=True,
+    ),
+    "book": Recipe(
+        output="book", output_count=1,
+        pattern=["PP", "PL"],
+        key={"P": "paper", "L": "leather"},
+        needs_table=False,
+    ),
+    "bookshelf": Recipe(
+        output="bookshelf", output_count=1,
+        pattern=["###", "BBB", "###"],
+        key={"#": "oak_planks", "B": "book"},
+        needs_table=True,
+    ),
+    "compass": Recipe(
+        output="compass", output_count=1,
+        pattern=[" I ", "IRI", " I "],
+        key={"I": "iron_ingot", "R": "redstone"},
+        needs_table=True,
+    ),
+    "clock": Recipe(
+        output="clock", output_count=1,
+        pattern=[" G ", "GRG", " G "],
+        key={"G": "gold_ingot", "R": "redstone"},
+        needs_table=True,
+    ),
+    # `map` recipe yields filled_map (the empty/explorable version).
+    "map": Recipe(
+        output="filled_map", output_count=1,
+        pattern=["PPP", "PCP", "PPP"],
+        key={"P": "paper", "C": "compass"},
+        needs_table=True,
+    ),
+
+    # --- Transport ---
+    "oak_boat": Recipe(
+        output="oak_boat", output_count=1,
+        pattern=["# #", "###"],
+        key={"#": "oak_planks"},
+        needs_table=True,
+    ),
+    "minecart": Recipe(
+        output="minecart", output_count=1,
+        pattern=["# #", "###"],
+        key={"#": "iron_ingot"},
+        needs_table=True,
+    ),
+    "rail": Recipe(
+        output="rail", output_count=16,
+        pattern=["# #", "#S#", "# #"],
+        key={"#": "iron_ingot", "S": "stick"},
+        needs_table=True,
+    ),
+
+    # --- Redstone components ---
+    "redstone_torch": Recipe(
+        output="redstone_torch", output_count=1,
+        pattern=["R", "S"],
+        key={"R": "redstone", "S": "stick"},
+        needs_table=False,
+    ),
+    "redstone_lamp": Recipe(
+        output="redstone_lamp", output_count=1,
+        pattern=[" R ", "RGR", " R "],
+        key={"R": "redstone", "G": "glowstone"},
+        needs_table=True,
+    ),
+    "repeater": Recipe(
+        output="repeater", output_count=1,
+        pattern=["TRT", "###"],
+        key={"T": "redstone_torch", "R": "redstone", "#": "stone"},
+        needs_table=True,
+    ),
+
+    # --- Utility blocks ---
+    "hopper": Recipe(
+        output="hopper", output_count=1,
+        pattern=["I I", "ICI", " I "],
+        key={"I": "iron_ingot", "C": "chest"},
+        needs_table=True,
+    ),
+    "dispenser": Recipe(
+        output="dispenser", output_count=1,
+        pattern=["###", "#B#", "#R#"],
+        key={"#": "cobblestone", "B": "bow", "R": "redstone"},
+        needs_table=True,
+    ),
+    "dropper": Recipe(
+        output="dropper", output_count=1,
+        pattern=["###", "# #", "#R#"],
+        key={"#": "cobblestone", "R": "redstone"},
+        needs_table=True,
+    ),
+    "piston": Recipe(
+        output="piston", output_count=1,
+        pattern=["###", "CIC", "CRC"],
+        key={"#": "oak_planks", "C": "cobblestone", "I": "iron_ingot", "R": "redstone"},
+        needs_table=True,
+    ),
+
+    # --- Misc tools ---
     "bucket": Recipe(
         output="bucket", output_count=1,
         pattern=["# #", " # "],
