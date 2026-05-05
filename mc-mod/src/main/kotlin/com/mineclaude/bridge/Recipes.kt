@@ -74,20 +74,105 @@ internal object Recipes {
         "stone_axe" to Recipe("stone_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "cobblestone", 'S' to "stick"), true),
         "stone_shovel" to Recipe("stone_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "cobblestone", 'S' to "stick"), true),
         "stone_sword" to Recipe("stone_sword", 1, listOf("#", "#", "S"), mapOf('#' to "cobblestone", 'S' to "stick"), true),
+        "stone_hoe" to Recipe("stone_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "cobblestone", 'S' to "stick"), true),
 
         // --- Iron tools ---
         "iron_pickaxe" to Recipe("iron_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
         "iron_axe" to Recipe("iron_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
         "iron_shovel" to Recipe("iron_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
         "iron_sword" to Recipe("iron_sword", 1, listOf("#", "#", "S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
+        "iron_hoe" to Recipe("iron_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
 
-        // --- Armor ---
+        // --- Diamond tools ---
+        "diamond_pickaxe" to Recipe("diamond_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "diamond", 'S' to "stick"), true),
+        "diamond_axe" to Recipe("diamond_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "diamond", 'S' to "stick"), true),
+        "diamond_shovel" to Recipe("diamond_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "diamond", 'S' to "stick"), true),
+        "diamond_sword" to Recipe("diamond_sword", 1, listOf("#", "#", "S"), mapOf('#' to "diamond", 'S' to "stick"), true),
+        "diamond_hoe" to Recipe("diamond_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "diamond", 'S' to "stick"), true),
+
+        // --- Golden tools ---
+        "golden_pickaxe" to Recipe("golden_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
+        "golden_axe" to Recipe("golden_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
+        "golden_shovel" to Recipe("golden_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
+        "golden_sword" to Recipe("golden_sword", 1, listOf("#", "#", "S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
+        "golden_hoe" to Recipe("golden_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
+
+        // --- Iron armor ---
         "iron_helmet" to Recipe("iron_helmet", 1, listOf("###", "# #"), mapOf('#' to "iron_ingot"), true),
         "iron_chestplate" to Recipe("iron_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "iron_ingot"), true),
         "iron_leggings" to Recipe("iron_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "iron_ingot"), true),
         "iron_boots" to Recipe("iron_boots", 1, listOf("# #", "# #"), mapOf('#' to "iron_ingot"), true),
 
-        // --- Misc ---
+        // --- Diamond armor ---
+        "diamond_helmet" to Recipe("diamond_helmet", 1, listOf("###", "# #"), mapOf('#' to "diamond"), true),
+        "diamond_chestplate" to Recipe("diamond_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "diamond"), true),
+        "diamond_leggings" to Recipe("diamond_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "diamond"), true),
+        "diamond_boots" to Recipe("diamond_boots", 1, listOf("# #", "# #"), mapOf('#' to "diamond"), true),
+
+        // --- Golden armor ---
+        "golden_helmet" to Recipe("golden_helmet", 1, listOf("###", "# #"), mapOf('#' to "gold_ingot"), true),
+        "golden_chestplate" to Recipe("golden_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "gold_ingot"), true),
+        "golden_leggings" to Recipe("golden_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "gold_ingot"), true),
+        "golden_boots" to Recipe("golden_boots", 1, listOf("# #", "# #"), mapOf('#' to "gold_ingot"), true),
+
+        // --- Leather armor ---
+        "leather_helmet" to Recipe("leather_helmet", 1, listOf("###", "# #"), mapOf('#' to "leather"), true),
+        "leather_chestplate" to Recipe("leather_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "leather"), true),
+        "leather_leggings" to Recipe("leather_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "leather"), true),
+        "leather_boots" to Recipe("leather_boots", 1, listOf("# #", "# #"), mapOf('#' to "leather"), true),
+
+        // --- Storage blocks (compress 9 → 1) ---
+        "iron_block" to Recipe("iron_block", 1, listOf("###", "###", "###"), mapOf('#' to "iron_ingot"), true),
+        "gold_block" to Recipe("gold_block", 1, listOf("###", "###", "###"), mapOf('#' to "gold_ingot"), true),
+        "diamond_block" to Recipe("diamond_block", 1, listOf("###", "###", "###"), mapOf('#' to "diamond"), true),
+        "redstone_block" to Recipe("redstone_block", 1, listOf("###", "###", "###"), mapOf('#' to "redstone"), true),
+        "emerald_block" to Recipe("emerald_block", 1, listOf("###", "###", "###"), mapOf('#' to "emerald"), true),
+        "lapis_block" to Recipe("lapis_block", 1, listOf("###", "###", "###"), mapOf('#' to "lapis_lazuli"), true),
+        "coal_block" to Recipe("coal_block", 1, listOf("###", "###", "###"), mapOf('#' to "coal"), true),
+
+        // --- Survival essentials ---
+        // Bed: alias `bed` → white_bed. Other wool colors yield other-colored beds; only white is stocked here for now.
+        "bed" to Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "oak_planks"), true),
+        "white_bed" to Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "oak_planks"), true),
+        "shield" to Recipe("shield", 1, listOf("#I#", "###", " # "), mapOf('#' to "oak_planks", 'I' to "iron_ingot"), true),
+        "bread" to Recipe("bread", 1, listOf("###"), mapOf('#' to "wheat"), true),
+        "flint_and_steel" to Recipe("flint_and_steel", 1, listOf("I ", " F"), mapOf('I' to "iron_ingot", 'F' to "flint"), false),
+        "fishing_rod" to Recipe("fishing_rod", 1, listOf("  #", " #X", "# X"), mapOf('#' to "stick", 'X' to "string"), true),
+        "bow" to Recipe("bow", 1, listOf(" #X", "# X", " #X"), mapOf('#' to "stick", 'X' to "string"), true),
+        "arrow" to Recipe("arrow", 4, listOf("F", "S", "T"), mapOf('F' to "flint", 'S' to "stick", 'T' to "feather"), true),
+        "cake" to Recipe("cake", 1, listOf("MMM", "SES", "WWW"), mapOf('M' to "milk_bucket", 'S' to "sugar", 'E' to "egg", 'W' to "wheat"), true),
+
+        // --- Wool & decoration ---
+        "white_wool" to Recipe("white_wool", 1, listOf("##", "##"), mapOf('#' to "string"), false),
+        "bricks" to Recipe("bricks", 1, listOf("##", "##"), mapOf('#' to "brick"), false),
+        "jack_o_lantern" to Recipe("jack_o_lantern", 1, listOf("P", "T"), mapOf('P' to "carved_pumpkin", 'T' to "torch"), false),
+
+        // --- Paper, books, navigation ---
+        "paper" to Recipe("paper", 3, listOf("###"), mapOf('#' to "sugar_cane"), true),
+        "book" to Recipe("book", 1, listOf("PP", "PL"), mapOf('P' to "paper", 'L' to "leather"), false),
+        "bookshelf" to Recipe("bookshelf", 1, listOf("###", "BBB", "###"), mapOf('#' to "oak_planks", 'B' to "book"), true),
+        "compass" to Recipe("compass", 1, listOf(" I ", "IRI", " I "), mapOf('I' to "iron_ingot", 'R' to "redstone"), true),
+        "clock" to Recipe("clock", 1, listOf(" G ", "GRG", " G "), mapOf('G' to "gold_ingot", 'R' to "redstone"), true),
+        // `map` recipe yields filled_map (the empty/explorable version) — name resolution at the slot-0 check needs the actual item id.
+        "map" to Recipe("filled_map", 1, listOf("PPP", "PCP", "PPP"), mapOf('P' to "paper", 'C' to "compass"), true),
+
+        // --- Transport ---
+        "oak_boat" to Recipe("oak_boat", 1, listOf("# #", "###"), mapOf('#' to "oak_planks"), true),
+        "minecart" to Recipe("minecart", 1, listOf("# #", "###"), mapOf('#' to "iron_ingot"), true),
+        "rail" to Recipe("rail", 16, listOf("# #", "#S#", "# #"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
+
+        // --- Redstone components ---
+        "redstone_torch" to Recipe("redstone_torch", 1, listOf("R", "S"), mapOf('R' to "redstone", 'S' to "stick"), false),
+        "redstone_lamp" to Recipe("redstone_lamp", 1, listOf(" R ", "RGR", " R "), mapOf('R' to "redstone", 'G' to "glowstone"), true),
+        "repeater" to Recipe("repeater", 1, listOf("TRT", "###"), mapOf('T' to "redstone_torch", 'R' to "redstone", '#' to "stone"), true),
+
+        // --- Utility blocks ---
+        "hopper" to Recipe("hopper", 1, listOf("I I", "ICI", " I "), mapOf('I' to "iron_ingot", 'C' to "chest"), true),
+        "dispenser" to Recipe("dispenser", 1, listOf("###", "#B#", "#R#"), mapOf('#' to "cobblestone", 'B' to "bow", 'R' to "redstone"), true),
+        "dropper" to Recipe("dropper", 1, listOf("###", "# #", "#R#"), mapOf('#' to "cobblestone", 'R' to "redstone"), true),
+        "piston" to Recipe("piston", 1, listOf("###", "CIC", "CRC"), mapOf('#' to "oak_planks", 'C' to "cobblestone", 'I' to "iron_ingot", 'R' to "redstone"), true),
+
+        // --- Misc tools ---
         "bucket" to Recipe("bucket", 1, listOf("# #", " # "), mapOf('#' to "iron_ingot"), true),
         "ladder" to Recipe("ladder", 3, listOf("# #", "###", "# #"), mapOf('#' to "stick"), true),
         "bowl" to Recipe("bowl", 4, listOf("# #", " # "), mapOf('#' to "oak_planks"), true),

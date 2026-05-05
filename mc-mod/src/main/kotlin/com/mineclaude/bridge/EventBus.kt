@@ -22,10 +22,12 @@ import org.slf4j.LoggerFactory
  *   - death / respawn   (alive↔dead transitions in END_CLIENT_TICK)
  *   - damage_taken      (mixin on network handler stashes [pendingDamage];
  *                        END_CLIENT_TICK reads + clears + emits)
- *   - entered_lava / exited_lava   (END_CLIENT_TICK edge detection,
- *                                   2-tick debounce on entry)
- *   - started_drowning / stopped_drowning   (END_CLIENT_TICK edge on
- *                                            air ≤ 60 while submerged)
+ *   - entered_lava      (END_CLIENT_TICK edge detection, 2-tick debounce
+ *                        on entry; the agent's reflex handler awaits
+ *                        escape completion, so no end-of-hazard event
+ *                        is needed)
+ *   - started_drowning  (END_CLIENT_TICK edge on air ≤ 60 while submerged;
+ *                        same await-completion model as entered_lava)
  *   - tool_broke        (END_CLIENT_TICK detects the held damageable
  *                        stack vanishing without a slot change)
  *
@@ -203,7 +205,12 @@ object EventBus {
                     }
                 }
 
-                // 3. Lava edge — debounce entry to skip jump-overs.
+                // 3. Lava edge — debounce entry to skip jump-overs. We
+                // still flip wasInLava on exit so a fresh re-entry fires
+                // a new entered_lava event, but we don't emit a paired
+                // exited_lava: the agent's reflex handler awaits escape
+                // completion before resuming Claude, so an end-of-hazard
+                // signal would be redundant.
                 val inLava = player.isInLava
                 if (inLava) {
                     if (!wasInLava) {
@@ -215,22 +222,19 @@ object EventBus {
                     }
                 } else {
                     lavaTickCount = 0
-                    if (wasInLava) {
-                        wasInLava = false
-                        pushEvent("exited_lava")
-                    }
+                    wasInLava = false
                 }
 
                 // 4. Drowning edge — air drops below threshold while head
                 // is in water. Use isSubmergedInWater (eyes in water) so
-                // standing chest-deep doesn't fire.
+                // standing chest-deep doesn't fire. Same as lava: no paired
+                // stopped_drowning event; the handler awaits its escape.
                 val drowning = player.isSubmergedInWater && player.air <= DROWNING_AIR_THRESHOLD
                 if (drowning && !wasDrowning) {
                     wasDrowning = true
                     pushEvent("started_drowning")
-                } else if (!drowning && wasDrowning) {
+                } else if (!drowning) {
                     wasDrowning = false
-                    pushEvent("stopped_drowning")
                 }
 
                 // 5. Tool broke — held mainhand stack disappeared in-place.
