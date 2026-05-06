@@ -62,7 +62,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `POST /craft` `{item, count}` — opens crafting screen, places ingredients, extracts output
 - `POST /furnace/load`, `GET /furnace/inspect`, `POST /furnace/extract` — furnace lifecycle
 - `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius
-- `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`)
+- `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`). Optional aim: `?yaw=&pitch=` (degrees) **or** `?look_at_x=&look_at_y=&look_at_z=` (point eye at a world coord). New rotation persists. Aimed shots add ~200ms (render-settle window) before the grab
 - `GET /video/stream` — MJPEG video stream of game view
 - `GET /health` — bridge liveness + ported endpoint list
 - `WS /events` — chat / death / respawn event stream

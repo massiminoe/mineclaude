@@ -95,6 +95,9 @@ class Agent:
         self._chat_trigger: asyncio.Event = asyncio.Event()
         self._chat_worker_task: asyncio.Task | None = None
         self._active_chat_task: asyncio.Task | None = None
+        # Set in `_run_chat_turn`; cleared in its `finally`. While a turn is
+        # active, holds a list to restore `self.messages` to on cancellation.
+        self._rollback_messages: list[dict[str, Any]] | None = None
 
         # `!`-prefixed chat messages are reserved as agent commands. They
         # never reach Claude or `self.messages`. Add new commands here.
@@ -369,11 +372,15 @@ class Agent:
             self._session_loggers[session_id] = SessionLogger(session_id)
         self._current_session_logger = self._session_loggers[session_id]
 
-        # Snapshot AFTER the user message has been spliced in (that happened
-        # in `_flush_pending_inputs` before this task spawned). Truncating to
-        # this point on cancellation removes plan/memory/gameState injections
-        # and any partial assistant/tool blocks, but keeps the user message.
-        snapshot_len = len(self.messages)
+        # Snapshot the message list (shallow copy of the spine — dicts are
+        # shared) right after the user message has been spliced in by
+        # `_flush_pending_inputs`. On cancellation we restore this exact list
+        # so plan/memory/gameState injections and partial tool chains vanish
+        # while the user message survives. Refreshed by `_compact_if_needed`
+        # whenever compaction rewrites `self.messages` mid-turn — otherwise
+        # a length-based snapshot points into the wrong place after compaction
+        # and would slice through a tool_use/tool_result pair.
+        self._rollback_messages = list(self.messages)
         try:
             if _langfuse_available and propagate_attributes:
                 with propagate_attributes(user_id=username, session_id=session_id):
@@ -381,13 +388,12 @@ class Agent:
             else:
                 await self._handle_chat_traced(data)
         except asyncio.CancelledError:
-            # Trim back to a clean message history. Crucially, this leaves
-            # the user message that was added pre-snapshot — preserving
-            # user input across preemption, per design.
-            del self.messages[snapshot_len:]
+            self.messages = list(self._rollback_messages)
             await self._emit("conversation:update", self.messages)
             self._slog("chat_preempted", reason="cancelled")
             raise
+        finally:
+            self._rollback_messages = None
 
     def _slog(self, event: str, **data: Any) -> None:
         """Emit to the current session logger (no-op if none is set)."""
@@ -464,6 +470,7 @@ class Agent:
                 logger.error(f"Claude API error: {e}")
                 self._slog("exception", stage="claude_send", exc=type(e).__name__, message=str(e))
                 await self._send_chat("Sorry, I had a brain glitch. Try again?")
+                hit_cap = False
                 break
 
             logger.info(f"Claude response: stop_reason={response.stop_reason}, blocks={len(response.content)}")
@@ -661,14 +668,29 @@ class Agent:
                 return f"memory saved ({lines} lines)"
 
             elif name == "screenshot":
-                resp = await self.bridge.screenshot()
+                yaw = input_data.get("yaw")
+                pitch = input_data.get("pitch")
+                look_at_raw = input_data.get("look_at")
+                look_at: tuple[float, float, float] | None = None
+                if look_at_raw is not None:
+                    if not isinstance(look_at_raw, (list, tuple)) or len(look_at_raw) != 3:
+                        return "Screenshot failed: look_at must be [x, y, z]"
+                    look_at = (float(look_at_raw[0]), float(look_at_raw[1]), float(look_at_raw[2]))
+                resp = await self.bridge.screenshot(
+                    yaw=yaw, pitch=pitch, look_at=look_at,
+                )
                 if resp.status != "success":
                     return f"Screenshot failed: {resp.message}"
+                aim_desc = ""
+                if look_at is not None:
+                    aim_desc = f", aimed at {look_at}"
+                elif yaw is not None or pitch is not None:
+                    aim_desc = f", yaw={yaw} pitch={pitch}"
                 return {
                     "_type": "image_tool_result",
                     "image": resp.data["image"],
                     "format": resp.data.get("format", "jpeg"),
-                    "text": f"Screenshot captured ({resp.data.get('width', '?')}x{resp.data.get('height', '?')})",
+                    "text": f"Screenshot captured ({resp.data.get('width', '?')}x{resp.data.get('height', '?')}){aim_desc}",
                 }
 
             else:
@@ -861,6 +883,11 @@ class Agent:
             return False
         before = len(self.messages)
         self.messages = new_messages
+        # Refresh the cancellation-rollback snapshot so a preempt after this
+        # point restores to the post-compaction list rather than to a stale
+        # pre-compaction length that would cut through a tool_use/result pair.
+        if self._rollback_messages is not None:
+            self._rollback_messages = list(self.messages)
         self._slog(
             "compaction",
             messages_before=before,

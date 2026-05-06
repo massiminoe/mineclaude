@@ -145,11 +145,12 @@ return "Status check complete"
 ```
 
 ## Vision
-- Use the `screenshot` tool to see your current first-person view
+- Use the `screenshot` tool to see the first-person view
 - Useful for: verifying builds, checking terrain, reading signs, surveying surroundings
 - You will see the actual game image and can describe what you see
 - Each screenshot adds some latency — use when visual info would genuinely help
 - The gameState already gives you position, health, inventory — only screenshot when you need visual context
+- By default the camera points wherever the player happens to be facing (often arbitrary after Baritone). Aim it deliberately with `look_at: [x, y, z]` (point eye at a coord — usually a block/entity from gameState) or explicit `yaw`/`pitch` (yaw 0=south, 90=west, 180=north, -90=east; pitch 0=horizon, -90=up, 90=down)
 
 ## Action Queue
 Your newAction code runs sequentially — by the time you pick your next tool, the previous newAction is done, and the latest queue state (running/pending/last) is already in your gameState. Actions have a 5-minute timeout.
@@ -226,6 +227,7 @@ writeMemory replaces the whole file. To remove one entry, omit it from the new c
 - **Match preparation to how hard a task is to abort.** Before committing to anything that takes you far from base or runs uninterruptibly for a while — deep mining, long expeditions, fights you can't easily disengage from — pause and ask: "what would I regret not having out there?" Tools wear out, hunger ticks, drops accumulate, mobs spawn in shadows. Bringing one more pickaxe or stack of food is cheap; climbing 100 blocks back up to fetch what you forgot isn't. A diamond run isn't *go mine* — it's *provision, then go mine, then return*.
 - Always respond to players — even if just to acknowledge
 - Eat food when hunger is below 15
+- **Day/night cycle:** the gameState `Time:` line is already parsed into day, tick-within-day (0–24000), and phase. Hostile mobs spawn during `night` (tick 13000–23000 in each day); plan shelter and combat readiness around the phase, not the raw tick count.
 - To descend, ALWAYS dig a 2-high staircase: step down one block, step forward one block, repeat. Never dig straight down (you fall into lava / can't climb back out). The staircase lets you walk back up without placing blocks — critical when you've just mined a scarce resource like cobblestone and can't afford to pillar with it.
 - Don't attack players unless asked
 - If you take damage, check what's happening before continuing
@@ -250,7 +252,7 @@ def format_game_state(
         f"Health: {status.get('health', '?')}/20",
         f"Hunger: {status.get('hunger', '?')}/20",
         f"Biome: {status.get('biome', 'unknown')}",
-        f"Time: {status.get('time', '?')}",
+        _format_time(status.get("time")),
         f"Inventory ({len(inv)} items): {_format_inventory(inv)}",
     ]
 
@@ -276,6 +278,25 @@ def format_game_state(
             lines.append(rendered)
 
     return "\n".join(lines)
+
+
+def _format_time(time_val: Any) -> str:
+    if not isinstance(time_val, (int, float)):
+        return f"Time: {time_val if time_val is not None else '?'}"
+    t = int(time_val)
+    day = t // 24000 + 1
+    in_day = t % 24000
+    if in_day < 6000:
+        phase = "morning"
+    elif in_day < 12000:
+        phase = "afternoon"
+    elif in_day < 13000:
+        phase = "dusk"
+    elif in_day < 23000:
+        phase = "night"
+    else:
+        phase = "dawn"
+    return f"Time: day {day}, tick {in_day}/24000 ({phase})"
 
 
 def _format_inventory(inv: list[dict]) -> str:

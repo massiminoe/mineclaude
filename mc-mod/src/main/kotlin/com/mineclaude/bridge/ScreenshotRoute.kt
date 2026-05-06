@@ -2,6 +2,7 @@ package com.mineclaude.bridge
 
 import com.google.gson.Gson
 import com.sun.net.httpserver.HttpExchange
+import net.minecraft.client.MinecraftClient
 import org.slf4j.LoggerFactory
 import java.io.ByteArrayOutputStream
 import java.net.URLDecoder
@@ -12,14 +13,20 @@ import java.util.concurrent.TimeUnit
 /**
  * `GET /screenshot` — single-frame X11 framebuffer grab.
  *
- * Mirrors `bridge/screenshot.py` bit-for-bit. We deliberately don't use
- * MC's `ScreenshotRecorder` / `NativeImage.writeTo()` because they
- * produce 0-byte PNGs on the ARM64 Mesa llvmpipe stack the deployment
- * container actually renders with. ffmpeg's x11grab is the only reliable
- * capture path here, and the mod runs in the same container as Xvfb so
- * `:99` is reachable from a child process.
+ * We deliberately don't use MC's `ScreenshotRecorder` /
+ * `NativeImage.writeTo()` because they produce 0-byte PNGs on the ARM64
+ * Mesa llvmpipe stack the deployment container actually renders with.
+ * ffmpeg's x11grab is the only reliable capture path here, and the mod
+ * runs in the same container as Xvfb so `:99` is reachable from a child
+ * process.
  *
- * Defaults match legacy: jpeg, quality=80, 854x480, 5 s timeout.
+ * Optional aim params let Claude point the camera before the snap so the
+ * shot isn't whatever direction Baritone happened to leave the player
+ * facing. Either explicit `yaw`/`pitch` (degrees, MC convention: yaw 0=south,
+ * 90=west, 180=north, -90=east; pitch 0=horizontal, -90=up, 90=down) or
+ * `look_at_x`/`look_at_y`/`look_at_z` (point the eye at a world coord). The
+ * new rotation persists after the capture — Baritone clobbers it on the next
+ * movement command anyway.
  */
 object ScreenshotRoute {
     private val log = LoggerFactory.getLogger("mineclaude-bridge.screenshot")!!
@@ -30,6 +37,12 @@ object ScreenshotRoute {
     private const val HEIGHT = 480
     private const val SIZE = "${WIDTH}x${HEIGHT}"
     private const val FFMPEG_TIMEOUT_S = 5L
+
+    // After we mutate yaw/pitch on the tick thread we need the renderer to
+    // produce at least one frame at the new orientation before ffmpeg grabs.
+    // 4 ticks (~200ms) is comfortably past one full lerp cycle from prev→current
+    // so the captured frame is fully settled, not interpolated.
+    private const val AIM_SETTLE_MS = 200L
 
     fun register(bridge: HttpBridge) {
         bridge.addRawRoute("GET", "/screenshot") { ex -> handle(ex) }
@@ -44,6 +57,24 @@ object ScreenshotRoute {
         if (format != "jpeg" && format != "png") {
             writeJsonError(ex, 400, "format must be 'jpeg' or 'png'")
             return
+        }
+
+        val aim = try {
+            parseAim(params)
+        } catch (e: IllegalArgumentException) {
+            writeJsonError(ex, 400, e.message ?: "invalid aim params")
+            return
+        }
+
+        if (aim != null) {
+            try {
+                applyAim(aim)
+            } catch (e: Exception) {
+                log.error("Aim failed", e)
+                writeJsonError(ex, 500, "Aim failed: ${e.message}")
+                return
+            }
+            try { Thread.sleep(AIM_SETTLE_MS) } catch (_: InterruptedException) {}
         }
 
         val bytes = try {
@@ -128,6 +159,46 @@ object ScreenshotRoute {
         ex.responseHeaders.add("Content-Type", "application/json")
         ex.sendResponseHeaders(status, payload.size.toLong())
         ex.responseBody.use { it.write(payload) }
+    }
+
+    private sealed class Aim {
+        data class YawPitch(val yaw: Float, val pitch: Float) : Aim()
+        data class LookAt(val x: Double, val y: Double, val z: Double) : Aim()
+    }
+
+    private fun parseAim(params: Map<String, String>): Aim? {
+        val yaw = params["yaw"]?.toFloatOrNull()
+        val pitch = params["pitch"]?.toFloatOrNull()
+        val lx = params["look_at_x"]?.toDoubleOrNull()
+        val ly = params["look_at_y"]?.toDoubleOrNull()
+        val lz = params["look_at_z"]?.toDoubleOrNull()
+        val hasYawPitch = yaw != null || pitch != null
+        val lookAtParts = listOf(lx, ly, lz).count { it != null }
+        if (hasYawPitch && lookAtParts > 0) {
+            throw IllegalArgumentException("pass either yaw/pitch or look_at_x/y/z, not both")
+        }
+        if (lookAtParts in 1..2) {
+            throw IllegalArgumentException("look_at requires all of look_at_x, look_at_y, look_at_z")
+        }
+        if (lookAtParts == 3) return Aim.LookAt(lx!!, ly!!, lz!!)
+        if (hasYawPitch) {
+            // Either-or: missing one defaults to current orientation, applied
+            // on the tick thread by [applyAim] which has live access to player.
+            return Aim.YawPitch(yaw ?: Float.NaN, pitch ?: Float.NaN)
+        }
+        return null
+    }
+
+    private fun applyAim(aim: Aim) = TickThread.submitAndWait(2_000) {
+        val player = MinecraftClient.getInstance().player
+            ?: throw RuntimeException("no player loaded")
+        when (aim) {
+            is Aim.YawPitch -> {
+                if (!aim.yaw.isNaN()) player.yaw = aim.yaw
+                if (!aim.pitch.isNaN()) player.pitch = aim.pitch.coerceIn(-90f, 90f)
+            }
+            is Aim.LookAt -> WorldHelpers.lookAtPosition(player, aim.x, aim.y, aim.z)
+        }
     }
 
     private fun parseQuery(rawQuery: String?): Map<String, String> {

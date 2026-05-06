@@ -58,8 +58,31 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "screenshot",
-        "description": "Take a screenshot of your current first-person view. Returns the image for visual analysis. Use when you need to see what's around you, verify a build, check terrain, or when text-based block data isn't sufficient.",
-        "input_schema": {"type": "object", "properties": {}},
+        "description": (
+            "Take a screenshot of the first-person view. Returns the image for visual analysis. "
+            "Use when you need to see what's around you, verify a build, check terrain, or when "
+            "text-based block data isn't sufficient.\n\n"
+            "By default the camera points wherever the player happens to be facing (often arbitrary "
+            "after Baritone movement). Aim it deliberately by passing either explicit yaw/pitch "
+            "(MC convention: yaw 0=south, 90=west, 180=north, -90=east; pitch 0=horizon, -90=up, "
+            "90=down) or `look_at` to point the eye at a world coord (often more intuitive — pass "
+            "the position of a block or entity from gameState/nearby data). The two are mutually "
+            "exclusive. The new rotation persists after the capture."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "yaw": {"type": "number", "description": "Yaw in degrees (optional)"},
+                "pitch": {"type": "number", "description": "Pitch in degrees, clamped to [-90, 90] (optional)"},
+                "look_at": {
+                    "type": "array",
+                    "description": "[x, y, z] world coord to aim the eye at. Mutually exclusive with yaw/pitch.",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                },
+            },
+        },
     },
     {
         "name": "writePlan",

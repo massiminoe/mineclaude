@@ -63,7 +63,12 @@ class BridgeClient(Protocol):
     async def discard(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
-    async def screenshot(self) -> BridgeResponse: ...
+    async def screenshot(
+        self,
+        yaw: float | None = None,
+        pitch: float | None = None,
+        look_at: tuple[float, float, float] | None = None,
+    ) -> BridgeResponse: ...
     async def events(self, callback) -> None: ...
     async def close(self) -> None: ...
 
@@ -199,8 +204,25 @@ class RealBridgeClient:
     async def surface(self, timeout: float = 2.0) -> BridgeResponse:
         return self._parse(await self._http.post("/surface", json={"timeout": timeout}))
 
-    async def screenshot(self) -> BridgeResponse:
-        return self._parse(await self._http.get("/screenshot", params={"format": "jpeg", "quality": "80"}))
+    async def screenshot(
+        self,
+        yaw: float | None = None,
+        pitch: float | None = None,
+        look_at: tuple[float, float, float] | None = None,
+    ) -> BridgeResponse:
+        params: dict[str, str] = {"format": "jpeg", "quality": "80"}
+        if look_at is not None:
+            if yaw is not None or pitch is not None:
+                return BridgeResponse("error", "pass either yaw/pitch or look_at, not both")
+            params["look_at_x"] = str(look_at[0])
+            params["look_at_y"] = str(look_at[1])
+            params["look_at_z"] = str(look_at[2])
+        else:
+            if yaw is not None:
+                params["yaw"] = str(yaw)
+            if pitch is not None:
+                params["pitch"] = str(pitch)
+        return self._parse(await self._http.get("/screenshot", params=params))
 
     async def events(self, callback) -> None:
         """Connect to WS event stream with reconnection backoff."""
@@ -583,7 +605,12 @@ class MockBridgeClient:
     async def surface(self, timeout: float = 2.0) -> BridgeResponse:
         return BridgeResponse("success", "Surfaced", {"surfaced": True, "ticks": 0})
 
-    async def screenshot(self) -> BridgeResponse:
+    async def screenshot(
+        self,
+        yaw: float | None = None,
+        pitch: float | None = None,
+        look_at: tuple[float, float, float] | None = None,
+    ) -> BridgeResponse:
         import base64
         # 1x1 red pixel JPEG
         dummy = base64.b64encode(b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9').decode()
