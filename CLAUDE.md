@@ -61,6 +61,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `POST /surface` — hold forward+jump+sprint via vanilla input keys to surface from full submersion (drowning escape; Baritone can't path from a fully-submerged start)
 - `POST /craft` `{item, count}` — opens crafting screen, places ingredients, extracts output
 - `POST /furnace/load`, `GET /furnace/inspect`, `POST /furnace/extract` — furnace lifecycle
+- `POST /chest/store`, `POST /chest/take` `{x, y, z, items: [{name, count|"all"}]}`, `GET /chest/inspect?x&y&z` — chest I/O. Coords required (no nearest fallback — chests cluster). `count` accepts an int or `"all"`. Partial success is the response shape (`{stored|taken, skipped}`), not an error: chest-full or item-missing returns 200 with the actual delta. Single + double chests handled uniformly via `handler.slots.size − 36` (trailing 36 slots = main inv + hotbar)
 - `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius
 - `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`). Optional aim: `?yaw=&pitch=` (degrees) **or** `?look_at_x=&look_at_y=&look_at_z=` (point eye at a world coord). New rotation persists. Aimed shots add ~200ms (render-settle window) before the grab
 - `GET /video/stream` — MJPEG video stream of game view

@@ -869,11 +869,13 @@ class Agent:
             return False
         if self.claude is None:
             return False
+        summary_info: dict[str, Any] = {}
         try:
             new_messages = await compact(
                 self.claude,
                 self.messages,
                 model=self.compaction_model,
+                on_summary=summary_info.update,
             )
         except Exception:
             logger.exception("compaction failed — history left unchanged")
@@ -892,6 +894,7 @@ class Agent:
             "compaction",
             messages_before=before,
             messages_after=len(self.messages),
+            **summary_info,
         )
         await self._emit("conversation:update", self.messages)
         return True

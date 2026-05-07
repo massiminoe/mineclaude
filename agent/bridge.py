@@ -59,8 +59,23 @@ class BridgeClient(Protocol):
         y: int | None = None,
         z: int | None = None,
     ) -> BridgeResponse: ...
+    async def chest_store(
+        self,
+        x: int,
+        y: int,
+        z: int,
+        items: list[dict[str, Any]],
+    ) -> BridgeResponse: ...
+    async def chest_take(
+        self,
+        x: int,
+        y: int,
+        z: int,
+        items: list[dict[str, Any]],
+    ) -> BridgeResponse: ...
+    async def chest_inspect(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse: ...
-    async def discard(self, item: str, count: int = 1) -> BridgeResponse: ...
+    async def discard(self, slot: int, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
     async def screenshot(
@@ -192,11 +207,41 @@ class RealBridgeClient:
             body["x"], body["y"], body["z"] = x, y, z
         return self._parse(await self._http.post("/furnace/extract", json=body))
 
+    async def chest_store(
+        self,
+        x: int,
+        y: int,
+        z: int,
+        items: list[dict[str, Any]],
+    ) -> BridgeResponse:
+        return self._parse(await self._http.post(
+            "/chest/store",
+            json={"x": x, "y": y, "z": z, "items": items},
+        ))
+
+    async def chest_take(
+        self,
+        x: int,
+        y: int,
+        z: int,
+        items: list[dict[str, Any]],
+    ) -> BridgeResponse:
+        return self._parse(await self._http.post(
+            "/chest/take",
+            json={"x": x, "y": y, "z": z, "items": items},
+        ))
+
+    async def chest_inspect(self, x: int, y: int, z: int) -> BridgeResponse:
+        return self._parse(await self._http.get(
+            "/chest/inspect",
+            params={"x": x, "y": y, "z": z},
+        ))
+
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         return self._parse(await self._http.post("/equip", json={"item": item, "slot": slot}))
 
-    async def discard(self, item: str, count: int = 1) -> BridgeResponse:
-        return self._parse(await self._http.post("/discard", json={"item": item, "count": count}))
+    async def discard(self, slot: int, count: int = 1) -> BridgeResponse:
+        return self._parse(await self._http.post("/discard", json={"slot": slot, "count": count}))
 
     async def chat(self, message: str) -> BridgeResponse:
         return self._parse(await self._http.post("/chat", json={"message": message}))
@@ -252,6 +297,10 @@ class MockBridgeClient:
 
     def __init__(self):
         self._position = {"x": 0.0, "y": 64.0, "z": 0.0}
+        # Chest contents keyed by (x, y, z). Mock treats every chest as a
+        # 27-slot single chest with no stack-size cap; tests assert on
+        # counts and item presence rather than slot layout.
+        self._chests: dict[tuple[int, int, int], list[dict[str, Any]]] = {}
         self._health = 20.0
         self._hunger = 20
         self._inventory: list[dict] = []
@@ -586,17 +635,137 @@ class MockBridgeClient:
             },
         )
 
+    def _resolve_chest(self, x: int, y: int, z: int) -> tuple[bool, str]:
+        """(ok, msg). True if (x,y,z) points at a chest block. Mock treats any
+        nearby_blocks entry named 'chest' or 'trapped_chest' at those coords
+        as a valid chest and lazily allocates an empty contents list."""
+        for b in self._nearby_blocks:
+            if b["x"] == x and b["y"] == y and b["z"] == z:
+                if b["name"] in ("chest", "trapped_chest"):
+                    self._chests.setdefault((x, y, z), [])
+                    return True, ""
+                return False, f"Block at ({x}, {y}, {z}) is '{b['name']}', not a chest."
+        return False, f"No block at ({x}, {y}, {z})."
+
+    async def chest_store(
+        self,
+        x: int,
+        y: int,
+        z: int,
+        items: list[dict[str, Any]],
+    ) -> BridgeResponse:
+        ok, msg = self._resolve_chest(x, y, z)
+        if not ok:
+            return BridgeResponse("error", msg)
+        contents = self._chests[(x, y, z)]
+        stored: list[dict] = []
+        skipped: list[dict] = []
+        for entry in items:
+            name = entry["name"]
+            spec = entry.get("count", "all")
+            have = sum(e["count"] for e in self._inventory if e["name"] == name)
+            target = have if spec == "all" else min(int(spec), have)
+            if target <= 0:
+                skipped.append({"item": name, "reason": "not in inventory", "requested": spec})
+                continue
+            self._remove_from_inventory(name, target)
+            existing = next((c for c in contents if c["name"] == name), None)
+            if existing is None:
+                contents.append({"name": name, "count": target})
+            else:
+                existing["count"] += target
+            stored.append({"item": name, "count": target})
+        return BridgeResponse(
+            "success",
+            f"Stored {sum(s['count'] for s in stored)} item(s)",
+            {
+                "position": {"x": x, "y": y, "z": z},
+                "stored": stored,
+                "skipped": skipped,
+                "method": "simulated",
+            },
+        )
+
+    async def chest_take(
+        self,
+        x: int,
+        y: int,
+        z: int,
+        items: list[dict[str, Any]],
+    ) -> BridgeResponse:
+        ok, msg = self._resolve_chest(x, y, z)
+        if not ok:
+            return BridgeResponse("error", msg)
+        contents = self._chests[(x, y, z)]
+        taken: list[dict] = []
+        skipped: list[dict] = []
+        for entry in items:
+            name = entry["name"]
+            spec = entry.get("count", "all")
+            existing = next((c for c in contents if c["name"] == name), None)
+            have = existing["count"] if existing else 0
+            target = have if spec == "all" else min(int(spec), have)
+            if target <= 0:
+                skipped.append({"item": name, "reason": "not in chest", "requested": spec})
+                continue
+            existing["count"] -= target
+            if existing["count"] == 0:
+                contents.remove(existing)
+            self._add_to_inventory(name, target)
+            taken.append({"item": name, "count": target})
+        return BridgeResponse(
+            "success",
+            f"Took {sum(t['count'] for t in taken)} item(s)",
+            {
+                "position": {"x": x, "y": y, "z": z},
+                "taken": taken,
+                "skipped": skipped,
+                "method": "simulated",
+            },
+        )
+
+    async def chest_inspect(self, x: int, y: int, z: int) -> BridgeResponse:
+        ok, msg = self._resolve_chest(x, y, z)
+        if not ok:
+            return BridgeResponse("error", msg)
+        contents = self._chests[(x, y, z)]
+        slots = [{"slot": i, "item": c["name"], "count": c["count"]} for i, c in enumerate(contents)]
+        totals = {c["name"]: c["count"] for c in contents}
+        return BridgeResponse(
+            "success",
+            f"Chest at ({x}, {y}, {z}) — 27 slots, {len(totals)} item types",
+            {
+                "position": {"x": x, "y": y, "z": z},
+                "size": 27,
+                "slots": slots,
+                "totals": totals,
+                "method": "simulated",
+            },
+        )
+
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         for entry in self._inventory:
             if entry["name"] == item:
                 return BridgeResponse("success", f"Equipped {item} to {slot}")
         return BridgeResponse("error", f"No {item} in inventory")
 
-    async def discard(self, item: str, count: int = 1) -> BridgeResponse:
-        removed = self._remove_from_inventory(item, count)
-        if removed:
-            return BridgeResponse("success", f"Discarded {count} {item}")
-        return BridgeResponse("error", f"No {item} in inventory")
+    async def discard(self, slot: int, count: int = 1) -> BridgeResponse:
+        if slot not in range(0, 36):
+            return BridgeResponse("error", f"slot {slot} out of range (0..35)")
+        if count <= 0:
+            return BridgeResponse("error", "count must be >= 1")
+        entry = next((e for e in self._inventory if e.get("slot") == slot), None)
+        if entry is None:
+            return BridgeResponse("error", f"Slot {slot} is empty")
+        item = entry["name"]
+        dropped = min(entry["count"], count)
+        entry["count"] -= dropped
+        if entry["count"] == 0:
+            self._inventory.remove(entry)
+        return BridgeResponse(
+            "success", f"Discarded {dropped} {item}",
+            {"discarded": dropped, "item": item, "method": "simulated"},
+        )
 
     async def chat(self, message: str) -> BridgeResponse:
         self._chat_log.append(message)

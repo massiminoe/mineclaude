@@ -133,11 +133,47 @@ def make_primitives(
             raise RuntimeError(resp.message)
         return resp.data
 
+    def _normalize_chest_items(items: Any) -> list[dict[str, Any]]:
+        """Accept either [(name, count_or_all), ...] tuples or [{name, count}, ...]
+        dicts. Tuples are the friendlier sandbox shape; dicts match what the
+        bridge receives. Either form is fine."""
+        out: list[dict[str, Any]] = []
+        for entry in items:
+            if isinstance(entry, dict):
+                out.append({"name": entry["name"], "count": entry.get("count", "all")})
+            elif isinstance(entry, (tuple, list)) and len(entry) == 2:
+                out.append({"name": entry[0], "count": entry[1]})
+            elif isinstance(entry, str):
+                out.append({"name": entry, "count": "all"})
+            else:
+                raise ValueError(
+                    f"chest items entry must be (name, count) or {{name, count}}, got {entry!r}"
+                )
+        return out
+
+    async def chestStore(x: int, y: int, z: int, items: Any) -> dict:
+        resp = await bridge.chest_store(x, y, z, _normalize_chest_items(items))
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def chestTake(x: int, y: int, z: int, items: Any) -> dict:
+        resp = await bridge.chest_take(x, y, z, _normalize_chest_items(items))
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def chestInspect(x: int, y: int, z: int) -> dict:
+        resp = await bridge.chest_inspect(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
     async def equip(item: str, slot: str = "hand") -> str:
         return _check(await bridge.equip(item, slot))
 
-    async def discard(item: str, count: int = 1) -> str:
-        return _check(await bridge.discard(item, count))
+    async def discard(slot: int, count: int = 1) -> str:
+        return _check(await bridge.discard(slot, count))
 
     async def getStats() -> dict:
         resp = await bridge.get_status()
@@ -194,6 +230,9 @@ def make_primitives(
         "furnaceLoad": furnaceLoad,
         "furnaceInspect": furnaceInspect,
         "furnaceExtract": furnaceExtract,
+        "chestStore": chestStore,
+        "chestTake": chestTake,
+        "chestInspect": chestInspect,
         "equip": equip,
         "discard": discard,
         "getStats": getStats,

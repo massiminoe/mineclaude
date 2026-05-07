@@ -49,9 +49,21 @@ internal object Recipes {
 
     val RECIPES: Map<String, Recipe> = mapOf(
         // --- Wood processing ---
+        // Each variant is registered explicitly — `craft("acacia_planks", N)` must
+        // succeed even though VARIANT_SUFFIXES would otherwise let an `oak_planks`
+        // ingredient swallow any *_planks. Variant suffixes only help on the
+        // *ingredient* side; the recipe lookup itself needs the exact output name.
         "oak_planks" to Recipe("oak_planks", 4, listOf("#"), mapOf('#' to "oak_log"), false),
         "spruce_planks" to Recipe("spruce_planks", 4, listOf("#"), mapOf('#' to "spruce_log"), false),
         "birch_planks" to Recipe("birch_planks", 4, listOf("#"), mapOf('#' to "birch_log"), false),
+        "jungle_planks" to Recipe("jungle_planks", 4, listOf("#"), mapOf('#' to "jungle_log"), false),
+        "acacia_planks" to Recipe("acacia_planks", 4, listOf("#"), mapOf('#' to "acacia_log"), false),
+        "dark_oak_planks" to Recipe("dark_oak_planks", 4, listOf("#"), mapOf('#' to "dark_oak_log"), false),
+        "mangrove_planks" to Recipe("mangrove_planks", 4, listOf("#"), mapOf('#' to "mangrove_log"), false),
+        "cherry_planks" to Recipe("cherry_planks", 4, listOf("#"), mapOf('#' to "cherry_log"), false),
+        "crimson_planks" to Recipe("crimson_planks", 4, listOf("#"), mapOf('#' to "crimson_stem"), false),
+        "warped_planks" to Recipe("warped_planks", 4, listOf("#"), mapOf('#' to "warped_stem"), false),
+        "bamboo_planks" to Recipe("bamboo_planks", 2, listOf("#"), mapOf('#' to "bamboo_block"), false),
         "stick" to Recipe("stick", 4, listOf("#", "#"), mapOf('#' to "oak_planks"), false),
 
         // --- Basic blocks ---

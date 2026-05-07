@@ -291,6 +291,71 @@ async def test_furnace_load_short_fuel_refunds_input(bridge, prims):
 
 
 @pytest.mark.asyncio
+async def test_chest_store_take_round_trip(bridge, prims):
+    """Store dumps inventory into the chest; take pulls it back."""
+    bridge._add_to_inventory("cobblestone", 64)
+    bridge._add_to_inventory("dirt", 20)
+    bridge._nearby_blocks.append({"name": "chest", "x": 5, "y": 64, "z": 5, "distance": 5.0})
+
+    # Tuple form, mixed "all" + explicit count.
+    result = await prims["chestStore"](5, 64, 5, [("cobblestone", "all"), ("dirt", 10)])
+    assert {"item": "cobblestone", "count": 64} in result["stored"]
+    assert {"item": "dirt", "count": 10} in result["stored"]
+    # Inventory drained per spec.
+    assert sum(i["count"] for i in bridge._inventory if i["name"] == "cobblestone") == 0
+    assert sum(i["count"] for i in bridge._inventory if i["name"] == "dirt") == 10
+
+    # Inspect should show what's in there.
+    state = await prims["chestInspect"](5, 64, 5)
+    assert state["totals"]["cobblestone"] == 64
+    assert state["totals"]["dirt"] == 10
+
+    # Take half the cobble + all the dirt back.
+    result = await prims["chestTake"](5, 64, 5, [("cobblestone", 30), ("dirt", "all")])
+    assert {"item": "cobblestone", "count": 30} in result["taken"]
+    assert {"item": "dirt", "count": 10} in result["taken"]
+    # Inventory regained those.
+    assert sum(i["count"] for i in bridge._inventory if i["name"] == "cobblestone") == 30
+    assert sum(i["count"] for i in bridge._inventory if i["name"] == "dirt") == 20
+    # Chest still has the leftover cobble.
+    state = await prims["chestInspect"](5, 64, 5)
+    assert state["totals"].get("cobblestone") == 34
+    assert "dirt" not in state["totals"]
+
+
+@pytest.mark.asyncio
+async def test_chest_store_skipped_when_item_missing(bridge, prims):
+    """Items not in inventory are reported as skipped rather than failing."""
+    bridge._add_to_inventory("cobblestone", 5)
+    bridge._nearby_blocks.append({"name": "chest", "x": 5, "y": 64, "z": 5, "distance": 5.0})
+
+    result = await prims["chestStore"](5, 64, 5, [("cobblestone", "all"), ("diamond", 1)])
+    assert {"item": "cobblestone", "count": 5} in result["stored"]
+    skipped_items = [s["item"] for s in result["skipped"]]
+    assert "diamond" in skipped_items
+
+
+@pytest.mark.asyncio
+async def test_chest_inspect_rejects_non_chest(bridge, prims):
+    bridge._nearby_blocks.append({"name": "furnace", "x": 5, "y": 64, "z": 5, "distance": 5.0})
+    with pytest.raises(RuntimeError, match="not a chest"):
+        await prims["chestInspect"](5, 64, 5)
+
+
+@pytest.mark.asyncio
+async def test_chest_dict_and_string_input_forms(bridge, prims):
+    """Sandbox accepts dict entries and bare-string entries (== 'all')."""
+    bridge._add_to_inventory("oak_log", 3)
+    bridge._add_to_inventory("acacia_log", 2)
+    bridge._nearby_blocks.append({"name": "chest", "x": 5, "y": 64, "z": 5, "distance": 5.0})
+
+    # Dict form for one, bare-string for the other.
+    result = await prims["chestStore"](5, 64, 5, [{"name": "oak_log", "count": 2}, "acacia_log"])
+    assert {"item": "oak_log", "count": 2} in result["stored"]
+    assert {"item": "acacia_log", "count": 2} in result["stored"]
+
+
+@pytest.mark.asyncio
 async def test_log(prims):
     from agent.primitives import _log_buffer
     _log_buffer.clear()

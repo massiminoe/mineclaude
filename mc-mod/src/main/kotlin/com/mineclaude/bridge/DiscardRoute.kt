@@ -4,19 +4,22 @@ import com.sun.net.httpserver.HttpExchange
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientPlayerEntity
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket
+import net.minecraft.registry.Registries
 import net.minecraft.screen.slot.SlotActionType
 
 /**
- * `POST /discard` — drop items from anywhere in the player's main
- * inventory.
+ * `POST /discard {slot, count}` — drop items from a specific PI slot.
  *
- * Phase 2b extends Phase 2's hotbar-only impl: when the requested item
- * lives in the main inventory (PSH slots 9..35) we SWAP it into a
- * staging hotbar slot, drop, then SWAP it back. The cycle is lossless
- * for the staging slot's prior contents — the original hotbar layout
- * is restored regardless of whether the staging slot was empty or held
- * a different item — and the originally-selected hotbar slot is also
- * restored at the end.
+ * Slot is the PlayerInventory index that `/status` already reports
+ * (0..8 hotbar, 9..35 main). Caller is responsible for picking the right
+ * slot — for damageable items (multiple pickaxes with different
+ * `durability.remaining`) the bridge can't guess which one the agent
+ * meant, so we make the agent name it explicitly.
+ *
+ * Hotbar slot: select + dropSelectedItem. Main inventory: SWAP into a
+ * hotbar staging slot, drop, SWAP back. Both restore the originally-held
+ * hotbar selection. Armor (PI 36..39) and offhand (PI 40) are not
+ * supported here — unequip them via `/equip` first.
  */
 object DiscardRoute {
     fun register(bridge: HttpBridge) {
@@ -27,28 +30,37 @@ object DiscardRoute {
         val body = try { ex.jsonBody() } catch (e: BodyParseException) {
             return HttpBridge.err(e.message ?: "bad body", status = 400)
         }
-        val item = (body["item"] as? String).orEmpty()
+        val slot = (body["slot"] as? Number)?.toInt()
+            ?: return HttpBridge.err("Missing 'slot' parameter (PI index 0..35)", status = 400)
         val count = (body["count"] as? Number)?.toInt() ?: 1
-        if (item.isEmpty()) {
-            return HttpBridge.err("Missing 'item' parameter", status = 400)
+        if (slot !in 0..35) {
+            return HttpBridge.err(
+                "slot $slot out of range — must be 0..8 (hotbar) or 9..35 (main inventory). " +
+                    "Armor and offhand are not discardable; unequip first.",
+                status = 400,
+            )
         }
         if (count <= 0) {
             return HttpBridge.err("count must be >= 1", status = 400)
         }
-        return TickThread.submitAndWait(timeoutMs = 3_000) { dropOnTick(item, count) }
+        return TickThread.submitAndWait(timeoutMs = 3_000) { dropOnTick(slot, count) }
     }
 
-    private fun dropOnTick(item: String, count: Int): BridgeResponse {
+    private fun dropOnTick(slot: Int, count: Int): BridgeResponse {
         val player = MinecraftClient.getInstance().player
             ?: return HttpBridge.err("no player — not connected to a world")
 
-        val found = InventoryHelpers.findItem(player, item)
-            ?: return HttpBridge.err("No $item in inventory")
+        val stack = player.inventory.getStack(slot)
+        if (stack.isEmpty) {
+            return HttpBridge.err("Slot $slot is empty")
+        }
+        val itemName = Registries.ITEM.getId(stack.item).path
 
-        return if (found.inHotbar) {
-            dropFromHotbar(player, item, count, hotbarSlot = found.piSlot)
+        return if (slot < InventoryHelpers.HOTBAR_SIZE) {
+            dropFromHotbar(player, itemName, count, hotbarSlot = slot)
         } else {
-            dropFromMainInventory(player, item, count, sourcePsh = found.pshSlot)
+            // PI 9..35 maps 1:1 to PSH 9..35 for the SWAP.
+            dropFromMainInventory(player, itemName, count, sourcePsh = slot)
         }
     }
 
@@ -69,10 +81,8 @@ object DiscardRoute {
 
         if (dropped == 0) return HttpBridge.err("Failed to drop any $item")
         return HttpBridge.ok(
-            mapOf("discarded" to dropped, "method" to "real"),
-            // Match legacy: top-line uses requested count; data carries
-            // the actual drop count.
-            "Discarded $count $item",
+            mapOf("discarded" to dropped, "item" to item, "method" to "real"),
+            "Discarded $dropped $item",
         )
     }
 
@@ -107,8 +117,8 @@ object DiscardRoute {
 
         if (dropped == 0) return HttpBridge.err("Failed to drop any $item")
         return HttpBridge.ok(
-            mapOf("discarded" to dropped, "method" to "real"),
-            "Discarded $count $item",
+            mapOf("discarded" to dropped, "item" to item, "method" to "real"),
+            "Discarded $dropped $item",
         )
     }
 

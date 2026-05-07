@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Callable
 
 from agent.memory import read_memory, write_memory
 
@@ -199,6 +199,7 @@ async def compact(
     *,
     keep_recent: int = KEEP_RECENT,
     model: str | None = None,
+    on_summary: Callable[[dict[str, Any]], None] | None = None,
 ) -> list[dict[str, Any]] | None:
     """Run one compaction pass and return the new message list.
 
@@ -275,4 +276,17 @@ async def compact(
         ]
     else:
         synthetic = [summary_msg]
+
+    if on_summary is not None:
+        try:
+            on_summary({
+                "summary": summary,
+                "evicted_messages": len(evicted),
+                "kept_messages": len(kept),
+                "transcript_chars": len(transcript),
+                "memory_writes": memory_writes,
+            })
+        except Exception:
+            logger.exception("compaction: on_summary callback raised")
+
     return synthetic + kept
