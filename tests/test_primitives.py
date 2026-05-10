@@ -32,7 +32,7 @@ def prims(bridge):
 
 @pytest.mark.asyncio
 async def test_go_to_position(bridge, prims):
-    result = await prims["goToPosition"](100, 64, 200)
+    result = await prims["goToPosition"](100, 200, y=64)
     assert "Moved to" in result
     assert bridge._position == {"x": 100, "y": 64, "z": 200}
 

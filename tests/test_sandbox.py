@@ -28,7 +28,7 @@ async def test_math(primitives):
 @pytest.mark.asyncio
 async def test_await_primitive(primitives):
     result = await execute(
-        'result = await goToPosition(10, 64, 20)\nreturn result',
+        'result = await goToPosition(10, 20, y=64)\nreturn result',
         primitives,
     )
     assert "Moved to" in result

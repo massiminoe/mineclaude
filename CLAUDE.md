@@ -51,12 +51,13 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `GET /status` — player position, health, hunger, inventory, time
 - `GET /nearby/blocks?r=8` — blocks within radius
 - `GET /nearby/entities?r=32` — entities within radius
-- `POST /goto` `{x, y, z}` — Baritone pathfinding (polls arrival)
+- `POST /goto` `{x, z, y?}` — Baritone pathfinding (polls arrival). `y` is optional; when omitted the bridge resolves the standable y at `(x, z)` server-side via the heightmap (closest to the player's current y)
+- `GET /heightmap?x0=&z0=&w=&h=&near_y=` — bulk-scan a w×h rectangle of standable y values in one tick-thread submission. Capped at 1024 cells per call. Replaces the per-cell `/standable_y` endpoint that tempted nested loops
 - `POST /mine` `{block}` — Baritone mining (fire-and-forget)
 - `POST /follow` `{player}` — Baritone follow
 - `POST /stop` / `POST /explore` — Baritone control
 - `POST /chat` `{message}` — send chat (`#`/`\` via `sendChatMessage`, `/cmd` via `sendChatCommand`, plain text wrapped in `/tellraw` to dodge signed-chat disconnect)
-- `POST /place`, `/break`, `/equip`, `/discard` — world + inventory mutations via `interactionManager`
+- `POST /place` `{block, x, z, y?}`, `/break`, `/equip`, `/discard` — world + inventory mutations via `interactionManager`. `/place` y is optional; auto-resolves to the standable cell (places on the ground at the column)
 - `POST /attack` `{entity_id}` — loops swings until target dies, despawns, leaves reach, or 30s elapses (auto-paths into melee). `POST /attack/stop` cancels the in-flight loop (used by reflex preempt)
 - `POST /surface` — hold forward+jump+sprint via vanilla input keys to surface from full submersion (drowning escape; Baritone can't path from a fully-submerged start)
 - `POST /craft` `{item, count}` — opens crafting screen, places ingredients, extracts output

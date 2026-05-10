@@ -73,8 +73,13 @@ def make_primitives(
 ) -> dict[str, Any]:
     """Create a dict of name → async callable primitives, closed over bridge."""
 
-    async def goToPosition(x: float, y: float, z: float) -> str:
-        return _check(await bridge.goto(x, y, z))
+    async def goToPosition(x: float, z: float, *, y: float | None = None) -> str:
+        """Walk to (x, z). y is optional — when omitted the bridge resolves
+        the standable y server-side via the heightmap (feet/head clearance,
+        non-replaceable floor, closest to your current y). Pin y explicitly
+        only when you mean a specific altitude (e.g. a y you read off
+        gameState or a known landmark)."""
+        return _check(await bridge.goto(x, z, y))
 
     async def goToPlayer(player: str, distance: int = 3) -> str:
         return _check(await bridge.follow(player, distance))
@@ -85,8 +90,13 @@ def make_primitives(
     async def stop() -> str:
         return _check(await bridge.stop())
 
-    async def placeBlock(block_type: str, x: int, y: int, z: int) -> str:
-        return _check(await bridge.place(block_type, x, y, z))
+    async def placeBlock(block_type: str, x: int, z: int, *, y: int | None = None) -> str:
+        """Place a block at (x, z). y is optional — when omitted the bridge
+        places at the standable-y cell at this column, i.e. on the ground
+        surface. Pin y explicitly when building above ground level (walls,
+        roofs) or when the column is a cave (auto-resolve picks the local
+        floor closest to your current y)."""
+        return _check(await bridge.place(block_type, x, z, y))
 
     async def getBlock(x: int, y: int, z: int) -> dict:
         """Inspect a single cell. Returns `{block, replaceable}`.
@@ -102,21 +112,33 @@ def make_primitives(
             raise RuntimeError(resp.message)
         return resp.data
 
-    async def standableY(x: int, z: int, near_y: int | None = None) -> int:
-        """Find the y at (x, z) where the player can stand, closest to near_y.
+    async def getHeightmap(
+        x0: int,
+        z0: int,
+        w: int,
+        h: int,
+        near_y: int | None = None,
+    ) -> dict:
+        """Bulk-scan the standable y at every column in `[x0, x0+w) × [z0, z0+h)`.
 
-        Returns the air block your feet would occupy (with head clearance
-        above and a non-replaceable floor below). If `near_y` is omitted the
-        bridge defaults to the player's current y, which makes the query
-        respect "where I am" — useful underground or indoors so you get the
-        nearby cave/room floor instead of the world surface 40 blocks above.
+        One bridge round-trip per call. Returns:
+          - `ys`: 2-D list (h rows × w cols) of int OR None — the y the
+            player's feet would occupy; None means no standable column was
+            found within ±64 of the reference y.
+          - `floor`: 2-D list of block-id strings OR None, parallel to `ys`.
+          - `near_y`: the reference y used (your current y if you didn't pass
+            one). The search picks the standable y closest to this — so
+            indoors / underground you get the local floor, not the surface
+            40 blocks above.
 
-        Raises if no standable column exists within ±64 of `near_y`.
+        Capped at 1024 cells (e.g. 32×32) per call. For "find the flattest
+        N×N building footprint" — fetch one heightmap covering all candidate
+        origins and reduce in Python; do NOT call this in a nested loop.
         """
-        resp = await bridge.standable_y(x, z, near_y)
+        resp = await bridge.heightmap(x0, z0, w, h, near_y)
         if resp.status == "error":
             raise RuntimeError(resp.message)
-        return int(resp.data["y"])
+        return resp.data
 
     async def breakBlockAt(x: int, y: int, z: int) -> str:
         return _check(await bridge.break_block(x, y, z))
@@ -253,7 +275,7 @@ def make_primitives(
         "followPlayer": followPlayer,
         "stop": stop,
         "placeBlock": placeBlock,
-        "standableY": standableY,
+        "getHeightmap": getHeightmap,
         "getBlock": getBlock,
         "breakBlockAt": breakBlockAt,
         "collectItems": collectItems,

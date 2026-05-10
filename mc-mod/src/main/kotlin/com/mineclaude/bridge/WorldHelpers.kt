@@ -162,7 +162,7 @@ internal object WorldHelpers {
 
     /**
      * Could a player stand with feet at [feet]? Replaceable feet+head cells,
-     * non-replaceable floor below. Same predicate StandableYRoute uses.
+     * non-replaceable floor below. Same predicate Heightmap uses.
      */
     fun canStandAt(feet: BlockPos): Boolean {
         val world = MinecraftClient.getInstance().world ?: return false

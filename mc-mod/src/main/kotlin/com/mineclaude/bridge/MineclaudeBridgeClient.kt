@@ -49,11 +49,13 @@ class MineclaudeBridgeClient : ClientModInitializer {
         MovementRoutes.register(bridge)
         GotoRoute.register(bridge)
         CollectRoute.register(bridge)
-        // Standable-Y query — finds the y at (x,z) where the player can
-        // stand (feet/head clearance, non-replaceable floor), closest to a
-        // reference y. Removes a class of "guess Y, end up in the ground"
-        // failures from building / placement code.
-        StandableYRoute.register(bridge)
+        // Heightmap region query — returns a w×h grid of standable-y values
+        // (feet/head clearance, non-replaceable floor) in one tick-thread
+        // submission. Replaces the per-cell `/standable_y` endpoint, which
+        // tempted nested loops in the agent (a 20×20×7×7 sweep ate a 4-min
+        // window before this existed). /goto and /place now resolve y
+        // server-side via the same predicate when callers omit it.
+        HeightmapRoute.register(bridge)
         // Single-cell inspection — preflight for building loops so the
         // agent can verify a cell is replaceable before attempting a
         // placement that would fail with "Block already at …".

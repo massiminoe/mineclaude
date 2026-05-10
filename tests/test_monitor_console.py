@@ -72,7 +72,7 @@ async def client():
 @pytest.mark.asyncio
 async def test_console_run_enqueues_action(client):
     c, agent = client
-    resp = await c.post("/api/console/run", json={"code": "await goToPosition(0, 64, 0)"})
+    resp = await c.post("/api/console/run", json={"code": "await goToPosition(0, 0, y=64)"})
     assert resp.status == 200
     body = await resp.json()
     assert "action_id" in body

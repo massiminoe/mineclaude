@@ -44,11 +44,38 @@ object GotoRoute {
             return HttpBridge.err(e.message ?: "bad body", status = 400)
         }
         val x = (body["x"] as? Number)?.toDouble() ?: 0.0
-        val y = (body["y"] as? Number)?.toDouble() ?: 0.0
         val z = (body["z"] as? Number)?.toDouble() ?: 0.0
+        val yParam = (body["y"] as? Number)?.toDouble()
         val timeoutS = (body["timeout"] as? Number)?.toDouble() ?: DEFAULT_TIMEOUT_S
 
+        // Auto-resolve y from the heightmap when caller omitted it. Lets the
+        // agent say "walk to (x, z)" without first probing the surface — the
+        // case that motivated this whole endpoint surface.
+        val y = yParam ?: when (val resolved = resolveStandableY(x.toInt(), z.toInt())) {
+            is YResolve.Ok -> resolved.y.toDouble()
+            is YResolve.Err -> return HttpBridge.err(resolved.message)
+        }
+
         return runGoto(x, y, z, timeoutS)
+    }
+
+    private sealed interface YResolve {
+        data class Ok(val y: Int) : YResolve
+        data class Err(val message: String) : YResolve
+    }
+
+    private fun resolveStandableY(x: Int, z: Int): YResolve {
+        return TickThread.submitAndWait(timeoutMs = 1_000) {
+            val mc = MinecraftClient.getInstance()
+            mc.world ?: return@submitAndWait YResolve.Err("no world")
+            val player = mc.player ?: return@submitAndWait YResolve.Err("no player")
+            val nearY = kotlin.math.floor(player.pos.y).toInt()
+            val cell = Heightmap.findStandable(x, z, nearY)
+                ?: return@submitAndWait YResolve.Err(
+                    "No standable y at ($x, $z) within ±${Heightmap.MAX_RANGE} of y=$nearY",
+                )
+            YResolve.Ok(cell.y)
+        }
     }
 
     private fun runGoto(x: Double, y: Double, z: Double, timeoutS: Double): BridgeResponse {

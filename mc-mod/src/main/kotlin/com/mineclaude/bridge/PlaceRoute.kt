@@ -49,10 +49,19 @@ object PlaceRoute {
         }
         val block = (body["block"] as? String).orEmpty()
         val x = (body["x"] as? Number)?.toInt() ?: 0
-        val y = (body["y"] as? Number)?.toInt() ?: 0
         val z = (body["z"] as? Number)?.toInt() ?: 0
+        val yParam = (body["y"] as? Number)?.toInt()
         if (block.isEmpty()) {
             return HttpBridge.err("Missing 'block' parameter", status = 400)
+        }
+
+        // Auto-resolve y from the heightmap when caller omitted it: the cell
+        // a block lands in to "place on the ground at (x, z)" is exactly the
+        // standable-y air cell (replaceable feet, replaceable head, solid
+        // floor) — same predicate used for navigation arrival.
+        val y = yParam ?: when (val resolved = resolveStandableY(x, z)) {
+            is YResolve.Ok -> resolved.y
+            is YResolve.Err -> return HttpBridge.err(resolved.message)
         }
 
         val target = BlockPos(x, y, z)
@@ -91,6 +100,25 @@ object PlaceRoute {
             is PreflightResult.Ready -> {
                 return doPlace(target, block, outcome.hotbarSlot)
             }
+        }
+    }
+
+    private sealed interface YResolve {
+        data class Ok(val y: Int) : YResolve
+        data class Err(val message: String) : YResolve
+    }
+
+    private fun resolveStandableY(x: Int, z: Int): YResolve {
+        return TickThread.submitAndWait(timeoutMs = 1_000) {
+            val mc = MinecraftClient.getInstance()
+            mc.world ?: return@submitAndWait YResolve.Err("no world")
+            val player = mc.player ?: return@submitAndWait YResolve.Err("no player")
+            val nearY = kotlin.math.floor(player.pos.y).toInt()
+            val cell = Heightmap.findStandable(x, z, nearY)
+                ?: return@submitAndWait YResolve.Err(
+                    "No standable y at ($x, $z) within ±${Heightmap.MAX_RANGE} of y=$nearY",
+                )
+            YResolve.Ok(cell.y)
         }
     }
 

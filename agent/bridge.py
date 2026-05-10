@@ -26,12 +26,12 @@ class BridgeClient(Protocol):
     async def get_status(self) -> BridgeResponse: ...
     async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse: ...
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse: ...
-    async def goto(self, x: float, y: float, z: float) -> BridgeResponse: ...
+    async def goto(self, x: float, z: float, y: float | None = None) -> BridgeResponse: ...
     async def mine(self, block: str, count: int = 1) -> BridgeResponse: ...
     async def follow(self, player: str, distance: int = 3) -> BridgeResponse: ...
     async def explore(self) -> BridgeResponse: ...
     async def stop(self) -> BridgeResponse: ...
-    async def place(self, block: str, x: int, y: int, z: int) -> BridgeResponse: ...
+    async def place(self, block: str, x: int, z: int, y: int | None = None) -> BridgeResponse: ...
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def collect(self, radius: float = 3) -> BridgeResponse: ...
     async def attack(self, entity_id: str) -> BridgeResponse: ...
@@ -78,7 +78,14 @@ class BridgeClient(Protocol):
     async def discard(self, slot: int, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
-    async def standable_y(self, x: int, z: int, near_y: int | None = None) -> BridgeResponse: ...
+    async def heightmap(
+        self,
+        x0: int,
+        z0: int,
+        w: int,
+        h: int,
+        near_y: int | None = None,
+    ) -> BridgeResponse: ...
     async def get_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def screenshot(
         self,
@@ -134,8 +141,11 @@ class RealBridgeClient:
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse:
         return self._parse(await self._http.get("/nearby/entities", params={"r": radius}))
 
-    async def goto(self, x: float, y: float, z: float) -> BridgeResponse:
-        return self._parse(await self._http.post("/goto", json={"x": x, "y": y, "z": z}))
+    async def goto(self, x: float, z: float, y: float | None = None) -> BridgeResponse:
+        body: dict[str, Any] = {"x": x, "z": z}
+        if y is not None:
+            body["y"] = y
+        return self._parse(await self._http.post("/goto", json=body))
 
     async def mine(self, block: str, count: int = 1) -> BridgeResponse:
         return self._parse(await self._http.post("/mine", json={"block": block, "count": count}))
@@ -149,8 +159,11 @@ class RealBridgeClient:
     async def stop(self) -> BridgeResponse:
         return self._parse(await self._http.post("/stop"))
 
-    async def place(self, block: str, x: int, y: int, z: int) -> BridgeResponse:
-        return self._parse(await self._http.post("/place", json={"block": block, "x": x, "y": y, "z": z}))
+    async def place(self, block: str, x: int, z: int, y: int | None = None) -> BridgeResponse:
+        body: dict[str, Any] = {"block": block, "x": x, "z": z}
+        if y is not None:
+            body["y"] = y
+        return self._parse(await self._http.post("/place", json=body))
 
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.post("/break", json={"x": x, "y": y, "z": z}))
@@ -251,11 +264,18 @@ class RealBridgeClient:
     async def surface(self, timeout: float = 2.0) -> BridgeResponse:
         return self._parse(await self._http.post("/surface", json={"timeout": timeout}))
 
-    async def standable_y(self, x: int, z: int, near_y: int | None = None) -> BridgeResponse:
-        params: dict[str, str] = {"x": str(x), "z": str(z)}
+    async def heightmap(
+        self,
+        x0: int,
+        z0: int,
+        w: int,
+        h: int,
+        near_y: int | None = None,
+    ) -> BridgeResponse:
+        params: dict[str, str] = {"x0": str(x0), "z0": str(z0), "w": str(w), "h": str(h)}
         if near_y is not None:
             params["near_y"] = str(near_y)
-        return self._parse(await self._http.get("/standable_y", params=params))
+        return self._parse(await self._http.get("/heightmap", params=params))
 
     async def get_block(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.get("/block", params={"x": str(x), "y": str(y), "z": str(z)}))
@@ -350,9 +370,11 @@ class MockBridgeClient:
         entities = [e for e in self._nearby_entities if e["distance"] <= radius]
         return BridgeResponse("success", f"Found {len(entities)} entities", {"entities": entities})
 
-    async def goto(self, x: float, y: float, z: float) -> BridgeResponse:
-        self._position = {"x": x, "y": y, "z": z}
-        return BridgeResponse("success", f"Moved to {x}, {y}, {z}")
+    async def goto(self, x: float, z: float, y: float | None = None) -> BridgeResponse:
+        # Mock: pretend the heightmap puts feet at y=64 unless caller pinned it.
+        resolved_y = y if y is not None else 64.0
+        self._position = {"x": x, "y": resolved_y, "z": z}
+        return BridgeResponse("success", f"Moved to {x}, {resolved_y}, {z}")
 
     async def mine(self, block: str, count: int = 1) -> BridgeResponse:
         collected = 0
@@ -380,12 +402,13 @@ class MockBridgeClient:
     async def stop(self) -> BridgeResponse:
         return BridgeResponse("success", "Stopped")
 
-    async def place(self, block: str, x: int, y: int, z: int) -> BridgeResponse:
+    async def place(self, block: str, x: int, z: int, y: int | None = None) -> BridgeResponse:
+        resolved_y = y if y is not None else 64
         removed = self._remove_from_inventory(block, 1)
         if not removed:
             return BridgeResponse("error", f"No {block} in inventory")
-        self._nearby_blocks.append({"name": block, "x": x, "y": y, "z": z, "distance": 1.0})
-        return BridgeResponse("success", f"Placed {block} at {x}, {y}, {z}")
+        self._nearby_blocks.append({"name": block, "x": x, "y": resolved_y, "z": z, "distance": 1.0})
+        return BridgeResponse("success", f"Placed {block} at {x}, {resolved_y}, {z}")
 
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse:
         for b in self._nearby_blocks:
@@ -785,13 +808,22 @@ class MockBridgeClient:
     async def surface(self, timeout: float = 2.0) -> BridgeResponse:
         return BridgeResponse("success", "Surfaced", {"surfaced": True, "ticks": 0})
 
-    async def standable_y(self, x: int, z: int, near_y: int | None = None) -> BridgeResponse:
+    async def heightmap(
+        self,
+        x0: int,
+        z0: int,
+        w: int,
+        h: int,
+        near_y: int | None = None,
+    ) -> BridgeResponse:
         # Mock: pretend the floor is at y=63 everywhere → standable y=64.
         ny = near_y if near_y is not None else int(self._position["y"])
+        ys = [[64 for _ in range(w)] for _ in range(h)]
+        floor = [["grass_block" for _ in range(w)] for _ in range(h)]
         return BridgeResponse(
             "success",
-            f"Standable at ({x}, 64, {z}) on grass_block",
-            {"y": 64, "floor_block": "grass_block", "near_y": ny},
+            f"Scanned {w * h} cells, {w * h} standable",
+            {"x0": x0, "z0": z0, "w": w, "h": h, "near_y": ny, "ys": ys, "floor": floor},
         )
 
     async def get_block(self, x: int, y: int, z: int) -> BridgeResponse:
