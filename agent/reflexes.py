@@ -453,7 +453,14 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
         event_type="damage_taken",
         handle=damage_taken_handler,
         preempts=False,
-        cooldown_s=0.5,
+        # 10s coalesces a damage burst into a single reflex fire. Sustained
+        # combat (multiple phantoms, mob swarm at night) can deliver hits
+        # faster than a Claude turn completes — at the old 0.5s cooldown,
+        # every hit cancelled the in-flight chat and the agent never got a
+        # turn off. The first hit's handler (retaliate via looping /attack,
+        # or flee) is already running; suppressing the next 10s of fires
+        # lets it finish.
+        cooldown_s=10.0,
         resumes_on_complete=True,
     ))
     registry.register(ReflexHandler(
