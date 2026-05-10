@@ -640,6 +640,64 @@ RECIPES: dict[str, Recipe] = {
 }
 
 
+# --- Wood-variant outputs: stairs, slabs, doors, trapdoors, fences, gates,
+# buttons, pressure plates, signs, planks, boats. Generated per-wood-type so
+# each variant uses its own plank ingredient (vanilla MC won't accept
+# spruce_planks placed for an oak_door recipe). ---
+_WOOD_TYPES: list[tuple[str, str, int, str | None]] = [
+    # (name, log_or_stem, planks_per_craft, boat_output_or_None)
+    ("oak", "oak_log", 4, "oak_boat"),
+    ("spruce", "spruce_log", 4, "spruce_boat"),
+    ("birch", "birch_log", 4, "birch_boat"),
+    ("jungle", "jungle_log", 4, "jungle_boat"),
+    ("acacia", "acacia_log", 4, "acacia_boat"),
+    ("dark_oak", "dark_oak_log", 4, "dark_oak_boat"),
+    ("mangrove", "mangrove_log", 4, "mangrove_boat"),
+    ("cherry", "cherry_log", 4, "cherry_boat"),
+    ("crimson", "crimson_stem", 4, None),
+    ("warped", "warped_stem", 4, None),
+    # bamboo: 1 bamboo_block → 2 bamboo_planks. Boat is bamboo_raft.
+    ("bamboo", "bamboo_block", 2, "bamboo_raft"),
+]
+
+for _name, _log, _planks_n, _boat in _WOOD_TYPES:
+    _planks = f"{_name}_planks"
+    RECIPES[_planks] = Recipe(_planks, _planks_n, ["#"], {"#": _log}, False)
+    RECIPES[f"{_name}_stairs"] = Recipe(f"{_name}_stairs", 4, ["#  ", "## ", "###"], {"#": _planks}, True)
+    RECIPES[f"{_name}_slab"] = Recipe(f"{_name}_slab", 6, ["###"], {"#": _planks}, True)
+    RECIPES[f"{_name}_door"] = Recipe(f"{_name}_door", 3, ["##", "##", "##"], {"#": _planks}, True)
+    RECIPES[f"{_name}_trapdoor"] = Recipe(f"{_name}_trapdoor", 2, ["###", "###"], {"#": _planks}, True)
+    RECIPES[f"{_name}_fence"] = Recipe(f"{_name}_fence", 3, ["#S#", "#S#"], {"#": _planks, "S": "stick"}, True)
+    RECIPES[f"{_name}_fence_gate"] = Recipe(f"{_name}_fence_gate", 1, ["S#S", "S#S"], {"#": _planks, "S": "stick"}, True)
+    RECIPES[f"{_name}_button"] = Recipe(f"{_name}_button", 1, ["#"], {"#": _planks}, False)
+    RECIPES[f"{_name}_pressure_plate"] = Recipe(f"{_name}_pressure_plate", 1, ["##"], {"#": _planks}, True)
+    RECIPES[f"{_name}_sign"] = Recipe(f"{_name}_sign", 3, ["###", "###", " S "], {"#": _planks, "S": "stick"}, True)
+    if _boat is not None:
+        RECIPES[_boat] = Recipe(_boat, 1, ["# #", "###"], {"#": _planks}, True)
+
+# --- Stone-family stairs + slabs. ---
+# (ingredient_block, output_prefix). smooth_stone has slab only (no stairs).
+_STONE_TYPES: list[tuple[str, str]] = [
+    ("cobblestone", "cobblestone"),
+    ("stone", "stone"),
+    ("stone_bricks", "stone_brick"),
+    ("mossy_cobblestone", "mossy_cobblestone"),
+    ("mossy_stone_bricks", "mossy_stone_brick"),
+    ("smooth_stone", "smooth_stone"),
+    ("sandstone", "sandstone"),
+    ("red_sandstone", "red_sandstone"),
+    ("nether_bricks", "nether_brick"),
+    ("bricks", "brick"),
+]
+for _ingred, _prefix in _STONE_TYPES:
+    if _ingred != "smooth_stone":
+        RECIPES[f"{_prefix}_stairs"] = Recipe(f"{_prefix}_stairs", 4, ["#  ", "## ", "###"], {"#": _ingred}, True)
+    RECIPES[f"{_prefix}_slab"] = Recipe(f"{_prefix}_slab", 6, ["###"], {"#": _ingred}, True)
+RECIPES["stone_button"] = Recipe("stone_button", 1, ["#"], {"#": "stone"}, False)
+RECIPES["stone_pressure_plate"] = Recipe("stone_pressure_plate", 1, ["##"], {"#": "stone"}, True)
+RECIPES["stone_bricks"] = Recipe("stone_bricks", 4, ["##", "##"], {"#": "stone"}, False)
+
+
 # Ingredients that accept any variant with the same suffix.
 # e.g. recipe says "oak_planks" but any *_planks works (matches real MC behavior).
 VARIANT_SUFFIXES: dict[str, str] = {
@@ -662,12 +720,27 @@ def resolve_ingredients(
     """Map required (canonical) ingredients to actual inventory items.
 
     Returns {actual_item: count_to_consume} or None if insufficient.
+
+    Two-pass pick: exact matches first, then variant fallbacks. Without this,
+    an `oak_planks` requirement could grab `spruce_planks` even when oak is
+    available — fine for `stick` (any plank works) but wrong for variant
+    outputs where the recipe key was set to the canonical `oak_planks`.
     """
     resolved: dict[str, int] = {}
     for ingredient, needed in required.items():
         remaining = needed
-        for inv_item, inv_count in inventory.items():
-            if _matches_ingredient(ingredient, inv_item) and remaining > 0:
+        for pass_idx in (0, 1):
+            if remaining <= 0:
+                break
+            for inv_item, inv_count in inventory.items():
+                if remaining <= 0:
+                    break
+                if pass_idx == 0:
+                    matches = inv_item == ingredient
+                else:
+                    matches = inv_item != ingredient and _matches_ingredient(ingredient, inv_item)
+                if not matches:
+                    continue
                 already_claimed = resolved.get(inv_item, 0)
                 available = inv_count - already_claimed
                 if available <= 0:

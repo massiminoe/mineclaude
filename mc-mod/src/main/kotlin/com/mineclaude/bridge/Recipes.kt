@@ -7,7 +7,7 @@ import kotlin.math.ceil
  *
  * Direct port of `bridge/recipes.py`. Kept as a Kotlin object so the native
  * bridge doesn't have to round-trip recipe data through Python — the table
- * is static, tiny (~30 + ~15 entries), and the helpers are pure functions.
+ * is static and the helpers are pure functions.
  *
  * # Slot conventions
  *
@@ -47,148 +47,242 @@ internal object Recipes {
         "oak_log" to "_log",
     )
 
-    val RECIPES: Map<String, Recipe> = mapOf(
-        // --- Wood processing ---
-        // Each variant is registered explicitly — `craft("acacia_planks", N)` must
-        // succeed even though VARIANT_SUFFIXES would otherwise let an `oak_planks`
-        // ingredient swallow any *_planks. Variant suffixes only help on the
-        // *ingredient* side; the recipe lookup itself needs the exact output name.
-        "oak_planks" to Recipe("oak_planks", 4, listOf("#"), mapOf('#' to "oak_log"), false),
-        "spruce_planks" to Recipe("spruce_planks", 4, listOf("#"), mapOf('#' to "spruce_log"), false),
-        "birch_planks" to Recipe("birch_planks", 4, listOf("#"), mapOf('#' to "birch_log"), false),
-        "jungle_planks" to Recipe("jungle_planks", 4, listOf("#"), mapOf('#' to "jungle_log"), false),
-        "acacia_planks" to Recipe("acacia_planks", 4, listOf("#"), mapOf('#' to "acacia_log"), false),
-        "dark_oak_planks" to Recipe("dark_oak_planks", 4, listOf("#"), mapOf('#' to "dark_oak_log"), false),
-        "mangrove_planks" to Recipe("mangrove_planks", 4, listOf("#"), mapOf('#' to "mangrove_log"), false),
-        "cherry_planks" to Recipe("cherry_planks", 4, listOf("#"), mapOf('#' to "cherry_log"), false),
-        "crimson_planks" to Recipe("crimson_planks", 4, listOf("#"), mapOf('#' to "crimson_stem"), false),
-        "warped_planks" to Recipe("warped_planks", 4, listOf("#"), mapOf('#' to "warped_stem"), false),
-        "bamboo_planks" to Recipe("bamboo_planks", 2, listOf("#"), mapOf('#' to "bamboo_block"), false),
-        "stick" to Recipe("stick", 4, listOf("#", "#"), mapOf('#' to "oak_planks"), false),
+    /**
+     * Per-wood-type metadata used to emit one recipe per wood for stairs,
+     * slabs, doors, trapdoors, fences, gates, buttons, pressure plates,
+     * signs, planks, and (where applicable) boats. Variant outputs use the
+     * specific plank name as ingredient (e.g. spruce_door wants spruce_planks)
+     * so vanilla MC accepts the placement — only `oak_*` outputs inherit the
+     * existing "any plank works" matcher quirk because their key is the
+     * canonical `oak_planks` head of VARIANT_SUFFIXES.
+     */
+    private data class WoodType(
+        val name: String,
+        val logOrStem: String,
+        val planksPerCraft: Int = 4,
+        val boatOutput: String? = null,  // null = no boat (nether woods)
+    )
+
+    private val WOOD_TYPES: List<WoodType> = listOf(
+        WoodType("oak", "oak_log", boatOutput = "oak_boat"),
+        WoodType("spruce", "spruce_log", boatOutput = "spruce_boat"),
+        WoodType("birch", "birch_log", boatOutput = "birch_boat"),
+        WoodType("jungle", "jungle_log", boatOutput = "jungle_boat"),
+        WoodType("acacia", "acacia_log", boatOutput = "acacia_boat"),
+        WoodType("dark_oak", "dark_oak_log", boatOutput = "dark_oak_boat"),
+        WoodType("mangrove", "mangrove_log", boatOutput = "mangrove_boat"),
+        WoodType("cherry", "cherry_log", boatOutput = "cherry_boat"),
+        WoodType("crimson", "crimson_stem", boatOutput = null),
+        WoodType("warped", "warped_stem", boatOutput = null),
+        // bamboo: 1 bamboo_block → 2 bamboo_planks. Boat is bamboo_raft.
+        WoodType("bamboo", "bamboo_block", planksPerCraft = 2, boatOutput = "bamboo_raft"),
+    )
+
+    /**
+     * Stone-family stairs/slabs/buttons/pressure-plates. Output count and
+     * patterns follow the wood layout (stairs `# /## /###` → 4, slab `###` → 6).
+     */
+    private data class StoneType(
+        val name: String,    // ingredient name
+        val prefix: String,  // output prefix; "" → uses ingredient name as prefix
+    )
+
+    private val STONE_TYPES: List<StoneType> = listOf(
+        StoneType("cobblestone", "cobblestone"),
+        StoneType("stone", "stone"),
+        StoneType("stone_bricks", "stone_brick"),
+        StoneType("mossy_cobblestone", "mossy_cobblestone"),
+        StoneType("mossy_stone_bricks", "mossy_stone_brick"),
+        StoneType("smooth_stone", "smooth_stone"),  // slab only — see filter below
+        StoneType("sandstone", "sandstone"),
+        StoneType("red_sandstone", "red_sandstone"),
+        StoneType("nether_bricks", "nether_brick"),
+        StoneType("bricks", "brick"),  // ingredient is the `bricks` block; outputs brick_stairs/brick_slab
+    )
+
+    val RECIPES: Map<String, Recipe> = buildMap {
+        // --- Wood: planks, stairs, slabs, doors, trapdoors, fences, gates,
+        // buttons, pressure plates, signs, boats (per variant). ---
+        for (w in WOOD_TYPES) {
+            put("${w.name}_planks", Recipe(
+                "${w.name}_planks", w.planksPerCraft,
+                listOf("#"), mapOf('#' to w.logOrStem), false))
+            put("${w.name}_stairs", Recipe(
+                "${w.name}_stairs", 4,
+                listOf("#  ", "## ", "###"), mapOf('#' to "${w.name}_planks"), true))
+            put("${w.name}_slab", Recipe(
+                "${w.name}_slab", 6,
+                listOf("###"), mapOf('#' to "${w.name}_planks"), true))
+            put("${w.name}_door", Recipe(
+                "${w.name}_door", 3,
+                listOf("##", "##", "##"), mapOf('#' to "${w.name}_planks"), true))
+            put("${w.name}_trapdoor", Recipe(
+                "${w.name}_trapdoor", 2,
+                listOf("###", "###"), mapOf('#' to "${w.name}_planks"), true))
+            put("${w.name}_fence", Recipe(
+                "${w.name}_fence", 3,
+                listOf("#S#", "#S#"), mapOf('#' to "${w.name}_planks", 'S' to "stick"), true))
+            put("${w.name}_fence_gate", Recipe(
+                "${w.name}_fence_gate", 1,
+                listOf("S#S", "S#S"), mapOf('#' to "${w.name}_planks", 'S' to "stick"), true))
+            put("${w.name}_button", Recipe(
+                "${w.name}_button", 1,
+                listOf("#"), mapOf('#' to "${w.name}_planks"), false))
+            put("${w.name}_pressure_plate", Recipe(
+                "${w.name}_pressure_plate", 1,
+                listOf("##"), mapOf('#' to "${w.name}_planks"), true))
+            put("${w.name}_sign", Recipe(
+                "${w.name}_sign", 3,
+                listOf("###", "###", " S "), mapOf('#' to "${w.name}_planks", 'S' to "stick"), true))
+            w.boatOutput?.let { boat ->
+                put(boat, Recipe(boat, 1,
+                    listOf("# #", "###"), mapOf('#' to "${w.name}_planks"), true))
+            }
+        }
+
+        // --- Stone family: stairs, slabs, plus stone_button + stone_pressure_plate. ---
+        for (s in STONE_TYPES) {
+            // smooth_stone has no stairs in vanilla — only a slab.
+            if (s.name != "smooth_stone") {
+                put("${s.prefix}_stairs", Recipe(
+                    "${s.prefix}_stairs", 4,
+                    listOf("#  ", "## ", "###"), mapOf('#' to s.name), true))
+            }
+            put("${s.prefix}_slab", Recipe(
+                "${s.prefix}_slab", 6,
+                listOf("###"), mapOf('#' to s.name), true))
+        }
+        // stone-only: button + pressure plate (other stone families don't have these in vanilla).
+        put("stone_button", Recipe("stone_button", 1, listOf("#"), mapOf('#' to "stone"), false))
+        put("stone_pressure_plate", Recipe("stone_pressure_plate", 1, listOf("##"), mapOf('#' to "stone"), true))
+        // 2x2 stone → 4 stone_bricks
+        put("stone_bricks", Recipe("stone_bricks", 4, listOf("##", "##"), mapOf('#' to "stone"), false))
+
+        // --- Stick (any plank works via VARIANT_SUFFIXES). ---
+        put("stick", Recipe("stick", 4, listOf("#", "#"), mapOf('#' to "oak_planks"), false))
 
         // --- Basic blocks ---
-        "crafting_table" to Recipe("crafting_table", 1, listOf("##", "##"), mapOf('#' to "oak_planks"), false),
-        "furnace" to Recipe("furnace", 1, listOf("###", "# #", "###"), mapOf('#' to "cobblestone"), true),
-        "chest" to Recipe("chest", 1, listOf("###", "# #", "###"), mapOf('#' to "oak_planks"), true),
+        put("crafting_table", Recipe("crafting_table", 1, listOf("##", "##"), mapOf('#' to "oak_planks"), false))
+        put("furnace", Recipe("furnace", 1, listOf("###", "# #", "###"), mapOf('#' to "cobblestone"), true))
+        put("chest", Recipe("chest", 1, listOf("###", "# #", "###"), mapOf('#' to "oak_planks"), true))
 
         // --- Torches ---
-        "torch" to Recipe("torch", 4, listOf("C", "S"), mapOf('C' to "coal", 'S' to "stick"), false),
+        put("torch", Recipe("torch", 4, listOf("C", "S"), mapOf('C' to "coal", 'S' to "stick"), false))
 
         // --- Wooden tools ---
-        "wooden_pickaxe" to Recipe("wooden_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "oak_planks", 'S' to "stick"), true),
-        "wooden_axe" to Recipe("wooden_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "oak_planks", 'S' to "stick"), true),
-        "wooden_shovel" to Recipe("wooden_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "oak_planks", 'S' to "stick"), true),
-        "wooden_sword" to Recipe("wooden_sword", 1, listOf("#", "#", "S"), mapOf('#' to "oak_planks", 'S' to "stick"), true),
-        "wooden_hoe" to Recipe("wooden_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "oak_planks", 'S' to "stick"), true),
+        put("wooden_pickaxe", Recipe("wooden_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "oak_planks", 'S' to "stick"), true))
+        put("wooden_axe", Recipe("wooden_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "oak_planks", 'S' to "stick"), true))
+        put("wooden_shovel", Recipe("wooden_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "oak_planks", 'S' to "stick"), true))
+        put("wooden_sword", Recipe("wooden_sword", 1, listOf("#", "#", "S"), mapOf('#' to "oak_planks", 'S' to "stick"), true))
+        put("wooden_hoe", Recipe("wooden_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "oak_planks", 'S' to "stick"), true))
 
         // --- Stone tools ---
-        "stone_pickaxe" to Recipe("stone_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "cobblestone", 'S' to "stick"), true),
-        "stone_axe" to Recipe("stone_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "cobblestone", 'S' to "stick"), true),
-        "stone_shovel" to Recipe("stone_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "cobblestone", 'S' to "stick"), true),
-        "stone_sword" to Recipe("stone_sword", 1, listOf("#", "#", "S"), mapOf('#' to "cobblestone", 'S' to "stick"), true),
-        "stone_hoe" to Recipe("stone_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "cobblestone", 'S' to "stick"), true),
+        put("stone_pickaxe", Recipe("stone_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "cobblestone", 'S' to "stick"), true))
+        put("stone_axe", Recipe("stone_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "cobblestone", 'S' to "stick"), true))
+        put("stone_shovel", Recipe("stone_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "cobblestone", 'S' to "stick"), true))
+        put("stone_sword", Recipe("stone_sword", 1, listOf("#", "#", "S"), mapOf('#' to "cobblestone", 'S' to "stick"), true))
+        put("stone_hoe", Recipe("stone_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "cobblestone", 'S' to "stick"), true))
 
         // --- Iron tools ---
-        "iron_pickaxe" to Recipe("iron_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
-        "iron_axe" to Recipe("iron_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
-        "iron_shovel" to Recipe("iron_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
-        "iron_sword" to Recipe("iron_sword", 1, listOf("#", "#", "S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
-        "iron_hoe" to Recipe("iron_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
+        put("iron_pickaxe", Recipe("iron_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "iron_ingot", 'S' to "stick"), true))
+        put("iron_axe", Recipe("iron_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true))
+        put("iron_shovel", Recipe("iron_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true))
+        put("iron_sword", Recipe("iron_sword", 1, listOf("#", "#", "S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true))
+        put("iron_hoe", Recipe("iron_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "iron_ingot", 'S' to "stick"), true))
 
         // --- Diamond tools ---
-        "diamond_pickaxe" to Recipe("diamond_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "diamond", 'S' to "stick"), true),
-        "diamond_axe" to Recipe("diamond_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "diamond", 'S' to "stick"), true),
-        "diamond_shovel" to Recipe("diamond_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "diamond", 'S' to "stick"), true),
-        "diamond_sword" to Recipe("diamond_sword", 1, listOf("#", "#", "S"), mapOf('#' to "diamond", 'S' to "stick"), true),
-        "diamond_hoe" to Recipe("diamond_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "diamond", 'S' to "stick"), true),
+        put("diamond_pickaxe", Recipe("diamond_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "diamond", 'S' to "stick"), true))
+        put("diamond_axe", Recipe("diamond_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "diamond", 'S' to "stick"), true))
+        put("diamond_shovel", Recipe("diamond_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "diamond", 'S' to "stick"), true))
+        put("diamond_sword", Recipe("diamond_sword", 1, listOf("#", "#", "S"), mapOf('#' to "diamond", 'S' to "stick"), true))
+        put("diamond_hoe", Recipe("diamond_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "diamond", 'S' to "stick"), true))
 
         // --- Golden tools ---
-        "golden_pickaxe" to Recipe("golden_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
-        "golden_axe" to Recipe("golden_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
-        "golden_shovel" to Recipe("golden_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
-        "golden_sword" to Recipe("golden_sword", 1, listOf("#", "#", "S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
-        "golden_hoe" to Recipe("golden_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true),
+        put("golden_pickaxe", Recipe("golden_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "gold_ingot", 'S' to "stick"), true))
+        put("golden_axe", Recipe("golden_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true))
+        put("golden_shovel", Recipe("golden_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true))
+        put("golden_sword", Recipe("golden_sword", 1, listOf("#", "#", "S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true))
+        put("golden_hoe", Recipe("golden_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "gold_ingot", 'S' to "stick"), true))
 
         // --- Iron armor ---
-        "iron_helmet" to Recipe("iron_helmet", 1, listOf("###", "# #"), mapOf('#' to "iron_ingot"), true),
-        "iron_chestplate" to Recipe("iron_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "iron_ingot"), true),
-        "iron_leggings" to Recipe("iron_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "iron_ingot"), true),
-        "iron_boots" to Recipe("iron_boots", 1, listOf("# #", "# #"), mapOf('#' to "iron_ingot"), true),
+        put("iron_helmet", Recipe("iron_helmet", 1, listOf("###", "# #"), mapOf('#' to "iron_ingot"), true))
+        put("iron_chestplate", Recipe("iron_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "iron_ingot"), true))
+        put("iron_leggings", Recipe("iron_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "iron_ingot"), true))
+        put("iron_boots", Recipe("iron_boots", 1, listOf("# #", "# #"), mapOf('#' to "iron_ingot"), true))
 
         // --- Diamond armor ---
-        "diamond_helmet" to Recipe("diamond_helmet", 1, listOf("###", "# #"), mapOf('#' to "diamond"), true),
-        "diamond_chestplate" to Recipe("diamond_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "diamond"), true),
-        "diamond_leggings" to Recipe("diamond_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "diamond"), true),
-        "diamond_boots" to Recipe("diamond_boots", 1, listOf("# #", "# #"), mapOf('#' to "diamond"), true),
+        put("diamond_helmet", Recipe("diamond_helmet", 1, listOf("###", "# #"), mapOf('#' to "diamond"), true))
+        put("diamond_chestplate", Recipe("diamond_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "diamond"), true))
+        put("diamond_leggings", Recipe("diamond_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "diamond"), true))
+        put("diamond_boots", Recipe("diamond_boots", 1, listOf("# #", "# #"), mapOf('#' to "diamond"), true))
 
         // --- Golden armor ---
-        "golden_helmet" to Recipe("golden_helmet", 1, listOf("###", "# #"), mapOf('#' to "gold_ingot"), true),
-        "golden_chestplate" to Recipe("golden_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "gold_ingot"), true),
-        "golden_leggings" to Recipe("golden_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "gold_ingot"), true),
-        "golden_boots" to Recipe("golden_boots", 1, listOf("# #", "# #"), mapOf('#' to "gold_ingot"), true),
+        put("golden_helmet", Recipe("golden_helmet", 1, listOf("###", "# #"), mapOf('#' to "gold_ingot"), true))
+        put("golden_chestplate", Recipe("golden_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "gold_ingot"), true))
+        put("golden_leggings", Recipe("golden_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "gold_ingot"), true))
+        put("golden_boots", Recipe("golden_boots", 1, listOf("# #", "# #"), mapOf('#' to "gold_ingot"), true))
 
         // --- Leather armor ---
-        "leather_helmet" to Recipe("leather_helmet", 1, listOf("###", "# #"), mapOf('#' to "leather"), true),
-        "leather_chestplate" to Recipe("leather_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "leather"), true),
-        "leather_leggings" to Recipe("leather_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "leather"), true),
-        "leather_boots" to Recipe("leather_boots", 1, listOf("# #", "# #"), mapOf('#' to "leather"), true),
+        put("leather_helmet", Recipe("leather_helmet", 1, listOf("###", "# #"), mapOf('#' to "leather"), true))
+        put("leather_chestplate", Recipe("leather_chestplate", 1, listOf("# #", "###", "###"), mapOf('#' to "leather"), true))
+        put("leather_leggings", Recipe("leather_leggings", 1, listOf("###", "# #", "# #"), mapOf('#' to "leather"), true))
+        put("leather_boots", Recipe("leather_boots", 1, listOf("# #", "# #"), mapOf('#' to "leather"), true))
 
         // --- Storage blocks (compress 9 → 1) ---
-        "iron_block" to Recipe("iron_block", 1, listOf("###", "###", "###"), mapOf('#' to "iron_ingot"), true),
-        "gold_block" to Recipe("gold_block", 1, listOf("###", "###", "###"), mapOf('#' to "gold_ingot"), true),
-        "diamond_block" to Recipe("diamond_block", 1, listOf("###", "###", "###"), mapOf('#' to "diamond"), true),
-        "redstone_block" to Recipe("redstone_block", 1, listOf("###", "###", "###"), mapOf('#' to "redstone"), true),
-        "emerald_block" to Recipe("emerald_block", 1, listOf("###", "###", "###"), mapOf('#' to "emerald"), true),
-        "lapis_block" to Recipe("lapis_block", 1, listOf("###", "###", "###"), mapOf('#' to "lapis_lazuli"), true),
-        "coal_block" to Recipe("coal_block", 1, listOf("###", "###", "###"), mapOf('#' to "coal"), true),
+        put("iron_block", Recipe("iron_block", 1, listOf("###", "###", "###"), mapOf('#' to "iron_ingot"), true))
+        put("gold_block", Recipe("gold_block", 1, listOf("###", "###", "###"), mapOf('#' to "gold_ingot"), true))
+        put("diamond_block", Recipe("diamond_block", 1, listOf("###", "###", "###"), mapOf('#' to "diamond"), true))
+        put("redstone_block", Recipe("redstone_block", 1, listOf("###", "###", "###"), mapOf('#' to "redstone"), true))
+        put("emerald_block", Recipe("emerald_block", 1, listOf("###", "###", "###"), mapOf('#' to "emerald"), true))
+        put("lapis_block", Recipe("lapis_block", 1, listOf("###", "###", "###"), mapOf('#' to "lapis_lazuli"), true))
+        put("coal_block", Recipe("coal_block", 1, listOf("###", "###", "###"), mapOf('#' to "coal"), true))
 
         // --- Survival essentials ---
         // Bed: alias `bed` → white_bed. Other wool colors yield other-colored beds; only white is stocked here for now.
-        "bed" to Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "oak_planks"), true),
-        "white_bed" to Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "oak_planks"), true),
-        "shield" to Recipe("shield", 1, listOf("#I#", "###", " # "), mapOf('#' to "oak_planks", 'I' to "iron_ingot"), true),
-        "bread" to Recipe("bread", 1, listOf("###"), mapOf('#' to "wheat"), true),
-        "flint_and_steel" to Recipe("flint_and_steel", 1, listOf("I ", " F"), mapOf('I' to "iron_ingot", 'F' to "flint"), false),
-        "fishing_rod" to Recipe("fishing_rod", 1, listOf("  #", " #X", "# X"), mapOf('#' to "stick", 'X' to "string"), true),
-        "bow" to Recipe("bow", 1, listOf(" #X", "# X", " #X"), mapOf('#' to "stick", 'X' to "string"), true),
-        "arrow" to Recipe("arrow", 4, listOf("F", "S", "T"), mapOf('F' to "flint", 'S' to "stick", 'T' to "feather"), true),
-        "cake" to Recipe("cake", 1, listOf("MMM", "SES", "WWW"), mapOf('M' to "milk_bucket", 'S' to "sugar", 'E' to "egg", 'W' to "wheat"), true),
+        put("bed", Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "oak_planks"), true))
+        put("white_bed", Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "oak_planks"), true))
+        put("shield", Recipe("shield", 1, listOf("#I#", "###", " # "), mapOf('#' to "oak_planks", 'I' to "iron_ingot"), true))
+        put("bread", Recipe("bread", 1, listOf("###"), mapOf('#' to "wheat"), true))
+        put("flint_and_steel", Recipe("flint_and_steel", 1, listOf("I ", " F"), mapOf('I' to "iron_ingot", 'F' to "flint"), false))
+        put("fishing_rod", Recipe("fishing_rod", 1, listOf("  #", " #X", "# X"), mapOf('#' to "stick", 'X' to "string"), true))
+        put("bow", Recipe("bow", 1, listOf(" #X", "# X", " #X"), mapOf('#' to "stick", 'X' to "string"), true))
+        put("arrow", Recipe("arrow", 4, listOf("F", "S", "T"), mapOf('F' to "flint", 'S' to "stick", 'T' to "feather"), true))
+        put("cake", Recipe("cake", 1, listOf("MMM", "SES", "WWW"), mapOf('M' to "milk_bucket", 'S' to "sugar", 'E' to "egg", 'W' to "wheat"), true))
 
         // --- Wool & decoration ---
-        "white_wool" to Recipe("white_wool", 1, listOf("##", "##"), mapOf('#' to "string"), false),
-        "bricks" to Recipe("bricks", 1, listOf("##", "##"), mapOf('#' to "brick"), false),
-        "jack_o_lantern" to Recipe("jack_o_lantern", 1, listOf("P", "T"), mapOf('P' to "carved_pumpkin", 'T' to "torch"), false),
+        put("white_wool", Recipe("white_wool", 1, listOf("##", "##"), mapOf('#' to "string"), false))
+        put("bricks", Recipe("bricks", 1, listOf("##", "##"), mapOf('#' to "brick"), false))
+        put("jack_o_lantern", Recipe("jack_o_lantern", 1, listOf("P", "T"), mapOf('P' to "carved_pumpkin", 'T' to "torch"), false))
 
         // --- Paper, books, navigation ---
-        "paper" to Recipe("paper", 3, listOf("###"), mapOf('#' to "sugar_cane"), true),
-        "book" to Recipe("book", 1, listOf("PP", "PL"), mapOf('P' to "paper", 'L' to "leather"), false),
-        "bookshelf" to Recipe("bookshelf", 1, listOf("###", "BBB", "###"), mapOf('#' to "oak_planks", 'B' to "book"), true),
-        "compass" to Recipe("compass", 1, listOf(" I ", "IRI", " I "), mapOf('I' to "iron_ingot", 'R' to "redstone"), true),
-        "clock" to Recipe("clock", 1, listOf(" G ", "GRG", " G "), mapOf('G' to "gold_ingot", 'R' to "redstone"), true),
+        put("paper", Recipe("paper", 3, listOf("###"), mapOf('#' to "sugar_cane"), true))
+        put("book", Recipe("book", 1, listOf("PP", "PL"), mapOf('P' to "paper", 'L' to "leather"), false))
+        put("bookshelf", Recipe("bookshelf", 1, listOf("###", "BBB", "###"), mapOf('#' to "oak_planks", 'B' to "book"), true))
+        put("compass", Recipe("compass", 1, listOf(" I ", "IRI", " I "), mapOf('I' to "iron_ingot", 'R' to "redstone"), true))
+        put("clock", Recipe("clock", 1, listOf(" G ", "GRG", " G "), mapOf('G' to "gold_ingot", 'R' to "redstone"), true))
         // `map` recipe yields filled_map (the empty/explorable version) — name resolution at the slot-0 check needs the actual item id.
-        "map" to Recipe("filled_map", 1, listOf("PPP", "PCP", "PPP"), mapOf('P' to "paper", 'C' to "compass"), true),
+        put("map", Recipe("filled_map", 1, listOf("PPP", "PCP", "PPP"), mapOf('P' to "paper", 'C' to "compass"), true))
 
         // --- Transport ---
-        "oak_boat" to Recipe("oak_boat", 1, listOf("# #", "###"), mapOf('#' to "oak_planks"), true),
-        "minecart" to Recipe("minecart", 1, listOf("# #", "###"), mapOf('#' to "iron_ingot"), true),
-        "rail" to Recipe("rail", 16, listOf("# #", "#S#", "# #"), mapOf('#' to "iron_ingot", 'S' to "stick"), true),
+        put("minecart", Recipe("minecart", 1, listOf("# #", "###"), mapOf('#' to "iron_ingot"), true))
+        put("rail", Recipe("rail", 16, listOf("# #", "#S#", "# #"), mapOf('#' to "iron_ingot", 'S' to "stick"), true))
 
         // --- Redstone components ---
-        "redstone_torch" to Recipe("redstone_torch", 1, listOf("R", "S"), mapOf('R' to "redstone", 'S' to "stick"), false),
-        "redstone_lamp" to Recipe("redstone_lamp", 1, listOf(" R ", "RGR", " R "), mapOf('R' to "redstone", 'G' to "glowstone"), true),
-        "repeater" to Recipe("repeater", 1, listOf("TRT", "###"), mapOf('T' to "redstone_torch", 'R' to "redstone", '#' to "stone"), true),
+        put("redstone_torch", Recipe("redstone_torch", 1, listOf("R", "S"), mapOf('R' to "redstone", 'S' to "stick"), false))
+        put("redstone_lamp", Recipe("redstone_lamp", 1, listOf(" R ", "RGR", " R "), mapOf('R' to "redstone", 'G' to "glowstone"), true))
+        put("repeater", Recipe("repeater", 1, listOf("TRT", "###"), mapOf('T' to "redstone_torch", 'R' to "redstone", '#' to "stone"), true))
 
         // --- Utility blocks ---
-        "hopper" to Recipe("hopper", 1, listOf("I I", "ICI", " I "), mapOf('I' to "iron_ingot", 'C' to "chest"), true),
-        "dispenser" to Recipe("dispenser", 1, listOf("###", "#B#", "#R#"), mapOf('#' to "cobblestone", 'B' to "bow", 'R' to "redstone"), true),
-        "dropper" to Recipe("dropper", 1, listOf("###", "# #", "#R#"), mapOf('#' to "cobblestone", 'R' to "redstone"), true),
-        "piston" to Recipe("piston", 1, listOf("###", "CIC", "CRC"), mapOf('#' to "oak_planks", 'C' to "cobblestone", 'I' to "iron_ingot", 'R' to "redstone"), true),
+        put("hopper", Recipe("hopper", 1, listOf("I I", "ICI", " I "), mapOf('I' to "iron_ingot", 'C' to "chest"), true))
+        put("dispenser", Recipe("dispenser", 1, listOf("###", "#B#", "#R#"), mapOf('#' to "cobblestone", 'B' to "bow", 'R' to "redstone"), true))
+        put("dropper", Recipe("dropper", 1, listOf("###", "# #", "#R#"), mapOf('#' to "cobblestone", 'R' to "redstone"), true))
+        put("piston", Recipe("piston", 1, listOf("###", "CIC", "CRC"), mapOf('#' to "oak_planks", 'C' to "cobblestone", 'I' to "iron_ingot", 'R' to "redstone"), true))
 
         // --- Misc tools ---
-        "bucket" to Recipe("bucket", 1, listOf("# #", " # "), mapOf('#' to "iron_ingot"), true),
-        "ladder" to Recipe("ladder", 3, listOf("# #", "###", "# #"), mapOf('#' to "stick"), true),
-        "bowl" to Recipe("bowl", 4, listOf("# #", " # "), mapOf('#' to "oak_planks"), true),
-    )
+        put("bucket", Recipe("bucket", 1, listOf("# #", " # "), mapOf('#' to "iron_ingot"), true))
+        put("ladder", Recipe("ladder", 3, listOf("# #", "###", "# #"), mapOf('#' to "stick"), true))
+        put("bowl", Recipe("bowl", 4, listOf("# #", " # "), mapOf('#' to "oak_planks"), true))
+    }
 
     fun matchesIngredient(required: String, available: String): Boolean {
         if (required == available) return true
@@ -230,15 +324,24 @@ internal object Recipes {
         val resolved = mutableMapOf<String, Int>()
         for ((ingredient, needed) in required) {
             var remaining = needed
-            for ((invItem, invCount) in inventory) {
+            // Two-pass pick: exact-name matches first, then variant fallbacks.
+            // Without this, an `oak_planks` requirement could grab `spruce_planks`
+            // even when oak is available, and (worse for variant outputs)
+            // could attempt the craft with the wrong variant.
+            for (pass in 0..1) {
                 if (remaining <= 0) break
-                if (!matchesIngredient(ingredient, invItem)) continue
-                val claimed = resolved[invItem] ?: 0
-                val available = invCount - claimed
-                if (available <= 0) continue
-                val take = minOf(available, remaining)
-                resolved[invItem] = claimed + take
-                remaining -= take
+                for ((invItem, invCount) in inventory) {
+                    if (remaining <= 0) break
+                    val matches = if (pass == 0) invItem == ingredient
+                                  else matchesIngredient(ingredient, invItem) && invItem != ingredient
+                    if (!matches) continue
+                    val claimed = resolved[invItem] ?: 0
+                    val available = invCount - claimed
+                    if (available <= 0) continue
+                    val take = minOf(available, remaining)
+                    resolved[invItem] = claimed + take
+                    remaining -= take
+                }
             }
             if (remaining > 0) return null
         }
