@@ -68,9 +68,6 @@ export function SessionDetailView({ stem, onBack }: Props) {
                 </span>
               </>
             )}
-            {summary.belief_mismatch_count > 0 && (
-              <span className="trace-warn"> · {summary.belief_mismatch_count} belief mismatches</span>
-            )}
           </div>
         </div>
       </div>
@@ -308,9 +305,6 @@ function ToolCallView({ call, stem }: { call: ToolCall; stem: string }) {
 }
 
 function SideEventRow({ ev, stem }: { ev: TraceEvent; stem: string }) {
-  if (ev.event === "belief_mismatch") {
-    return <BeliefMismatchRow ev={ev} />;
-  }
   if (ev.event === "exception") {
     const d = ev.data as { stage?: string; tool?: string; exc?: string; message?: string };
     return (
@@ -351,58 +345,3 @@ function SideEventRow({ ev, stem }: { ev: TraceEvent; stem: string }) {
   );
 }
 
-function BeliefMismatchRow({ ev }: { ev: TraceEvent }) {
-  const [open, setOpen] = useState(false);
-  const data = ev.data as { mismatches?: unknown[]; belief?: unknown; actual?: unknown };
-  const mismatches = (data.mismatches ?? []) as Array<{
-    field?: string;
-    delta?: unknown;
-    belief?: unknown;
-    actual?: unknown;
-    changes?: Array<{ item: string; belief: number; actual: number }>;
-  }>;
-  return (
-    <div className="side-event side-event-mismatch">
-      <button type="button" className="mismatch-toggle" onClick={() => setOpen((v) => !v)}>
-        <span className="json-chevron">{open ? "▾" : "▸"}</span>
-        <span className="side-event-label">belief mismatch</span>
-        <span className="side-event-text">
-          {mismatches.map((m, i) => (
-            <span key={i} className="mismatch-chip">
-              {m.field}
-              {typeof m.delta === "number" ? ` Δ${(m.delta as number).toFixed(2)}` : ""}
-              {m.changes ? ` (${m.changes.length})` : ""}
-            </span>
-          ))}
-        </span>
-      </button>
-      {open && (
-        <div className="mismatch-body">
-          {mismatches.map((m, i) => (
-            <div key={i} className="mismatch-detail">
-              <div className="mismatch-detail-field">{m.field}</div>
-              {m.changes ? (
-                <table className="mismatch-table">
-                  <tbody>
-                    {m.changes.map((c, j) => (
-                      <tr key={j}>
-                        <td>{c.item}</td>
-                        <td className="trace-dim">belief {c.belief}</td>
-                        <td className="trace-warn">actual {c.actual}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <div className="mismatch-deltas">
-                  <JsonView value={m.belief} label="belief" collapseAt={200} />
-                  <JsonView value={m.actual} label="actual" collapseAt={200} />
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}

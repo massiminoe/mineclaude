@@ -6,8 +6,8 @@ Usage:
     python scripts/session_report.py --latest
 
 The report summarizes each chat turn: iterations, tool calls with timing,
-belief mismatches, exceptions, and the final reply. Invoke when
-diagnosing a reliability regression — it saves you from tailing raw JSONL.
+exceptions, and the final reply. Invoke when diagnosing a reliability
+regression — it saves you from tailing raw JSONL.
 """
 
 from __future__ import annotations
@@ -97,22 +97,6 @@ def _render_subaction(e: dict) -> str:
     return f"  └─ {name}({arg_str}) {status}"
 
 
-def _render_belief_mismatch(e: dict) -> str:
-    d = e.get("data", {})
-    ms = d.get("mismatches", [])
-    parts: list[str] = []
-    for m in ms:
-        field = m.get("field")
-        if field == "inventory":
-            changes = m.get("changes", [])
-            parts.append(
-                "inv:[" + ", ".join(f"{c['item']} b={c['belief']} a={c['actual']}" for c in changes) + "]"
-            )
-        else:
-            parts.append(f"{field} Δ={m.get('delta')}")
-    return "belief_mismatch  " + "; ".join(parts)
-
-
 def _render_exception(e: dict) -> str:
     d = e.get("data", {})
     return f"exception {d.get('stage')} {d.get('exc')}: {_truncate(d.get('message', ''), 160)}"
@@ -141,8 +125,6 @@ def _render(events: Iterable[dict]) -> str:
                 lines.append(f"{ts}    {_render_subaction(e)}")
         elif kind == "chat_out":
             lines.append(f"{ts}  → reply: {_truncate(d.get('text', ''), 200)}")
-        elif kind == "belief_mismatch":
-            lines.append(f"{ts}  !! {_render_belief_mismatch(e)}")
         elif kind == "exception":
             lines.append(f"{ts}  XX {_render_exception(e)}")
     return "\n".join(lines)

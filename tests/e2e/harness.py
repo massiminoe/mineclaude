@@ -7,9 +7,9 @@ Provides:
   - `Rcon` — very small RCON client for setting up world state
 
 The harness intentionally runs the Agent in-process (not in its own
-container) so scenario assertions have direct access to `agent.messages`,
-session log, and last_injected_status. The real bridge (and real MC
-server) come from docker-compose.
+container) so scenario assertions have direct access to `agent.messages`
+and the session log. The real bridge (and real MC server) come from
+docker-compose.
 """
 
 from __future__ import annotations
@@ -111,7 +111,6 @@ class TurnResult:
     tool_calls: list[dict]
     session_log_path: str | None
     messages: list[dict]
-    last_injected_status: dict | None
 
 
 class Scenario:
@@ -176,7 +175,6 @@ class Scenario:
             tool_calls=tool_calls,
             session_log_path=session_path,
             messages=list(self.agent.messages),
-            last_injected_status=self.agent.last_injected_status,
         )
 
     def read_session_log(self) -> list[dict]:

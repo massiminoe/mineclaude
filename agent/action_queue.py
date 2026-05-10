@@ -196,14 +196,7 @@ class ActionQueue:
         await self._drain_event.wait()
 
     def is_running(self) -> bool:
-        """Return True while the queue is executing an action.
-
-        Monitors use this to suppress belief-vs-actual mismatches during
-        active actions: the sandbox code calls bridge primitives directly
-        (which see fresh state), so the agent's last-injected gameState is
-        *expected* to look stale until the action completes and the next
-        Claude iteration injects a fresh snapshot.
-        """
+        """Return True while the queue is executing an action."""
         return self._running_action is not None
 
     def status(self) -> dict[str, Any]:

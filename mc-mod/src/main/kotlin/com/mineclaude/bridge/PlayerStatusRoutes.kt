@@ -17,8 +17,22 @@ object PlayerStatusRoutes {
     private val statusCache = TickCache(ttlMs = 50, read = ::readStatusOnTick)
 
     fun register(bridge: HttpBridge) {
-        bridge.addRoute("GET", "/status") {
-            HttpBridge.ok(statusCache.get(), message = "Status retrieved")
+        bridge.addRoute("GET", "/status") { ex ->
+            val snapshot = statusCache.get()
+            // Event drain is opt-in via ?include_events=true. There is
+            // exactly one caller that should drain — the agent's per-
+            // iteration gameState injection — so it can be the only
+            // thing that consumes events. Reflexes, primitives, the
+            // monitor's HUD broadcast, and any other ad-hoc /status
+            // call gets a status without the events field, exactly the
+            // same shape they saw before the EventLog existed.
+            val includeEvents = ex.queryParams()["include_events"] == "true"
+            val body = if (includeEvents) {
+                snapshot + ("events" to EventLog.drain())
+            } else {
+                snapshot
+            }
+            HttpBridge.ok(body, message = "Status retrieved")
         }
     }
 

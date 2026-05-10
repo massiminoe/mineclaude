@@ -248,6 +248,7 @@ def format_game_state(
     status: dict[str, Any],
     queue_status: dict[str, Any],
     recent_reflexes: list[dict] | None = None,
+    events: list[dict] | None = None,
 ) -> str:
     """Format bridge status + queue status into a readable gameState string."""
     pos = status.get("position", {})
@@ -282,7 +283,65 @@ def format_game_state(
         if rendered:
             lines.append(rendered)
 
+    if events:
+        lines.extend(_format_events(events))
+
     return "\n".join(lines)
+
+
+def _format_events(events: list[dict]) -> list[str]:
+    """Render the world-mutation event log as one line per event.
+
+    Verbose by design — every event from the mod's EventLog gets its own
+    line, in arrival order, with no condensation, dedup, or truncation.
+    Wallclock offsets are relative to the first event in the batch so
+    Claude can see the duration of the burst at a glance.
+
+    Header counts events and the total wallclock span. The events span
+    the gap between the previous gameState injection and this one, so a
+    long span on early iterations of a turn can mean the bot was idle
+    for a while before the user's chat arrived.
+    """
+    if not events:
+        return []
+    # Anchor on the oldest event's ts. The mod ships epoch milliseconds.
+    anchor_ms = min(int(e.get("ts_ms", 0)) for e in events)
+    last_ms = max(int(e.get("ts_ms", 0)) for e in events)
+    span_s = (last_ms - anchor_ms) / 1000.0
+    out = [f"=== Events since last gameState ({len(events)} events, {span_s:.2f}s span) ==="]
+    for ev in events:
+        ts_ms = int(ev.get("ts_ms", anchor_ms))
+        delta_s = (ts_ms - anchor_ms) / 1000.0
+        out.append(f"[+{delta_s:.2f}s] {_format_event_body(ev)}")
+    return out
+
+
+def _format_event_body(ev: dict) -> str:
+    """Render the event-type-specific tail of one event line.
+
+    Unknown event types fall through to a compact dict repr so the agent
+    still sees *something* if the mod ships a new type before this code
+    is updated.
+    """
+    etype = ev.get("type", "?")
+    if etype == "block_broken" or etype == "block_placed":
+        block = ev.get("block", "?")
+        pos = ev.get("pos") or {}
+        return f"{etype} {block} @ ({pos.get('x', '?')}, {pos.get('y', '?')}, {pos.get('z', '?')})"
+    if etype == "entity_attacked":
+        kind = ev.get("kind", "?")
+        eid = ev.get("entity_id", "?")
+        pos = ev.get("pos") or {}
+        x, y, z = pos.get("x", "?"), pos.get("y", "?"), pos.get("z", "?")
+        # Entity positions are floats; round for readability.
+        if isinstance(x, float): x = round(x, 1)
+        if isinstance(y, float): y = round(y, 1)
+        if isinstance(z, float): z = round(z, 1)
+        return f"entity_attacked {kind} #{eid} @ ({x}, {y}, {z})"
+    # Fallback: dump the whole event minus the timestamp/type we already
+    # rendered, so a new event type from the mod isn't silently dropped.
+    rest = {k: v for k, v in ev.items() if k not in ("ts_ms", "type")}
+    return f"{etype} {rest}"
 
 
 def _format_time(time_val: Any) -> str:

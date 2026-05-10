@@ -23,7 +23,7 @@ class BridgeResponse:
 
 @runtime_checkable
 class BridgeClient(Protocol):
-    async def get_status(self) -> BridgeResponse: ...
+    async def get_status(self, include_events: bool = False) -> BridgeResponse: ...
     async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse: ...
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse: ...
     async def goto(self, x: float, z: float, y: float | None = None) -> BridgeResponse: ...
@@ -129,8 +129,13 @@ class RealBridgeClient:
             data=data.get("data", {}),
         )
 
-    async def get_status(self) -> BridgeResponse:
-        return self._parse(await self._http.get("/status"))
+    async def get_status(self, include_events: bool = False) -> BridgeResponse:
+        # Event drain is opt-in. Only the agent's per-iteration injection
+        # passes True; every other caller (reflex handlers, primitives,
+        # monitor HUD poll) leaves the EventLog buffer alone so it accumulates
+        # for the next gameState injection.
+        params = {"include_events": "true"} if include_events else None
+        return self._parse(await self._http.get("/status", params=params))
 
     async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse:
         params: dict = {"r": radius}
@@ -349,15 +354,18 @@ class MockBridgeClient:
         self._chat_log: list[str] = []
         self._running = True
 
-    async def get_status(self) -> BridgeResponse:
-        return BridgeResponse("success", "Status retrieved", {
+    async def get_status(self, include_events: bool = False) -> BridgeResponse:
+        data: dict[str, Any] = {
             "position": self._position.copy(),
             "health": self._health,
             "hunger": self._hunger,
             "inventory": list(self._inventory),
             "biome": "plains",
             "time": 6000,
-        })
+        }
+        if include_events:
+            data["events"] = []
+        return BridgeResponse("success", "Status retrieved", data)
 
     async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse:
         blocks = [b for b in self._nearby_blocks if b["distance"] <= radius]

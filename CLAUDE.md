@@ -95,10 +95,8 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 
 ## Debugging
 
-- `state/sessions/<ts>-<id>.jsonl` — agent-side replay log. Every turn, every Claude iteration, every tool call with timing, every belief mismatch. Emitted by `agent/session_log.py`. Render as a timeline: `python scripts/session_report.py --latest`
+- `state/sessions/<ts>-<id>.jsonl` — agent-side replay log. Every turn, every Claude iteration, every tool call with timing. Emitted by `agent/session_log.py`. Render as a timeline: `python scripts/session_report.py --latest`
 - Bridge-side logs go through SLF4J to MC's standard log — `docker compose logs mc-client` for the live stream, or filter for `mineclaude-bridge` loggers. The legacy mutation-log JSONL is gone with Phase 8; if you need before/after world snapshots, the agent's session log captures pre/post `/status` around each tool call
-
-A **belief mismatch** (logged by `agent/belief_check.py`) means the agent's most recently injected gameState diverges from what the bridge currently sees. It is the strongest signal that Claude was deciding on stale data — check the session log around the same timestamp for the action that desynced state.
 
 For hands-on primitive debugging, run `NO_CLAUDE=1 mineclaude` and use the **Console** panel in the monitor frontend. You type the same code Claude would put in `newAction` (e.g. `await goToPosition(0, 64, 0)`), it enqueues on the same action queue, and the resulting trace renders in the Action Queue panel with full subaction breakdown. Useful for reproducing "Claude did X and something weird happened" without Claude in the loop.
 

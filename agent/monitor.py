@@ -11,7 +11,6 @@ from typing import Any
 
 from aiohttp import web
 
-from agent.belief_check import diff_belief_vs_actual
 from agent.memory import read_memory
 from agent.plan import read_plan
 from agent.pricing import compute_cost
@@ -49,7 +48,6 @@ def _summarize_session(path: Path) -> dict[str, Any]:
         "iteration_count": 0,
         "tool_call_count": 0,
         "screenshot_count": 0,
-        "belief_mismatch_count": 0,
         "exception_count": 0,
         "first_user_message": None,
         "session_id": None,
@@ -99,8 +97,6 @@ def _summarize_session(path: Path) -> dict[str, Any]:
                     res = data.get("result")
                     if isinstance(res, dict) and res.get("type") == "image":
                         summary["screenshot_count"] += 1
-                elif ev == "belief_mismatch":
-                    summary["belief_mismatch_count"] += 1
                 elif ev == "exception":
                     summary["exception_count"] += 1
                 elif ev == "claude_usage":
@@ -369,68 +365,11 @@ class MonitorServer:
             return {}
 
     async def _game_state_loop(self) -> None:
-        last_mismatch_key: tuple | None = None
         while True:
             try:
                 game = await self._get_game_state()
                 if game:
                     await self._broadcast("game:state", game)
-                    belief = getattr(self.agent, "last_injected_status", None)
-                    # Skip the check while a newAction is running: the sandbox
-                    # reads fresh bridge state directly, so any mismatch is
-                    # noise (the injected snapshot is genuinely stale but the
-                    # agent isn't acting on it). Real mismatches we care about
-                    # show up between Claude iterations.
-                    action_in_flight = (
-                        hasattr(self.agent, "queue")
-                        and hasattr(self.agent.queue, "is_running")
-                        and self.agent.queue.is_running()
-                    )
-                    # Agent is "idle" if no chat or tool activity in the last
-                    # 30s AND queue empty. Under idle, natural state drift
-                    # (weather, day/night, mobs wandering into inventory range)
-                    # is not a meaningful mismatch — Claude isn't deciding.
-                    idle = (
-                        not action_in_flight
-                        and hasattr(self.agent, "last_activity_ts")
-                        and (time.monotonic() - self.agent.last_activity_ts) > 30.0
-                    )
-                    # Reflex grace: handlers can mutate world state (place
-                    # water, swim up) without Claude knowing. For 2s after
-                    # the most recent reflex fire, suppress the check —
-                    # the next gameState injection includes the reflex
-                    # entry and Claude reconciles from there.
-                    reflex_recent = (
-                        hasattr(self.agent, "reflexes")
-                        and (time.monotonic() - self.agent.reflexes.last_fire_ts) < 2.0
-                    )
-                    if belief and not action_in_flight and not idle and not reflex_recent:
-                        mismatches = diff_belief_vs_actual(belief, game)
-                        if mismatches:
-                            # Dedupe repeated identical mismatches (don't spam)
-                            key = tuple(
-                                (m.get("field"), repr(m.get("delta")), repr(m.get("changes")))
-                                for m in mismatches
-                            )
-                            if key != last_mismatch_key:
-                                last_mismatch_key = key
-                                logger.info(
-                                    f"belief mismatch: {[m['field'] for m in mismatches]}"
-                                )
-                                await self._broadcast(
-                                    "belief:mismatch",
-                                    {"mismatches": mismatches, "belief": belief, "actual": game},
-                                )
-                                sl = getattr(self.agent, "_current_session_logger", None)
-                                if sl is not None:
-                                    sl.emit(
-                                        "belief_mismatch",
-                                        mismatches=mismatches,
-                                        belief=belief,
-                                        actual=game,
-                                    )
-                        else:
-                            last_mismatch_key = None
             except Exception:
                 pass
             await asyncio.sleep(2.0)

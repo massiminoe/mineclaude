@@ -81,9 +81,6 @@ export function SessionList({ onOpen }: Props) {
                     {formatCost(s.usage.cost_usd)}
                   </span>
                 )}
-                {s.belief_mismatch_count > 0 && (
-                  <span className="trace-warn">{s.belief_mismatch_count} mismatch</span>
-                )}
                 {s.exception_count > 0 && (
                   <span className="trace-error-text">{s.exception_count} err</span>
                 )}

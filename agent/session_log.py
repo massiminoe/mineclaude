@@ -11,7 +11,6 @@ Event types emitted by the agent loop:
   - tool_dispatch   name, input, result, elapsed_ms
   - chat_out        message sent back to the player
   - exception       stage, exc type, traceback
-  - belief_mismatch divergence between agent belief and live bridge state
 
 The log is the primary artifact for post-hoc diagnosis — it must capture
 enough structure to reconstruct what Claude saw at every decision point.

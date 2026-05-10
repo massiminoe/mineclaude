@@ -40,7 +40,6 @@ class _StubAgent:
         self.bridge = _StubBridge()
         self.queue = ActionQueue()
         self.messages: list[dict[str, Any]] = []
-        self.last_injected_status: dict[str, Any] | None = None
         self.last_activity_ts: float = 0.0
         self._callbacks: dict[str, list] = {}
 

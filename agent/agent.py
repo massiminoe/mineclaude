@@ -101,12 +101,9 @@ class Agent:
         self._session_ids: dict[str, str] = {}
         self._session_loggers: dict[str, SessionLogger] = {}
         self._current_session_logger: SessionLogger | None = None
-        # Most recent status dict that Claude was shown via gameState injection.
-        # Read by the monitor's belief checker to diff against live bridge state.
-        self.last_injected_status: dict[str, Any] | None = None
-        # Monotonic timestamp of the agent's last active moment (chat in or tool
-        # return). Read by the monitor to suppress belief mismatches while the
-        # agent is idle — state drifts naturally when no one is looking.
+        # Monotonic timestamp of the agent's last active moment (chat in or
+        # tool return). Currently only updated; left in place as a low-cost
+        # signal future monitor features may want.
         self.last_activity_ts: float = time.monotonic()
         self._callbacks: dict[str, list[Callable[[str, Any], Coroutine[Any, Any, None]]]] = {}
 
@@ -511,14 +508,25 @@ class Agent:
             # world, not a snapshot from 10 tool calls ago. Each iteration gets
             # a unique tool_use_id so the prompt cache prefix only diverges at
             # the latest injection.
-            status_resp = await self.bridge.get_status()
+            #
+            # include_events=True drains the mod's EventLog into the response.
+            # This is the ONLY caller that should set this — every other
+            # /status call (reflexes, primitives, monitor HUD) leaves the
+            # buffer untouched so events accumulate for the next injection.
+            status_resp = await self.bridge.get_status(include_events=True)
+            # Events are co-shipped on /status (drained by include_events=true)
+            # but live in their own section of the gameState string. Pop them
+            # out so the status payload passed to format_game_state is the
+            # same shape the rest of the codebase expects.
+            status_data = dict(status_resp.data)
+            events = status_data.pop("events", [])
             queue_status = self.queue.status()
             game_state = format_game_state(
-                status_resp.data,
+                status_data,
                 queue_status,
                 recent_reflexes=list(self.reflexes.recent),
+                events=events,
             )
-            self.last_injected_status = status_resp.data
             self._inject_gamestate(game_state, iteration)
             await self._emit("conversation:update", self.messages)
 

@@ -4,7 +4,8 @@
   "compatibilityLevel": "JAVA_21",
   "minVersion": "0.8",
   "client": [
-    "ClientPlayNetworkHandlerDamageMixin"
+    "ClientPlayNetworkHandlerDamageMixin",
+    "InteractionManagerEventsMixin"
   ],
   "injectors": {
     "defaultRequire": 1

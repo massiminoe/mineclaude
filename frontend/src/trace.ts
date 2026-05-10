@@ -10,7 +10,6 @@ export interface SessionSummary {
   iteration_count: number;
   tool_call_count: number;
   screenshot_count: number;
-  belief_mismatch_count: number;
   exception_count: number;
   first_user_message: string | null;
   session_id: string | null;
@@ -57,7 +56,7 @@ export interface Iteration {
   request: TraceEvent | null;
   response: TraceEvent | null;
   toolCalls: ToolCall[];
-  // Belief mismatches / exceptions / subactions that happened during this iteration.
+  // Exceptions / subactions / chat_out that happened during this iteration.
   sideEvents: TraceEvent[];
   usage: TraceEvent | null;
 }
@@ -173,7 +172,7 @@ export function buildTimeline(events: TraceEvent[]): SessionTimeline {
       if (currentIter) currentIter.sideEvents.push(ev);
       continue;
     }
-    // belief_mismatch, exception, subaction, anything else
+    // exception, subaction, anything else
     if (currentIter) {
       currentIter.sideEvents.push(ev);
     } else {

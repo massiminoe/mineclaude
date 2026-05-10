@@ -146,9 +146,8 @@ class ReflexRegistry:
     The registry owns four pieces of cross-cutting state:
       * the handler table (event_type → ReflexHandler)
       * the `recent` buffer of the last N fires for gameState rendering
-      * `last_fire_ts`, used by the monitor's belief check to apply a
-        grace window after a reflex (handler may have mutated state
-        without Claude knowing).
+      * `last_fire_ts`, the wall-clock of the most recent fire (kept as a
+        cheap signal future monitor features may consume).
       * `_active_handler_task`, the currently-running handler. A new
         dispatch cancels this before spawning the new handler — the
         latest reflex preempts the prior reflex's reaction.
