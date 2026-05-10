@@ -37,6 +37,36 @@ except ImportError:
             return fn
         return decorator
 
+
+from contextlib import contextmanager, nullcontext
+
+
+def _lf_trace_update(**kwargs: Any) -> None:
+    """Set trace-level name/tags/metadata. No-op without langfuse."""
+    if not (_langfuse_available and get_client is not None):
+        return
+    try:
+        get_client().update_current_trace(**kwargs)
+    except Exception:
+        pass
+
+
+@contextmanager
+def _lf_span(name: str):
+    """Push a named span onto the current trace. No-op without langfuse."""
+    if not (_langfuse_available and get_client is not None):
+        with nullcontext():
+            yield
+        return
+    try:
+        cm = get_client().start_as_current_span(name=name)
+    except Exception:
+        with nullcontext():
+            yield
+        return
+    with cm:
+        yield
+
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 150
@@ -429,6 +459,15 @@ class Agent:
 
         self._slog("chat_in", username=username, message=message)
 
+        # Trace name = "<user>: <first 60 chars>" so the trace list is scannable.
+        # Initial tags are set now; final tags + metadata get patched in at the
+        # end of the turn once we know stop_reason / iterations / etc.
+        _trace_preview = message[:60] + ("…" if len(message) > 60 else "")
+        _initial_tags = [f"model:{getattr(self.claude, 'model', 'unknown')}"]
+        if username == "reflex":
+            _initial_tags.append("reflex")
+        _lf_trace_update(name=f"{username}: {_trace_preview}", tags=_initial_tags)
+
         # NOTE: the user message is already in `self.messages` — appended by
         # `_flush_pending_inputs` in the chat worker before this task spawned.
         # That split lets a reflex preempt drop a turn without losing the
@@ -444,7 +483,15 @@ class Agent:
 
         # Claude loop
         hit_cap = True
+        # Trace metadata accumulators (patched onto the trace at end of turn).
+        tool_call_count = 0
+        had_screenshot = False
+        compaction_fired = False
+        final_stop_reason: str | None = None
+        iterations_used = 0
         for iteration in range(MAX_ITERATIONS):
+          with _lf_span(f"iter {iteration + 1}/{MAX_ITERATIONS}"):
+            iterations_used = iteration + 1
             logger.info(f"Claude iteration {iteration + 1}/{MAX_ITERATIONS}")
             self.last_activity_ts = time.monotonic()
 
@@ -455,6 +502,7 @@ class Agent:
             # current docs (and picks up any writePlan/writeMemory done in
             # the now-evicted iterations).
             if await self._compact_if_needed():
+                compaction_fired = True
                 self._inject_plan()
                 self._inject_memory()
                 await self._emit("conversation:update", self.messages)
@@ -493,6 +541,7 @@ class Agent:
                 hit_cap = False
                 break
 
+            final_stop_reason = response.stop_reason
             logger.info(f"Claude response: stop_reason={response.stop_reason}, blocks={len(response.content)}")
             self._slog(
                 "claude_response",
@@ -551,6 +600,9 @@ class Agent:
                 # Dispatch all tool calls and collect results
                 tool_results = []
                 for tool_use in tool_uses:
+                    tool_call_count += 1
+                    if tool_use.name == "screenshot":
+                        had_screenshot = True
                     _t0 = time.monotonic()
                     result = await self._dispatch_tool(tool_use.name, tool_use.input)
                     _elapsed_ms = int((time.monotonic() - _t0) * 1000)
@@ -621,6 +673,34 @@ class Agent:
             await self._send_chat(
                 f"Hit my work limit ({MAX_ITERATIONS} steps). Pausing — let me know if you want me to continue."
             )
+
+        # Patch final tags + metadata onto the trace so the trace list is
+        # filterable by interesting outcomes (hit-cap, compacted, …) and the
+        # detail panel surfaces shape-of-turn at a glance.
+        _final_tags = [f"model:{getattr(self.claude, 'model', 'unknown')}"]
+        if username == "reflex":
+            _final_tags.append("reflex")
+        if hit_cap:
+            _final_tags.append("hit-cap")
+        if compaction_fired:
+            _final_tags.append("compacted")
+        if had_screenshot:
+            _final_tags.append("screenshot")
+        if final_stop_reason:
+            _final_tags.append(f"stop:{final_stop_reason}")
+        _lf_trace_update(
+            tags=_final_tags,
+            metadata={
+                "iterations_used": iterations_used,
+                "max_iterations": MAX_ITERATIONS,
+                "hit_cap": hit_cap,
+                "tool_call_count": tool_call_count,
+                "had_screenshot": had_screenshot,
+                "compaction_fired": compaction_fired,
+                "final_stop_reason": final_stop_reason,
+                "model": getattr(self.claude, "model", "unknown"),
+            },
+        )
 
         # Compact conversation history if it's grown past the budget. A single
         # Claude call summarizes the older portion and may also call writeMemory
