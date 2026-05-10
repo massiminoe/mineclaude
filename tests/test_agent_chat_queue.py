@@ -444,6 +444,50 @@ async def test_normal_chat_after_bang_stop_runs_a_turn():
         await agent.queue.stop()
 
 
+async def test_bang_stop_suppresses_subsequent_reflex_resume():
+    """!stop must beat a reflex completing afterwards: the reflex's
+    `_stage_resume` is a no-op while the stop gate is set, so Claude
+    doesn't auto-wake on a synthetic '[reflex … handled — continue]'."""
+    agent = _make_agent()
+    agent.queue.start()
+    try:
+        agent._enqueue_chat({"username": "Steve", "message": "!stop"})
+        await asyncio.sleep(0.05)
+        assert agent._stopped
+        assert not agent._chat_trigger.is_set()
+        assert agent._pending_user_inputs == []
+
+        # Reflex finishes after the stop and tries to resume.
+        agent._stage_resume("damage_taken")
+        assert not agent._chat_trigger.is_set()
+        assert agent._pending_user_inputs == []
+    finally:
+        await agent.queue.stop()
+
+
+async def test_real_chat_after_bang_stop_clears_gate_and_allows_resume():
+    """The stop gate releases on the next real player chat, so reflex
+    resumes work normally again."""
+    agent = _make_agent()
+    agent.queue.start()
+    try:
+        agent._enqueue_chat({"username": "Steve", "message": "!stop"})
+        await asyncio.sleep(0.05)
+        assert agent._stopped
+
+        agent._enqueue_chat({"username": "Steve", "message": "ok go"})
+        assert not agent._stopped
+
+        # Now reflex resume should work again.
+        agent._pending_user_inputs.clear()
+        agent._chat_trigger.clear()
+        agent._stage_resume("damage_taken")
+        assert agent._chat_trigger.is_set()
+        assert len(agent._pending_user_inputs) == 1
+    finally:
+        await agent.queue.stop()
+
+
 async def test_unknown_bang_command_replies_and_skips_claude():
     claude = _StubClaude()
     agent = _make_agent(claude)

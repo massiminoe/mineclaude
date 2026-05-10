@@ -95,6 +95,12 @@ class Agent:
         self._chat_trigger: asyncio.Event = asyncio.Event()
         self._chat_worker_task: asyncio.Task | None = None
         self._active_chat_task: asyncio.Task | None = None
+        # Set by `!stop`, cleared by the next real user chat. While set,
+        # `_stage_resume` is a no-op so a reflex completing post-stop can't
+        # auto-wake Claude. Reflex *handlers* still run (the body still
+        # surfaces from water, flees attackers, etc.) — only the wake-up
+        # turn is suppressed.
+        self._stopped: bool = False
         # Set in `_run_chat_turn`; cleared in its `finally`. While a turn is
         # active, holds a list to restore `self.messages` to on cancellation.
         self._rollback_messages: list[dict[str, Any]] | None = None
@@ -237,7 +243,13 @@ class Agent:
         Coalesces with any pending user input on the next flush, so a
         burst of reflexes (or a reflex landing alongside a player chat)
         produces a single Claude turn that sees all of them.
+
+        No-op while `!stop` is in effect — the user's stop must be
+        authoritative against any reflex that happens to complete after.
         """
+        if self._stopped:
+            self._slog("reflex_resume_suppressed", event_type=event_type)
+            return
         self._pending_user_inputs.append({
             "role": "user",
             "content": f"[reflex {event_type} handled — continue]",
@@ -261,6 +273,9 @@ class Agent:
         if message.startswith("!"):
             asyncio.create_task(self._handle_command(username, message))
             return
+        # Real user chat re-engages the agent — clear any prior !stop gate
+        # so reflex resumes can wake Claude again.
+        self._stopped = False
         self._pending_user_inputs.append({
             "role": "user",
             "content": f"{username}: {message}",
@@ -291,7 +306,12 @@ class Agent:
     async def _cmd_stop(self, username: str, args: str) -> None:
         """`!stop` — interrupt the in-flight turn and drop anything queued.
         Subsequent user chat re-engages Claude through the normal path.
+
+        Sets `_stopped` so a reflex completing after this call (the
+        handler may already be running on its own task) can't sneak a
+        synthetic resume past us. Cleared on the next real user chat.
         """
+        self._stopped = True
         self._pending_user_inputs.clear()
         await self._preempt()
 

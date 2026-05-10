@@ -49,6 +49,15 @@ class MineclaudeBridgeClient : ClientModInitializer {
         MovementRoutes.register(bridge)
         GotoRoute.register(bridge)
         CollectRoute.register(bridge)
+        // Standable-Y query — finds the y at (x,z) where the player can
+        // stand (feet/head clearance, non-replaceable floor), closest to a
+        // reference y. Removes a class of "guess Y, end up in the ground"
+        // failures from building / placement code.
+        StandableYRoute.register(bridge)
+        // Single-cell inspection — preflight for building loops so the
+        // agent can verify a cell is replaceable before attempting a
+        // placement that would fail with "Block already at …".
+        BlockRoute.register(bridge)
         // Direct-input swim-up. Used by the drowning reflex to surface the
         // player before handing off to Baritone — Baritone can't path from
         // a fully submerged start (PathNode map size: 1 → instant give-up).

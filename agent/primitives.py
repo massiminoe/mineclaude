@@ -85,8 +85,38 @@ def make_primitives(
     async def stop() -> str:
         return _check(await bridge.stop())
 
-    async def placeBlock(block_type: str, x: int, y: int, z: int, face: str = "top") -> str:
-        return _check(await bridge.place(block_type, x, y, z, face))
+    async def placeBlock(block_type: str, x: int, y: int, z: int) -> str:
+        return _check(await bridge.place(block_type, x, y, z))
+
+    async def getBlock(x: int, y: int, z: int) -> dict:
+        """Inspect a single cell. Returns `{block, replaceable}`.
+
+        `block` is the block id with `minecraft:` stripped (e.g. `"air"`,
+        `"oak_planks"`, `"grass_block"`). `replaceable` is the vanilla
+        `BlockState.isReplaceable()` flag — same predicate `placeBlock`
+        uses to decide whether the cell can be overwritten, so a cell with
+        `replaceable=True` can be placed into.
+        """
+        resp = await bridge.get_block(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def standableY(x: int, z: int, near_y: int | None = None) -> int:
+        """Find the y at (x, z) where the player can stand, closest to near_y.
+
+        Returns the air block your feet would occupy (with head clearance
+        above and a non-replaceable floor below). If `near_y` is omitted the
+        bridge defaults to the player's current y, which makes the query
+        respect "where I am" — useful underground or indoors so you get the
+        nearby cave/room floor instead of the world surface 40 blocks above.
+
+        Raises if no standable column exists within ±64 of `near_y`.
+        """
+        resp = await bridge.standable_y(x, z, near_y)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return int(resp.data["y"])
 
     async def breakBlockAt(x: int, y: int, z: int) -> str:
         return _check(await bridge.break_block(x, y, z))
@@ -223,6 +253,8 @@ def make_primitives(
         "followPlayer": followPlayer,
         "stop": stop,
         "placeBlock": placeBlock,
+        "standableY": standableY,
+        "getBlock": getBlock,
         "breakBlockAt": breakBlockAt,
         "collectItems": collectItems,
         "attack": attack,

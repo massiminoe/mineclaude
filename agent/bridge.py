@@ -31,7 +31,7 @@ class BridgeClient(Protocol):
     async def follow(self, player: str, distance: int = 3) -> BridgeResponse: ...
     async def explore(self) -> BridgeResponse: ...
     async def stop(self) -> BridgeResponse: ...
-    async def place(self, block: str, x: int, y: int, z: int, face: str = "top") -> BridgeResponse: ...
+    async def place(self, block: str, x: int, y: int, z: int) -> BridgeResponse: ...
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def collect(self, radius: float = 3) -> BridgeResponse: ...
     async def attack(self, entity_id: str) -> BridgeResponse: ...
@@ -78,6 +78,8 @@ class BridgeClient(Protocol):
     async def discard(self, slot: int, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
+    async def standable_y(self, x: int, z: int, near_y: int | None = None) -> BridgeResponse: ...
+    async def get_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def screenshot(
         self,
         yaw: float | None = None,
@@ -147,8 +149,8 @@ class RealBridgeClient:
     async def stop(self) -> BridgeResponse:
         return self._parse(await self._http.post("/stop"))
 
-    async def place(self, block: str, x: int, y: int, z: int, face: str = "top") -> BridgeResponse:
-        return self._parse(await self._http.post("/place", json={"block": block, "x": x, "y": y, "z": z, "face": face}))
+    async def place(self, block: str, x: int, y: int, z: int) -> BridgeResponse:
+        return self._parse(await self._http.post("/place", json={"block": block, "x": x, "y": y, "z": z}))
 
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.post("/break", json={"x": x, "y": y, "z": z}))
@@ -248,6 +250,15 @@ class RealBridgeClient:
 
     async def surface(self, timeout: float = 2.0) -> BridgeResponse:
         return self._parse(await self._http.post("/surface", json={"timeout": timeout}))
+
+    async def standable_y(self, x: int, z: int, near_y: int | None = None) -> BridgeResponse:
+        params: dict[str, str] = {"x": str(x), "z": str(z)}
+        if near_y is not None:
+            params["near_y"] = str(near_y)
+        return self._parse(await self._http.get("/standable_y", params=params))
+
+    async def get_block(self, x: int, y: int, z: int) -> BridgeResponse:
+        return self._parse(await self._http.get("/block", params={"x": str(x), "y": str(y), "z": str(z)}))
 
     async def screenshot(
         self,
@@ -369,7 +380,7 @@ class MockBridgeClient:
     async def stop(self) -> BridgeResponse:
         return BridgeResponse("success", "Stopped")
 
-    async def place(self, block: str, x: int, y: int, z: int, face: str = "top") -> BridgeResponse:
+    async def place(self, block: str, x: int, y: int, z: int) -> BridgeResponse:
         removed = self._remove_from_inventory(block, 1)
         if not removed:
             return BridgeResponse("error", f"No {block} in inventory")
@@ -773,6 +784,31 @@ class MockBridgeClient:
 
     async def surface(self, timeout: float = 2.0) -> BridgeResponse:
         return BridgeResponse("success", "Surfaced", {"surfaced": True, "ticks": 0})
+
+    async def standable_y(self, x: int, z: int, near_y: int | None = None) -> BridgeResponse:
+        # Mock: pretend the floor is at y=63 everywhere → standable y=64.
+        ny = near_y if near_y is not None else int(self._position["y"])
+        return BridgeResponse(
+            "success",
+            f"Standable at ({x}, 64, {z}) on grass_block",
+            {"y": 64, "floor_block": "grass_block", "near_y": ny},
+        )
+
+    async def get_block(self, x: int, y: int, z: int) -> BridgeResponse:
+        # Mock: any cell present in _nearby_blocks reports its name; otherwise
+        # air (replaceable).
+        for b in self._nearby_blocks:
+            if b["x"] == x and b["y"] == y and b["z"] == z:
+                return BridgeResponse(
+                    "success",
+                    f"{b['name']} at ({x}, {y}, {z})",
+                    {"block": b["name"], "replaceable": False},
+                )
+        return BridgeResponse(
+            "success",
+            f"air at ({x}, {y}, {z})",
+            {"block": "air", "replaceable": True},
+        )
 
     async def screenshot(
         self,

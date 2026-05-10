@@ -17,7 +17,7 @@ const PRIMITIVE_GROUPS: { label: string; items: string[] }[] = [
   {
     label: "world",
     items: [
-      "await placeBlock(block_type, x, y, z, face='top')",
+      "await placeBlock(block_type, x, y, z)",
       "await breakBlockAt(x, y, z)",
       "await collectItems(radius=6)",
       "await attack(entity_id)",

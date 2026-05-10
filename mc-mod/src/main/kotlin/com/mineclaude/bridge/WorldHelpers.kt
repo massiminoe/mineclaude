@@ -4,9 +4,11 @@ import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientPlayerEntity
 import net.minecraft.registry.Registries
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.Box
 import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
 import kotlin.math.atan2
+import kotlin.math.floor
 import kotlin.math.sqrt
 
 /**
@@ -134,6 +136,58 @@ internal object WorldHelpers {
         return null
     }
 
+    /**
+     * True iff the player's bounding box intersects the 1×1×1 cell at [pos].
+     *
+     * Vanilla's `BlockItem.canPlace` rejects placements that would put a solid
+     * block where any entity is, returning a no-op `ActionResult` to the
+     * client. The /place verify step then sees "still air" and surfaces a
+     * misleading "is a GUI open?" error. Detecting body-in-cell at preflight
+     * lets us either step the player off or jump-place around it.
+     */
+    fun playerOccupiesCell(player: ClientPlayerEntity, pos: BlockPos): Boolean {
+        val cell = Box(
+            pos.x.toDouble(), pos.y.toDouble(), pos.z.toDouble(),
+            pos.x + 1.0, pos.y + 1.0, pos.z + 1.0,
+        )
+        return player.boundingBox.intersects(cell)
+    }
+
+    /** Block cell containing the player's feet (player.y is feet height). */
+    fun playerFeetCell(player: ClientPlayerEntity): BlockPos = BlockPos(
+        floor(player.x).toInt(),
+        floor(player.y + 0.001).toInt(),
+        floor(player.z).toInt(),
+    )
+
+    /**
+     * Could a player stand with feet at [feet]? Replaceable feet+head cells,
+     * non-replaceable floor below. Same predicate StandableYRoute uses.
+     */
+    fun canStandAt(feet: BlockPos): Boolean {
+        val world = MinecraftClient.getInstance().world ?: return false
+        val below = world.getBlockState(feet.down())
+        val feetState = world.getBlockState(feet)
+        val headState = world.getBlockState(feet.up())
+        return !below.isReplaceable && feetState.isReplaceable && headState.isReplaceable
+    }
+
+    /**
+     * Find a 1-block lateral cell the player can step to that doesn't still
+     * intersect [target]. Returns the destination feet cell, or null if no
+     * cardinal neighbour works.
+     */
+    fun findStepOffCell(player: ClientPlayerEntity, target: BlockPos): BlockPos? {
+        val feet = playerFeetCell(player)
+        for (dir in listOf(Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST)) {
+            val newFeet = feet.offset(dir)
+            if (newFeet == target || newFeet.up() == target) continue
+            if (!canStandAt(newFeet)) continue
+            return newFeet
+        }
+        return null
+    }
+
     /** Strip the `minecraft:` namespace + any blockstate suffix. */
     fun normalizeBlockId(id: String): String {
         val noState = id.substringBefore('[')
@@ -148,34 +202,15 @@ internal object WorldHelpers {
     }
 
     /**
-     * Vanilla MC silently replaces these blocks when something is placed
-     * into their cell — short_grass overlays, flowers, snow layer, water,
-     * etc. Pinned to MC 1.21.5; mirrors `bridge.blocks.REPLACEABLE_BLOCKS`
-     * so /place behaviour is bit-identical between bridges.
+     * Delegates to vanilla `BlockState.isReplaceable()` — the same predicate
+     * the game itself consults when deciding whether placing a block should
+     * overwrite an existing cell (air, fluids, grass tufts, snow layer,
+     * flowers, saplings, fire, …). Data-driven, so adding a new flower in a
+     * future MC version Just Works without us touching this list.
      */
-    val REPLACEABLE_BLOCKS: Set<String> = setOf(
-        "air", "cave_air", "void_air",
-        "short_grass", "tall_grass", "fern", "large_fern",
-        "dead_bush", "seagrass", "tall_seagrass",
-        "vine", "glow_lichen", "hanging_roots",
-        "pink_petals", "leaf_litter", "wildflowers",
-        "dandelion", "poppy", "blue_orchid", "allium", "azure_bluet",
-        "red_tulip", "orange_tulip", "white_tulip", "pink_tulip",
-        "oxeye_daisy", "cornflower", "lily_of_the_valley", "wither_rose",
-        "torchflower", "pitcher_plant",
-        "sunflower", "lilac", "rose_bush", "peony",
-        "oak_sapling", "spruce_sapling", "birch_sapling", "jungle_sapling",
-        "acacia_sapling", "dark_oak_sapling", "mangrove_propagule",
-        "cherry_sapling", "azalea", "flowering_azalea",
-        "brown_mushroom", "red_mushroom",
-        "snow",
-        "water", "lava", "bubble_column",
-        "fire", "soul_fire", "light",
-    )
-
-    fun isReplaceable(id: String?): Boolean {
-        if (id.isNullOrEmpty()) return true
-        return normalizeBlockId(id) in REPLACEABLE_BLOCKS
+    fun isReplaceable(pos: BlockPos): Boolean {
+        val world = MinecraftClient.getInstance().world ?: return true
+        return world.getBlockState(pos).isReplaceable
     }
 
     /**
