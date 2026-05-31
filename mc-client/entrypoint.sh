@@ -68,12 +68,7 @@ sleep 15
 echo "=== Connection status ==="
 grep -i "world\|connect\|join\|baritone.*data" /tmp/hmc.log | tail -10
 
-# Set game rules via RCON. Opping is handled server-side now: Massimino's
-# offline-mode UUID is seeded into mc-server's ops.json (bind-mounted in
-# docker-compose.yml), so no RCON `op` is needed here. The bot (Claude) is
-# intentionally NOT opped — note this disables its plain-text chat, which
-# goes through `/tellraw` (permission level 2). All other bot actions
-# (Baritone movement, break/place/attack, etc.) are client-side and unaffected.
+# Set game rules via RCON. Opping is handled server-side
 echo "Configuring game rules via RCON..."
 python3 -c "
 from mcrcon import MCRcon
