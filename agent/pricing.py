@@ -13,10 +13,14 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # (input, output, cache_write_5m, cache_read) per 1M tokens, USD.
+# Matched by substring against the model id (e.g. "kimi" hits
+# "accounts/fireworks/models/kimi-k2p6"). Fireworks bills no separate
+# cache-write fee — caching is automatic — so cache_write is 0 for kimi.
 _RATES: dict[str, tuple[float, float, float, float]] = {
     "opus":   (15.00, 75.00, 18.75, 1.50),
     "sonnet": (3.00,  15.00, 3.75,  0.30),
     "haiku":  (1.00,  5.00,  1.25,  0.10),
+    "kimi":   (0.95,  4.00,  0.00,  0.16),
 }
 
 _FALLBACK = _RATES["sonnet"]

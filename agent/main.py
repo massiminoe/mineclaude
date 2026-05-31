@@ -76,14 +76,30 @@ def main() -> None:
     bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8081")
     bridge_ws_url = os.environ.get("BRIDGE_WS_URL", "ws://localhost:8082/events")
     bot_name = os.environ.get("BOT_NAME", "Claude")
-    claude_model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+    # LLM_PROVIDER selects the model + endpoint (see agent/providers.py).
+    # CLAUDE_MODEL / FIREWORKS_MODEL still override the model within a provider.
+    llm_provider_name = os.environ.get("LLM_PROVIDER", "anthropic")
     # Compaction defaults to the main model when unset. Set COMPACTION_MODEL
     # to e.g. claude-haiku-4-5-20251001 to run compaction on a cheaper model.
     compaction_model = os.environ.get("COMPACTION_MODEL") or None
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    # Resolve the provider early to validate its API key. resolve_provider only
+    # reads env + a static table (no AsyncAnthropic), so importing it before the
+    # heavy agent modules + Langfuse init is fine.
+    from agent.providers import resolve_provider
+
+    try:
+        provider = resolve_provider(llm_provider_name)
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(1)
+    api_key = provider.api_key()
 
     if not mock_bridge and not no_claude and not api_key:
-        logger.error("ANTHROPIC_API_KEY is required (or set MOCK_BRIDGE=1 or NO_CLAUDE=1)")
+        logger.error(
+            f"{provider.api_key_env} is required for LLM_PROVIDER={provider.name} "
+            f"(or set MOCK_BRIDGE=1 or NO_CLAUDE=1)"
+        )
         sys.exit(1)
 
     # Initialize Langfuse BEFORE importing modules that create AsyncAnthropic
@@ -103,7 +119,7 @@ def main() -> None:
         base_url=bridge_url,
         ws_url=bridge_ws_url,
     )
-    claude = None if no_claude else ClaudeClient(model=claude_model, api_key=api_key)
+    claude = None if no_claude else ClaudeClient(provider, api_key=api_key)
     agent = Agent(
         bridge=bridge,
         claude=claude,
@@ -114,8 +130,9 @@ def main() -> None:
 
     logger.info(
         f"Mineclaude agent starting (mock={mock_bridge}, no_claude={no_claude}, "
-        f"bot={bot_name}, model={'<disabled>' if no_claude else claude_model}, "
-        f"compaction_model={compaction_model or claude_model})"
+        f"bot={bot_name}, provider={provider.name}, "
+        f"model={'<disabled>' if no_claude else provider.model}, "
+        f"compaction_model={compaction_model or provider.model})"
     )
 
     try:

@@ -590,6 +590,16 @@ class Agent:
                         "name": block.name,
                         "input": block.input,
                     })
+                elif block.type in ("thinking", "redacted_thinking"):
+                    # Extended-thinking blocks must be preserved verbatim in
+                    # history: the provider validates a tool-use turn against the
+                    # thinking that preceded it, and the block must not be
+                    # stranded. Logged, never surfaced to chat.
+                    assistant_content.append(self._thinking_block(block))
+                    if block.type == "thinking":
+                        logger.info(f"Claude thinking: {block.thinking[:LOG_TRIM]}")
+                else:
+                    logger.warning(f"Unexpected block type: {block.type}")
 
             self.messages.append({"role": "assistant", "content": assistant_content})
             await self._emit("conversation:update", self.messages)
@@ -714,6 +724,17 @@ class Agent:
         # Claude call summarizes the older portion and may also call writeMemory
         # to promote durable knowledge — see agent/compaction.py.
         await self._compact_if_needed()
+
+    @staticmethod
+    def _thinking_block(block) -> dict[str, Any]:
+        """Re-serialize a thinking / redacted_thinking content block for history."""
+        if block.type == "redacted_thinking":
+            return {"type": "redacted_thinking", "data": block.data}
+        out: dict[str, Any] = {"type": "thinking", "thinking": block.thinking}
+        sig = getattr(block, "signature", None)
+        if sig:
+            out["signature"] = sig
+        return out
 
     @observe(as_type="tool")
     async def _dispatch_tool(self, name: str, input_data: dict) -> str | dict:

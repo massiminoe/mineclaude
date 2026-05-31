@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 import anthropic
 
 from agent.pricing import usage_to_dict
+from agent.providers import LLMProvider, resolve_provider
 
 UsageCallback = Callable[[str, dict[str, int]], Awaitable[None]]
 
@@ -137,13 +138,54 @@ TOOLS: list[dict[str, Any]] = [
 
 
 class ClaudeClient:
-    def __init__(self, model: str = "claude-sonnet-4-6", api_key: str | None = None):
-        self.model = model
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+    """Anthropic-SDK client, pointed at whichever provider `provider` selects.
+
+    Despite the name we talk to non-Anthropic providers too: Fireworks exposes
+    an Anthropic-compatible Messages API, so the only per-provider differences
+    are base_url/api_key/model plus a few request-shaping flags (cache markers,
+    vision tool, thinking, sampling) carried on `provider`.
+    """
+
+    def __init__(self, provider: LLMProvider | None = None, *, api_key: str | None = None):
+        self.provider = provider or resolve_provider(None)
+        self.model = self.provider.model
+        key = api_key if api_key is not None else self.provider.api_key()
+        self._client = anthropic.AsyncAnthropic(api_key=key, base_url=self.provider.base_url)
         # Set by Agent so every API call's token usage flows back into running
         # totals + session log + monitor broadcast. Both send() and send_raw()
         # pass the actual model used (send_raw can override per-call).
         self.on_usage: UsageCallback | None = None
+
+    def tools(self) -> list[dict[str, Any]]:
+        """Tool set for this provider — drops `screenshot` for text-only models."""
+        if self.provider.supports_vision:
+            return TOOLS
+        return [t for t in TOOLS if t["name"] != "screenshot"]
+
+    def _system_blocks(self, system: str) -> list[dict[str, Any]]:
+        block: dict[str, Any] = {"type": "text", "text": system}
+        # Anthropic caches only what's marked; Fireworks auto-caches the longest
+        # prefix and rejects the marker on tool defs, so we mark only when the
+        # provider wants it.
+        if self.provider.supports_prompt_caching:
+            block["cache_control"] = {"type": "ephemeral"}
+        return [block]
+
+    def _sampling_kwargs(self, max_tokens: int, *, allow_thinking: bool = True) -> dict[str, Any]:
+        """Thinking / temperature kwargs for this provider.
+
+        Anthropic forbids `temperature` when extended thinking is on, so the two
+        are mutually exclusive here. `allow_thinking=False` is used for one-off
+        calls (compaction) where a reasoning budget would just eat output room.
+        """
+        p = self.provider
+        if allow_thinking and p.supports_thinking and p.thinking_budget_tokens > 0:
+            # max_tokens must exceed the thinking budget; keep some output room.
+            budget = min(p.thinking_budget_tokens, max(1, max_tokens - 256))
+            return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+        if p.default_temperature is not None:
+            return {"temperature": p.default_temperature}
+        return {}
 
     async def _emit_usage(self, model: str, response: anthropic.types.Message) -> None:
         if self.on_usage is None:
@@ -164,15 +206,10 @@ class ClaudeClient:
         response = await self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
-            system=[
-                {
-                    "type": "text",
-                    "text": system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            tools=TOOLS,
+            system=self._system_blocks(system),
+            tools=self.tools(),
             messages=messages,
+            **self._sampling_kwargs(max_tokens),
         )
         await self._emit_usage(self.model, response)
         return response
@@ -201,6 +238,10 @@ class ClaudeClient:
             system=system,
             tools=tools or [],
             messages=messages,
+            # Compaction is a summarization pass — skip the thinking budget so
+            # the (smaller) max_tokens all goes to the summary, but keep the
+            # provider's sampling temperature.
+            **self._sampling_kwargs(max_tokens, allow_thinking=False),
         )
         await self._emit_usage(used_model, response)
         return response
