@@ -206,7 +206,15 @@ object UseItemRoute {
 
         if (holdMs > 0) {
             try {
-                Thread.sleep(holdMs)
+                // Heartbeat the idle camera through the hold so a long use
+                // (shield, charging bow) keeps it dormant for the full press.
+                var remainingHoldMs = holdMs
+                while (remainingHoldMs > 0) {
+                    val chunk = minOf(remainingHoldMs, 100L)
+                    Thread.sleep(chunk)
+                    CameraDirector.noteFunctionalAim()
+                    remainingHoldMs -= chunk
+                }
             } finally {
                 TickThread.submitAndWait(timeoutMs = 1_000) {
                     MinecraftClient.getInstance().options.useKey.setPressed(false)

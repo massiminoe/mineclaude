@@ -45,7 +45,7 @@ object CameraDirector {
     private const val HOLD_MS = 2_000L
 
     /** Search radius for the nearest entity (blocks). */
-    private const val SCAN_RADIUS = 16.0
+    private const val SCAN_RADIUS = 6.0
 
     /** Body displacement per tick (blocks) above which we count as "moving". */
     private const val MOVE_THRESHOLD = 0.02

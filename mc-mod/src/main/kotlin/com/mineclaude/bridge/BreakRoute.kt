@@ -234,6 +234,10 @@ object BreakRoute {
         // Match the visible mining animation — vanilla doAttack swings
         // every tick while breaking.
         player.swingHand(Hand.MAIN_HAND)
+        // Heartbeat the idle camera while we're still grinding this block, so
+        // a slow break (obsidian, wrong tool) can't outlive the dormancy
+        // window and pan the head away mid-mine.
+        CameraDirector.noteFunctionalAim()
         return false
     }
 }
