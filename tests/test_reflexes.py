@@ -315,6 +315,56 @@ async def test_damage_taken_no_attacker_is_record_only():
     assert agent.bridge.attack_calls == []
 
 
+async def test_damage_taken_player_attacker_is_record_only():
+    """PvP: a player hit carries an attacker_kind/id but is in
+    NO_RETALIATE_KINDS — leave it to Claude. No preempt, flee, or attack,
+    even at high HP where a hostile mob would be retaliated against."""
+    agent = FakeAgent(_FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}}))
+    await damage_taken_handler(agent, {
+        "source": "player_attack",
+        "attacker_kind": "player",
+        "attacker_id": 7,
+        "hp_before": 18.0,
+        "amount": 3.0,
+    })
+    assert agent.preempt_calls == 0
+    assert agent.bridge.goto_calls == []
+    assert agent.bridge.attack_calls == []
+
+
+async def test_damage_taken_phantom_attacker_is_record_only():
+    """Phantoms swoop out of melee reach — excluded via NO_RETALIATE_KINDS so
+    the ground-based /attack loop doesn't thrash. Record-only even at high HP."""
+    agent = FakeAgent(_FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}}))
+    await damage_taken_handler(agent, {
+        "source": "mob_attack",
+        "attacker_kind": "phantom",
+        "attacker_id": 99,
+        "hp_before": 18.0,
+        "amount": 3.0,
+    })
+    assert agent.preempt_calls == 0
+    assert agent.bridge.goto_calls == []
+    assert agent.bridge.attack_calls == []
+
+
+async def test_damage_taken_phantom_low_hp_does_not_flee():
+    """The exclusion is checked before the HP branch, so even a low-HP phantom
+    hit is record-only — no flee goto."""
+    agent = FakeAgent(_FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}}))
+    await damage_taken_handler(agent, {
+        "source": "mob_attack",
+        "attacker_kind": "phantom",
+        "attacker_id": 99,
+        "hp_before": 6.0,
+        "amount": 2.0,
+        "attacker_pos": {"x": 8.0, "y": 64.0, "z": 5.0},
+    })
+    assert agent.preempt_calls == 0
+    assert agent.bridge.goto_calls == []
+    assert agent.bridge.attack_calls == []
+
+
 async def test_damage_taken_high_hp_attacks_back():
     """Above LOW_HP threshold, retaliate against the attacker by id."""
     agent = FakeAgent(_FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}}))

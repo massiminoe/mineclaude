@@ -72,6 +72,17 @@ LOW_HP_THRESHOLD = 6.0
 # How far to walk away from an attacker when fleeing.
 FLEE_DISTANCE = 10.0
 
+# Attacker entity kinds the damage reflex does NOT react to (no flee / no
+# retaliate). The event is still recorded for the next gameState — we only
+# suppress the automatic response.
+#   * player  — leave PvP to Claude; auto-retaliating against another player
+#               is rarely what we want.
+#   * phantom — flies in swooping arcs out of melee reach, so a ground-based
+#               /attack loop just thrashes without landing hits.
+# Everything else with an attacker entity (hostile mobs, and provoked
+# neutrals) still triggers the reflex.
+NO_RETALIATE_KINDS = frozenset({"player", "phantom"})
+
 # Shore-finder parameters. `/nearby/blocks` is queried at SEARCH_RADIUS;
 # we only consider candidates within MAX_DISTANCE so that a candidate's
 # (y+1, y+2) air check is reliable — those positions are guaranteed to be
@@ -282,7 +293,10 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
     No attacker (fall, fire, suffocation): record only — caller has nothing
     productive to do, and most of these are over by the time we see them.
 
-    Hostile mob attacker:
+    Player or phantom attacker (NO_RETALIATE_KINDS): record only — we leave
+    PvP to Claude and don't chase swooping phantoms with a ground melee loop.
+
+    Other entity attacker (hostile mobs, provoked neutrals):
       * post-hit HP ≤ LOW_HP_THRESHOLD → flee 10 blocks opposite the attacker
       * otherwise → equip the best weapon we have, then attack the
         attacker by entity id (the bridge loops swings until kill)
@@ -292,7 +306,9 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
     """
     attacker_kind = data.get("attacker_kind")
     if not attacker_kind:
-        return  # not from a mob — record-only
+        return  # environmental (fall, fire, drowning) — record-only
+    if attacker_kind in NO_RETALIATE_KINDS:
+        return  # players + phantoms — record-only, no flee/retaliate
 
     attacker_id = data.get("attacker_id")
     attacker_pos = data.get("attacker_pos") or {}
@@ -460,13 +476,6 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
         event_type="damage_taken",
         handle=damage_taken_handler,
         preempts=False,
-        # 10s coalesces a damage burst into a single reflex fire. Sustained
-        # combat (multiple phantoms, mob swarm at night) can deliver hits
-        # faster than a Claude turn completes — at the old 0.5s cooldown,
-        # every hit cancelled the in-flight chat and the agent never got a
-        # turn off. The first hit's handler (retaliate via looping /attack,
-        # or flee) is already running; suppressing the next 10s of fires
-        # lets it finish.
         cooldown_s=30.0,
         resumes_on_complete=True,
     ))
