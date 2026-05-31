@@ -12,7 +12,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `BRIDGE_URL` (env, default `http://localhost:8081`) — native bridge HTTP
 - `BRIDGE_WS_URL` (env, default `ws://localhost:8082/events`) — native bridge events WS
 - `NO_CLAUDE=1 mineclaude` — headless mode (no Claude); queue + bridge + monitor stay up so you can drive primitives manually from the frontend Console panel
-- `LLM_PROVIDER` (env, default `anthropic`) — selects model + endpoint from the registry in `agent/providers.py`. `anthropic` = Claude via `api.anthropic.com` (`ANTHROPIC_API_KEY`); `fireworks` = Kimi K2.6 via Fireworks' Anthropic-compatible endpoint (`FIREWORKS_API_KEY`). Same `anthropic` SDK either way — only base_url/api_key/model/capability-flags differ. `CLAUDE_MODEL`/`FIREWORKS_MODEL` override the model within a provider
+- `LLM_PROVIDER` (env, default `anthropic`) — selects model + endpoint from the registry in `agent/providers.py`. `anthropic` = Claude via `api.anthropic.com` (`ANTHROPIC_API_KEY`); `fireworks` = Kimi K2.6 via Fireworks' Anthropic-compatible endpoint (`FIREWORKS_API_KEY`); `openrouter` = Gemini 3.5 Flash via OpenRouter's Anthropic-compatible `/v1/messages` skin (`OPENROUTER_API_KEY`). Same `anthropic` SDK for all three — only base_url/api_key/model/capability-flags differ. `CLAUDE_MODEL`/`FIREWORKS_MODEL`/`OPENROUTER_MODEL` override the model within a provider
 - `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
 ## Project Structure

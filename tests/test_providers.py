@@ -34,6 +34,19 @@ def test_fireworks_kimi_provider_shape():
     assert p.default_temperature == 0.3
 
 
+def test_openrouter_gemini_provider_shape():
+    p = resolve_provider("openrouter")
+    assert p.model == "google/gemini-3.5-flash"
+    assert p.api_key_env == "OPENROUTER_API_KEY"
+    # No /v1 suffix — the Anthropic SDK appends /v1/messages itself.
+    assert p.base_url == "https://openrouter.ai/api"
+    assert p.supports_prompt_caching is False
+    assert p.supports_vision is True
+    assert p.supports_thinking is True
+    assert p.thinking_budget_tokens == 1024
+    assert p.default_temperature == 0.3
+
+
 def test_unknown_provider_raises():
     with pytest.raises(ValueError, match="Unknown LLM_PROVIDER"):
         resolve_provider("does-not-exist")
@@ -42,8 +55,10 @@ def test_unknown_provider_raises():
 def test_model_env_override(monkeypatch):
     monkeypatch.setenv("CLAUDE_MODEL", "claude-opus-4-8")
     monkeypatch.setenv("FIREWORKS_MODEL", "accounts/fireworks/models/kimi-k2p5")
+    monkeypatch.setenv("OPENROUTER_MODEL", "google/gemini-3-flash-preview")
     assert resolve_provider("anthropic").model == "claude-opus-4-8"
     assert resolve_provider("fireworks").model == "accounts/fireworks/models/kimi-k2p5"
+    assert resolve_provider("openrouter").model == "google/gemini-3-flash-preview"
 
 
 def test_anthropic_client_request_shaping():
@@ -69,6 +84,21 @@ def test_fireworks_client_request_shaping():
     assert c._sampling_kwargs(2048, allow_thinking=False) == {"temperature": 0.3}
     # K2.6 is multimodal -> screenshot tool retained.
     assert any(t["name"] == "screenshot" for t in c.tools())
+
+
+def test_openrouter_client_request_shaping():
+    c = _client(resolve_provider("openrouter"))
+    # Rely on OpenRouter/Gemini implicit caching -> no cache_control marker.
+    assert "cache_control" not in c._system_blocks("hi")[0]
+    # Thinking enabled at the small budget, temperature omitted while on.
+    sk = c._sampling_kwargs(4096)
+    assert sk == {"thinking": {"type": "enabled", "budget_tokens": 1024}}
+    # Compaction path skips thinking but keeps the sampling temperature.
+    assert c._sampling_kwargs(2048, allow_thinking=False) == {"temperature": 0.3}
+    # Gemini 3.5 Flash is multimodal -> screenshot tool retained.
+    assert any(t["name"] == "screenshot" for t in c.tools())
+    # Routed at OpenRouter's Anthropic skin (SDK normalizes a trailing slash).
+    assert str(c._client.base_url).rstrip("/") == "https://openrouter.ai/api"
 
 
 def test_text_only_provider_drops_screenshot():

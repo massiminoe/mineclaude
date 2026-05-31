@@ -73,6 +73,23 @@ _PROVIDERS: dict[str, LLMProvider] = {
         thinking_budget_tokens=1024,    # "small thinking"
         default_temperature=0.3,        # only used if thinking is disabled
     ),
+    "openrouter": LLMProvider(
+        name="openrouter",
+        label="Gemini 3.5 Flash (OpenRouter)",
+        model="google/gemini-3.5-flash",
+        model_env="OPENROUTER_MODEL",
+        api_key_env="OPENROUTER_API_KEY",
+        # OpenRouter's Anthropic "skin": /v1/messages in Anthropic format. No
+        # /v1 suffix — the SDK appends it. Flags below are tuned for
+        # gemini-3.5-flash; point OPENROUTER_MODEL at a non-multimodal model and
+        # supports_vision would need revisiting.
+        base_url="https://openrouter.ai/api",
+        supports_prompt_caching=False,  # rely on OR/Gemini implicit caching
+        supports_vision=True,           # Gemini 3.5 Flash is multimodal
+        supports_thinking=True,
+        thinking_budget_tokens=1024,    # "small thinking"
+        default_temperature=0.3,        # only used if thinking is disabled
+    ),
 }
 
 DEFAULT_PROVIDER = "anthropic"

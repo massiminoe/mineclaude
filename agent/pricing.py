@@ -21,6 +21,10 @@ _RATES: dict[str, tuple[float, float, float, float]] = {
     "sonnet": (3.00,  15.00, 3.75,  0.30),
     "haiku":  (1.00,  5.00,  1.25,  0.10),
     "kimi":   (0.95,  4.00,  0.00,  0.16),
+    # OpenRouter passes Gemini pricing through at cost (no per-token markup);
+    # the only OR fee is the ~5.5% credit-purchase surcharge, which isn't a
+    # per-call cost so it's not modelled here. Thinking tokens bill as output.
+    "gemini": (1.50,  9.00,  0.00,  0.15),
 }
 
 _FALLBACK = _RATES["sonnet"]
