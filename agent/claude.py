@@ -124,8 +124,9 @@ TOOLS: list[dict[str, Any]] = [
                 "content": {
                     "type": "string",
                     "description": (
-                        "Full new content of memory.md. See the Memory section of the "
-                        "system prompt for the expected format."
+                        "Full new content of memory.md (plain markdown — structure it "
+                        "however you like). See the Memory section of the system prompt "
+                        "for guidance on what to record."
                     ),
                 }
             },

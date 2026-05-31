@@ -1,10 +1,9 @@
 """Persistent memory document — read/write helpers for ./state/memory.md.
 
-Memory is freeform markdown that outlives any single goal. Two conventional
-sections: ## Locations (pipe-delimited entries) and ## Notes (freeform). It is
-re-read from disk each turn and injected into Claude's context via a synthetic
-tool_use / tool_result pair (see agent.py). Claude modifies it via the
-`writeMemory` tool.
+Memory is plain markdown that outlives any single goal — Claude structures it
+however it likes; there's no enforced schema. It is re-read from disk each turn
+and injected into Claude's context via a synthetic tool_use / tool_result pair
+(see agent.py). Claude modifies it via the `writeMemory` tool.
 """
 
 from __future__ import annotations

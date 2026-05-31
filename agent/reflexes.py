@@ -460,7 +460,7 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
         # turn off. The first hit's handler (retaliate via looping /attack,
         # or flee) is already running; suppressing the next 10s of fires
         # lets it finish.
-        cooldown_s=10.0,
+        cooldown_s=30.0,
         resumes_on_complete=True,
     ))
     registry.register(ReflexHandler(

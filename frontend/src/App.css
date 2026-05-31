@@ -776,97 +776,95 @@ body {
   padding: 4px 2px;
 }
 
-.memory-block + .memory-block {
-  margin-top: 8px;
-}
-
-.memory-section-label {
-  color: var(--text-dim);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 3px;
-}
-
-.memory-dim-group + .memory-dim-group {
-  margin-top: 4px;
-}
-
-.memory-dim-heading {
-  color: var(--text-dim);
-  font-size: 10px;
-  font-style: italic;
-  margin: 2px 0 1px;
-}
-
-.memory-locs,
-.memory-notes {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.memory-loc {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px;
+/* Rendered markdown — kept compact to match the side panel's density. */
+.memory-md {
+  color: var(--text-secondary);
   font-size: 11px;
-  margin: 2px 0;
-  line-height: 1.4;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
-.memory-loc-name {
+.memory-md > :first-child {
+  margin-top: 0;
+}
+
+.memory-md > :last-child {
+  margin-bottom: 0;
+}
+
+.memory-md p {
+  margin: 4px 0;
+}
+
+.memory-md h1,
+.memory-md h2,
+.memory-md h3,
+.memory-md h4,
+.memory-md h5,
+.memory-md h6 {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  margin: 8px 0 3px;
+}
+
+.memory-md h1 {
+  font-size: 12px;
+}
+
+.memory-md ul,
+.memory-md ol {
+  margin: 4px 0;
+  padding-left: 16px;
+}
+
+.memory-md li {
+  margin: 2px 0;
+}
+
+.memory-md a {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.memory-md strong {
   color: var(--text-primary);
   font-weight: 600;
 }
 
-.memory-loc-coords {
-  color: var(--text-dim);
+.memory-md code {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 10px;
+  background: var(--bg-primary);
+  padding: 0 3px;
+  border-radius: 3px;
 }
 
-.memory-loc-notes {
-  color: var(--text-secondary);
-  flex-basis: 100%;
-  margin-left: 0;
-  font-size: 11px;
+.memory-md pre {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px;
+  overflow-x: auto;
+  margin: 4px 0;
 }
 
-.memory-dim-badge {
-  display: inline-block;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--border);
-  color: var(--text-secondary);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.memory-md pre code {
+  background: none;
+  padding: 0;
 }
 
-.memory-note {
-  color: var(--text-secondary);
-  font-size: 11px;
-  margin: 2px 0;
-  line-height: 1.4;
-  padding-left: 10px;
-  position: relative;
-}
-
-.memory-note::before {
-  content: "·";
-  position: absolute;
-  left: 2px;
+.memory-md blockquote {
+  margin: 4px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
   color: var(--text-dim);
 }
 
-.memory-raw {
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-family: inherit;
-  white-space: pre-wrap;
-  margin: 0;
+.memory-md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 8px 0;
 }
 
 /* ===== Console Panel ===== */

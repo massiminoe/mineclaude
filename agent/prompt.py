@@ -193,21 +193,7 @@ What does NOT go in memory:
 - Inventory, position, health — already in gameState every iteration.
 - One-shot context for the conversation you're in right now.
 
-Format (two sections, both optional):
-```
-# Memory
-
-## Locations
-- name | dimension | x, y, z | notes
-- home_base | overworld | 120, 70, -40 | crafting table + furnace + bed
-- diamond_cave | overworld | 50, -56, -6 | found 4 diamonds, deepslate
-
-## Notes
-- Sleep at night — bed is in home_base
-- Lava lake near (200, -50, 200) — avoid when mining
-```
-
-Pipe-delimited location lines: `name | dimension | x, y, z | notes`. Dimension is `overworld`, `nether`, or `end` — coordinates are not comparable across dimensions, so always include it.
+Memory is plain markdown — organize it however reads best (headings, bullet lists, prose; whatever fits). There's no required structure. When you record a place, include its coordinates and which dimension they're in (overworld, nether, or end) — coordinates aren't comparable across dimensions.
 
 When to write:
 - You discovered a notable place (your first base, an ore vein, a village, a fortress, a portal).

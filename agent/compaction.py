@@ -45,7 +45,7 @@ Your job is twofold:
 
 1. Write a faithful, dense summary of what happened. Cover: the player(s) involved, what was asked, what the agent did (actions taken, key results, failures), the current goal state, and any open threads. Wrap the summary in <conversation_summary>...</conversation_summary> tags. Be concrete (coords, item counts, block types) — the agent will plan from this.
 
-2. While reading, watch for anything worth promoting to durable memory: locations the agent discovered (base, mines, portals, hazards), persistent rules learned, long-lived facts. Memory survives across compactions and across sessions; conversation summaries do not. If you find something worth keeping, call the writeMemory tool with the FULL new contents of memory.md (it does not edit in place). The current memory.md contents are shown below — preserve existing entries unless they're now wrong, and add new ones at the end of the appropriate section.
+2. While reading, watch for anything worth promoting to durable memory: locations the agent discovered (base, mines, portals, hazards), persistent rules learned, long-lived facts. Memory survives across compactions and across sessions; conversation summaries do not. If you find something worth keeping, call the writeMemory tool with the FULL new contents of memory.md (it does not edit in place). The current memory.md contents are shown below — preserve existing entries unless they're now wrong, and add new ones. Memory is plain markdown; organize it however reads best.
 
 Do NOT include things that are already in gameState every turn (current position, health, inventory, time). Do NOT include in-progress plan steps — those live in plan.md, which the agent re-reads each turn.
 
