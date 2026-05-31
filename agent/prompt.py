@@ -142,6 +142,82 @@ await collectItems(radius=10)
 return f"Mined {{mined}} stone"
 ```
 
+### Building a shelter (bill of materials FIRST, clear the volume, build in order):
+```python
+# Three rules that kill the classic build failures — running dry mid-wall, a
+# roof that won't place because leaves are in the way, and breaking your own
+# walls while clearing above them:
+#   1. BILL OF MATERIALS before the first block. Enumerate every cell you'll
+#      place, count by type, confirm inventory >= need, gather the shortfall
+#      FIRST. Running out mid-wall strands you outside at dusk.
+#   2. A FLAT HEIGHTMAP IS NOT A CLEAR SITE. getHeightmap finds standable
+#      ground, not open sky — tree canopy above the footprint silently blocks
+#      the roof (placeBlock skips a non-air cell and still reports success).
+#      Clear the whole build VOLUME (every wall layer, the roof, +1-2 above
+#      for overhang) before placing anything.
+#   3. BUILD IN ORDER: clear volume -> walls bottom-up -> roof -> door/lighting
+#      LAST. Clearing leaves AFTER the walls are up breaks the walls
+#      (breakBlockAt mines whatever the eye-ray hits) — do all the breaking
+#      first, while none of your own blocks are in the line of fire.
+# Run each PHASE below as its own newAction so you re-observe (night? mob? tool
+# broke?) between phases. A full phase at a known, pre-cleared site is a fine
+# batch size — you're not traversing blind.
+
+# Define the structure ONCE — the same cell lists drive both the count and the
+# placing, so your bill of materials can't drift from what you actually build.
+x0, z0 = -7, -23                 # one outer corner (from your site scan)
+W, D, H = 5, 5, 3                # outer width, depth, wall height (layers)
+gy = 88                          # standable ground y = feet/air cell from getHeightmap
+wall_block, roof_block = 'cobblestone', 'birch_planks'
+door = (x0 + 2, z0 + D - 1)      # door column on the front wall; opening is gy & gy+1
+door_cells = {{(door[0], gy, door[1]), (door[0], gy + 1, door[1])}}
+
+def ring(y):  # wall perimeter at one height, minus the door opening
+    return [(x, y, z)
+            for x in range(x0, x0 + W) for z in range(z0, z0 + D)
+            if (x in (x0, x0 + W - 1) or z in (z0, z0 + D - 1))
+            and (x, y, z) not in door_cells]
+
+wall_cells = [c for dy in range(H) for c in ring(gy + dy)]   # already bottom-up
+roof_cells = [(x, gy + H, z) for x in range(x0, x0 + W) for z in range(z0, z0 + D)]
+
+# PHASE 1 — bill of materials. Do NOT place a block until this passes.
+inv = {{i['name']: i['count'] for i in await getInventory()}}
+need = {{wall_block: len(wall_cells), roof_block: len(roof_cells)}}
+short = {{b: n - inv.get(b, 0) for b, n in need.items() if inv.get(b, 0) < n}}
+if short:
+    return f"Short before building: {{short}} — gather these first, then start"
+
+# PHASE 2 — clear the whole volume so nothing blocks the walls or roof.
+await equip('stone_pickaxe')     # any pickaxe/axe; leaves break with anything
+for y in range(gy, gy + H + 2):  # wall layers + roof + 1 for overhang
+    for x in range(x0, x0 + W):
+        for z in range(z0, z0 + D):
+            if not (await getBlock(x, y, z))['replaceable']:
+                await breakBlockAt(x, y, z)
+await collectItems(radius=10)
+# (Ground is your floor. Only if the footprint dips or has a cave under it:
+#  fill the non-solid gy-1 cells with placeBlock(wall_block, x, z, y=gy-1).)
+
+# PHASE 3 — walls, bottom-up (wall_cells is pre-sorted by layer). placeBlock
+# auto-equips the block, so your pickaxe is no longer in hand after this.
+for (x, y, z) in wall_cells:
+    try:
+        await placeBlock(wall_block, x, z, y=y)
+    except Exception as e:
+        log(f"wall {{x}},{{y}},{{z}}: {{e}}")
+
+# PHASE 4 — roof, THEN the door into the gap you left. Door + torches go LAST,
+# after the shell is sealed.
+for (x, y, z) in roof_cells:
+    try:
+        await placeBlock(roof_block, x, z, y=y)
+    except Exception as e:
+        log(f"roof {{x}},{{y}},{{z}}: {{e}}")
+await placeBlock('birch_door', door[0], door[1], y=gy)
+return "Shell sealed — door in; torches/furniture next"
+```
+
 ### With logging:
 ```python
 stats = await getStats()
