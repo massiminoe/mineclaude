@@ -31,6 +31,13 @@ services:
       start_period: 60s
 
   mc-client:
+    # 3arthqu4ke/headlessmc:latest is published amd64-only (no arm64 manifest),
+    # so on Apple Silicon we must build + run it under emulation. Without this
+    # pin, BuildKit resolves the native arm64 platform and the registry returns
+    # "no match for platform in manifest". (It "worked before" only because a
+    # previously-pulled amd64 image was cached locally; a docker prune removes
+    # that crutch and re-exposes the mismatch.)
+    platform: linux/amd64
     build:
       context: .
       dockerfile: mc-client/Dockerfile
