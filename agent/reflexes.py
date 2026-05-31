@@ -34,6 +34,7 @@ drowning handler awaits its escape goto rather than fire-and-forget.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import math
 import time
@@ -83,6 +84,13 @@ FLEE_DISTANCE = 10.0
 # neutrals) still triggers the reflex.
 NO_RETALIATE_KINDS = frozenset({"player", "phantom"})
 
+# Global time budget for the auto-retaliation reaction (equip + attack). The
+# mod's /attack loop caps itself at 30s, but a mob that flees out of melee
+# while staying pathable keeps us chasing for that whole window. 15s bounds
+# the reaction: on expiry timed_op issues /attack/stop and the handler returns
+# normally, so resumes_on_complete wakes Claude to decide whether to re-engage.
+RETALIATE_TIMEOUT_S = 15.0
+
 # Shore-finder parameters. `/nearby/blocks` is queried at SEARCH_RADIUS;
 # we only consider candidates within MAX_DISTANCE so that a candidate's
 # (y+1, y+2) air check is reliable — those positions are guaranteed to be
@@ -129,6 +137,101 @@ def pick_best_weapon(inventory: list[dict]) -> str | None:
         if w in have:
             return w
     return None
+
+
+# --- Deadline-scoped timeouts ----------------------------------------------
+#
+# Some bridge ops loop server-side until a terminal condition (the /attack
+# swing loop, Baritone /goto). The client call blocks for the whole loop, so
+# bounding one needs two things: cancel the local await AND tell the mod to
+# stop — closing the HTTP request alone leaves the loop running. `timed_op`
+# pairs an op with its matching stop endpoint and enforces a budget.
+#
+# `deadline(t)` sets a *global* budget that every timed_op inside inherits:
+# the effective per-op budget is the time left on the enclosing deadline,
+# clamped further by any op-specific timeout. So a child op (e.g. a goto
+# issued after an attack under the same deadline) can only tighten, never
+# extend, the parent's budget. Scopes nest — an inner deadline clamps to the
+# outer one.
+
+_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "reflex_deadline", default=None
+)
+
+
+def _remaining_budget(timeout: float | None) -> float | None:
+    """Effective budget = min(op-specific timeout, time left on the enclosing
+    deadline). None means unbounded (no timeout and no enclosing deadline)."""
+    budget = timeout
+    dl = _deadline.get()
+    if dl is not None:
+        remaining = dl - time.monotonic()
+        budget = remaining if budget is None else min(budget, remaining)
+    return budget
+
+
+class deadline:
+    """Establish a global time budget for the timed_op calls within.
+
+    Children inherit the remaining budget; nested scopes clamp to the
+    tightest. A None timeout is a passthrough so call sites stay uniform.
+
+    Implemented as a class rather than @contextlib.contextmanager: a
+    ContextVar set inside a generator-based CM isn't visible to the with
+    body, whereas __enter__ runs directly in the caller's context.
+    """
+
+    def __init__(self, timeout: float | None):
+        self._timeout = timeout
+        self._token: contextvars.Token | None = None
+
+    def __enter__(self) -> "deadline":
+        if self._timeout is None:
+            return self
+        new_deadline = time.monotonic() + self._timeout
+        outer = _deadline.get()
+        if outer is not None:
+            new_deadline = min(new_deadline, outer)
+        self._token = _deadline.set(new_deadline)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._token is not None:
+            _deadline.reset(self._token)
+            self._token = None
+
+
+async def timed_op(
+    op: Coroutine[Any, Any, Any],
+    stop: Callable[[], Coroutine[Any, Any, Any]],
+    *,
+    timeout: float | None = None,
+) -> Any:
+    """Await a long, server-looping bridge op under the active deadline.
+
+    `op` is the coroutine (e.g. ``bridge.attack(id)``); `stop` is its matching
+    halt (e.g. ``bridge.attack_stop``). On budget expiry we cancel the local
+    await AND call ``stop()`` to halt the server loop, then return None. Normal
+    completion returns the op's result; real exceptions propagate. Cancellation
+    by a newer reflex propagates untouched — the preempt path issues the stop
+    in that case.
+    """
+    budget = _remaining_budget(timeout)
+    if budget is not None and budget <= 0:
+        # Parent budget already spent before we started — don't run the op.
+        # Close the un-awaited coroutine so Python doesn't warn.
+        op.close()
+        return None
+    if budget is None:
+        return await op
+    try:
+        return await asyncio.wait_for(op, budget)
+    except asyncio.TimeoutError:
+        try:
+            await stop()
+        except Exception:
+            logger.exception("timed_op cleanup stop failed")
+        return None
 
 
 @dataclass
@@ -349,24 +452,43 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
     if attacker_id is None:
         return
 
-    # Best-effort weapon equip. Skip if status fetch or equip fails — we'd
-    # rather retaliate bare-handed than do nothing, and bridge.equip is
-    # idempotent (held weapon → cheap re-verify, no swap).
-    try:
-        status = (await agent.bridge.get_status()).data
-        weapon = pick_best_weapon(status.get("inventory") or [])
-        if weapon is not None:
-            try:
-                await agent.bridge.equip(weapon)
-            except Exception:
-                logger.exception("retaliation equip failed")
-    except Exception:
-        logger.exception("retaliation status fetch failed")
+    # The whole retaliation runs under one global budget (RETALIATE_TIMEOUT_S):
+    # equip + attack share it, and any future child op (e.g. a follow-up goto)
+    # inherits whatever's left. Only the server-looping /attack is enforced via
+    # timed_op — the quick equip just eats into the budget.
+    with deadline(RETALIATE_TIMEOUT_S):
+        # Best-effort weapon equip. Skip if status fetch or equip fails — we'd
+        # rather retaliate bare-handed than do nothing, and bridge.equip is
+        # idempotent (held weapon → cheap re-verify, no swap).
+        try:
+            status = (await agent.bridge.get_status()).data
+            weapon = pick_best_weapon(status.get("inventory") or [])
+            if weapon is not None:
+                try:
+                    await agent.bridge.equip(weapon)
+                except Exception:
+                    logger.exception("retaliation equip failed")
+        except Exception:
+            logger.exception("retaliation status fetch failed")
 
-    try:
-        resp = await agent.bridge.attack(str(attacker_id))
-    except Exception:
-        logger.exception("retaliation attack failed")
+        try:
+            resp = await timed_op(
+                agent.bridge.attack(str(attacker_id)),
+                agent.bridge.attack_stop,
+            )
+        except Exception:
+            logger.exception("retaliation attack failed")
+            return
+
+    if resp is None:
+        # Budget exhausted — timed_op already issued /attack/stop. Return
+        # normally (not raising) so resumes_on_complete wakes Claude to decide
+        # whether to re-engage the now-distant mob.
+        logger.info("retaliation timed out after %.0fs — stopped", RETALIATE_TIMEOUT_S)
+        try:
+            agent._slog("retaliation_timeout", attacker_id=attacker_id, attacker_kind=attacker_kind)
+        except Exception:
+            pass
         return
     if resp.status == "error":
         # Bridge non-2xx responses don't raise — surface them so silent

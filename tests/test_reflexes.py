@@ -18,18 +18,21 @@ import pytest
 from agent.action_queue import ActionQueue
 from agent.bridge import BridgeResponse
 from agent.prompt import format_game_state
+from agent import reflexes
 from agent.reflexes import (
     REFLEX_EVENT_TYPES,
     WEAPON_PRIORITY,
     ReflexHandler,
     ReflexRegistry,
     damage_taken_handler,
+    deadline,
     entered_lava_handler,
     format_recent,
     pick_best_weapon,
     register_default_handlers,
     started_drowning_handler,
     stub_handler,
+    timed_op,
 )
 
 
@@ -492,6 +495,120 @@ async def test_damage_taken_high_hp_equip_failure_still_retaliates():
         "hp_before": 18.0,
     })
     assert bridge.attack_calls == ["42"]
+
+
+async def test_damage_taken_retaliate_times_out_stops_and_records(monkeypatch):
+    """If the /attack loop outlives the retaliation budget, timed_op issues
+    /attack/stop and the handler returns normally (record-only), slogging the
+    timeout so the resume path can wake Claude to re-decide. A still-alive,
+    fleeing mob is modeled by a blocking attack()."""
+    monkeypatch.setattr(reflexes, "RETALIATE_TIMEOUT_S", 0.03)
+    bridge = _FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}})
+    bridge.attack_blocking = True  # never returns → must be timed out
+    agent = FakeAgent(bridge)
+    await damage_taken_handler(agent, {
+        "source": "mob_attack",
+        "attacker_kind": "zombie",
+        "attacker_id": 42,
+        "attacker_pos": {"x": 12.0, "y": 64.0, "z": 5.0},
+        "amount": 2.0,
+        "hp_before": 18.0,
+    })
+    assert agent.preempt_calls == 1
+    assert bridge.attack_calls == ["42"]
+    assert bridge.attack_stop_calls == 1
+    assert ("retaliation_timeout", {"attacker_id": 42, "attacker_kind": "zombie"}) in agent.slog_calls
+
+
+# --- deadline / timed_op helpers -------------------------------------------
+
+
+async def test_timed_op_passthrough_when_no_budget():
+    """No enclosing deadline and no explicit timeout → plain await; the op
+    completes and stop is never called."""
+    bridge = _FakeBridge()
+    resp = await timed_op(bridge.attack("42"), bridge.attack_stop)
+    assert resp is not None and resp.status == "success"
+    assert bridge.attack_calls == ["42"]
+    assert bridge.attack_stop_calls == 0
+
+
+async def test_timed_op_explicit_timeout_stops_loop():
+    """A blocking op past its own timeout → returns None and issues stop."""
+    bridge = _FakeBridge()
+    bridge.attack_blocking = True
+    resp = await timed_op(bridge.attack("42"), bridge.attack_stop, timeout=0.02)
+    assert resp is None
+    assert bridge.attack_stop_calls == 1
+
+
+async def test_timed_op_respects_enclosing_deadline():
+    """With no explicit timeout, a blocking op is still bounded by the
+    enclosing deadline and stopped on expiry."""
+    bridge = _FakeBridge()
+    bridge.attack_blocking = True
+    with deadline(0.02):
+        resp = await timed_op(bridge.attack("42"), bridge.attack_stop)
+    assert resp is None
+    assert bridge.attack_stop_calls == 1
+
+
+async def test_timed_op_child_respects_remaining_parent_budget():
+    """The 'child (e.g. goto) respects the parent's global timeout' rule:
+    after most of the parent budget is spent, a child op with a far larger
+    own timeout is still clamped to the small remaining budget."""
+    stop_calls = 0
+
+    async def blocking_child():
+        await asyncio.Event().wait()  # never completes on its own
+
+    async def stop():
+        nonlocal stop_calls
+        stop_calls += 1
+
+    with deadline(0.05):
+        await asyncio.sleep(0.04)  # burn most of the parent budget
+        # Own timeout is huge, but only ~0.01s of parent budget remains —
+        # the child must honor the parent, not its own 10s.
+        resp = await timed_op(blocking_child(), stop, timeout=10.0)
+    assert resp is None
+    assert stop_calls == 1
+
+
+async def test_timed_op_skips_op_when_parent_budget_already_spent():
+    """If the parent deadline has already elapsed, the child never starts —
+    no op call, no stop (nothing to halt)."""
+    bridge = _FakeBridge()
+    bridge.attack_blocking = True
+    with deadline(0.01):
+        await asyncio.sleep(0.02)  # parent budget gone before the child runs
+        resp = await timed_op(bridge.attack("42"), bridge.attack_stop)
+    assert resp is None
+    assert bridge.attack_calls == []
+    assert bridge.attack_stop_calls == 0
+
+
+async def test_deadline_nested_clamps_to_tightest():
+    """An inner deadline can't extend the outer one."""
+    bridge = _FakeBridge()
+    bridge.attack_blocking = True
+    with deadline(0.02):        # tight outer
+        with deadline(10.0):    # loose inner — must clamp to outer
+            resp = await timed_op(bridge.attack("42"), bridge.attack_stop)
+    assert resp is None
+    assert bridge.attack_stop_calls == 1
+
+
+async def test_timed_op_real_exception_propagates():
+    """A genuine op failure isn't swallowed as a timeout (None)."""
+    class _BoomBridge(_FakeBridge):
+        async def attack(self, entity_id: str) -> BridgeResponse:
+            raise RuntimeError("connection reset")
+
+    bridge = _BoomBridge()
+    with pytest.raises(RuntimeError):
+        await timed_op(bridge.attack("42"), bridge.attack_stop, timeout=1.0)
+    assert bridge.attack_stop_calls == 0
 
 
 def test_pick_best_weapon_picks_highest_tier_sword():
