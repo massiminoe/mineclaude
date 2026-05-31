@@ -12,6 +12,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `BRIDGE_URL` (env, default `http://localhost:8081`) — native bridge HTTP
 - `BRIDGE_WS_URL` (env, default `ws://localhost:8082/events`) — native bridge events WS
 - `NO_CLAUDE=1 mineclaude` — headless mode (no Claude); queue + bridge + monitor stay up so you can drive primitives manually from the frontend Console panel
+- `LLM_PROVIDER` (env, default `anthropic`) — selects model + endpoint from the registry in `agent/providers.py`. `anthropic` = Claude via `api.anthropic.com` (`ANTHROPIC_API_KEY`); `fireworks` = Kimi K2.6 via Fireworks' Anthropic-compatible endpoint (`FIREWORKS_API_KEY`). Same `anthropic` SDK either way — only base_url/api_key/model/capability-flags differ. `CLAUDE_MODEL`/`FIREWORKS_MODEL` override the model within a provider
 - `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
 ## Project Structure
@@ -28,7 +29,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - Protocol-based bridge (mock/real share interface)
 - Executor injection on ActionQueue (decoupled from sandbox)
 - exec() sandbox with AST validation (no imports, no dunders)
-- Static system prompt enables Anthropic prompt caching
+- Static system prompt enables Anthropic prompt caching. The `cache_control` marker is provider-gated in `ClaudeClient._system_blocks` — emitted for Anthropic, omitted for Fireworks (which auto-caches the longest prefix and rejects the marker on tool defs). The stable-prefix injection pattern below is what makes Fireworks' automatic prefix caching pay off too
 - gameState injected as synthetic tool_use/tool_result pair on EVERY Claude iteration (not just once per chat turn) — unique `gamestate_auto_<iter>` tool_use_id keeps the cache prefix stable through prior messages and only diverges at the latest injection. Prevents Claude from deciding on a 10-iteration-old snapshot
 - Plan document (`state/plan.md`) injected chat-level via the same synthetic pair mechanism
 - `.env` file loaded at startup (not committed, see `.env.example`)
