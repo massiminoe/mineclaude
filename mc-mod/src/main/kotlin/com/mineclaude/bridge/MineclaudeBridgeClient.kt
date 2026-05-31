@@ -64,6 +64,13 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // player before handing off to Baritone — Baritone can't path from
         // a fully submerged start (PathNode map size: 1 → instant give-up).
         SurfaceRoute.register(bridge)
+        // Generic right-click endpoints. /use_item is "right-click in air"
+        // (food, potions, bows, ender pearls) — calls interactItem directly
+        // so the crosshair target is irrelevant. /interact is "right-click
+        // an existing block" (doors, buttons, levers, fence gates) — clicks
+        // *on* the target rather than against an adjacent like /place.
+        UseItemRoute.register(bridge)
+        InteractRoute.register(bridge)
         // Phase 7 vision — /screenshot and /video/stream. Both shell out
         // to ffmpeg x11grab from `:99` — the same approach as the legacy
         // bridge, because NativeImage.writeTo() produces 0-byte PNGs on

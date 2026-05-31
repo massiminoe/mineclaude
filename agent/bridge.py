@@ -78,6 +78,8 @@ class BridgeClient(Protocol):
     async def discard(self, slot: int, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
+    async def use_item(self, item: str, hold_ms: int | None = None) -> BridgeResponse: ...
+    async def interact(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def heightmap(
         self,
         x0: int,
@@ -268,6 +270,15 @@ class RealBridgeClient:
 
     async def surface(self, timeout: float = 2.0) -> BridgeResponse:
         return self._parse(await self._http.post("/surface", json={"timeout": timeout}))
+
+    async def use_item(self, item: str, hold_ms: int | None = None) -> BridgeResponse:
+        body: dict[str, Any] = {"item": item}
+        if hold_ms is not None:
+            body["hold_ms"] = hold_ms
+        return self._parse(await self._http.post("/use_item", json=body))
+
+    async def interact(self, x: int, y: int, z: int) -> BridgeResponse:
+        return self._parse(await self._http.post("/interact", json={"x": x, "y": y, "z": z}))
 
     async def heightmap(
         self,
@@ -815,6 +826,37 @@ class MockBridgeClient:
 
     async def surface(self, timeout: float = 2.0) -> BridgeResponse:
         return BridgeResponse("success", "Surfaced", {"surfaced": True, "ticks": 0})
+
+    async def use_item(self, item: str, hold_ms: int | None = None) -> BridgeResponse:
+        # Mock: require the item to be in inventory (mirror equip's check).
+        # Food items consume one stack and bump hunger toward full so a
+        # NO_CLAUDE eat-loop test settles. Other items just succeed.
+        item = item.replace("minecraft:", "")
+        if not any(e["name"] == item for e in self._inventory):
+            return BridgeResponse("error", f"No {item} in inventory")
+        FOODS = {
+            "bread": 5, "cooked_beef": 8, "apple": 4, "carrot": 3,
+            "cooked_chicken": 6, "cooked_porkchop": 8, "cookie": 2,
+            "golden_apple": 4, "honey_bottle": 6, "dried_kelp": 1,
+        }
+        if item in FOODS:
+            self._remove_from_inventory(item, 1)
+            self._hunger = min(20, self._hunger + FOODS[item])
+        return BridgeResponse(
+            "success", f"Used {item}",
+            {"used": True, "item": item, "hold_ms": hold_ms, "method": "simulated"},
+        )
+
+    async def interact(self, x: int, y: int, z: int) -> BridgeResponse:
+        for b in self._nearby_blocks:
+            if b["x"] == x and b["y"] == y and b["z"] == z:
+                return BridgeResponse(
+                    "success", f"Interacted with {b['name']} at ({x}, {y}, {z})",
+                    {"interacted": True, "target": b["name"], "method": "simulated"},
+                )
+        return BridgeResponse(
+            "error", f"Nothing to interact with at ({x}, {y}, {z}) — block is air",
+        )
 
     async def heightmap(
         self,

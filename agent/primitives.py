@@ -227,6 +227,34 @@ def make_primitives(
     async def discard(slot: int, count: int = 1) -> str:
         return _check(await bridge.discard(slot, count))
 
+    async def useItem(item: str) -> str:
+        """Right-click in air with `item` held — eat food, drink potion,
+        throw snowball/egg/ender pearl, cast fishing rod, charge bow.
+
+        The bridge equips the item to mainhand, then fires the use action
+        and holds for whatever duration the item needs (read off the item
+        itself — food ≈ 1.7s, dried kelp ≈ 0.9s, potion ≈ 1.7s, bow draws
+        to max). Instant-use items (snowball, ender pearl, fishing rod,
+        loaded crossbow) don't hold at all. Crossbow first call loads,
+        next call fires.
+
+        Each call consumes/throws one item. To "eat to full", loop:
+        check `getStats()["hunger"]` and call again until satisfied.
+        """
+        return _check(await bridge.use_item(item))
+
+    async def interact(x: int, y: int, z: int) -> str:
+        """Right-click the block at (x, y, z) — open/close doors, press
+        buttons, flip levers, toggle trapdoors and fence gates, sleep in
+        a bed, play a note block.
+
+        Auto-paths within reach. Fails on air. If the click opens a screen
+        (chest/furnace/crafting table) the bridge closes it and returns
+        `[partial]` — use the dedicated chest/furnace/craft primitives
+        for those instead.
+        """
+        return _check(await bridge.interact(x, y, z))
+
     async def getStats() -> dict:
         resp = await bridge.get_status()
         return resp.data
@@ -289,6 +317,8 @@ def make_primitives(
         "chestInspect": chestInspect,
         "equip": equip,
         "discard": discard,
+        "useItem": useItem,
+        "interact": interact,
         "getStats": getStats,
         "getInventory": getInventory,
         "getNearbyBlocks": getNearbyBlocks,
