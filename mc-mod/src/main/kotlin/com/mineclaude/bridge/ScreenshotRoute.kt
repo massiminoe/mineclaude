@@ -196,6 +196,9 @@ object ScreenshotRoute {
             is Aim.YawPitch -> {
                 if (!aim.yaw.isNaN()) player.yaw = aim.yaw
                 if (!aim.pitch.isNaN()) player.pitch = aim.pitch.coerceIn(-90f, 90f)
+                // Keep the idle camera off an aimed shot during its settle
+                // window. (The LookAt branch stamps via lookAtPosition.)
+                CameraDirector.noteFunctionalAim()
             }
             is Aim.LookAt -> WorldHelpers.lookAtPosition(player, aim.x, aim.y, aim.z)
         }

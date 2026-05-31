@@ -269,6 +269,7 @@ REFLEX_EVENT_TYPES = (
     "entered_lava",
     "started_drowning",
     "tool_broke",
+    "hostile_nearby",
 )
 
 
@@ -448,6 +449,12 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
         so resume fires once the bot is actually on shore.
       * tool_broke: preempt only — handler is a stub. Resume fires
         immediately so Claude can decide whether to re-equip and continue.
+      * hostile_nearby: informational only. No preempt, no resume — the
+        dispatcher records the fire into `recent` before running the
+        (no-op) handler, so it surfaces in the next gameState the agent
+        reads without ever waking or interrupting Claude on its own. A
+        short cooldown coalesces a swarm entering range together so the
+        burst doesn't flush the rest of the recent buffer.
     """
     registry.register(ReflexHandler(
         event_type="damage_taken",
@@ -483,6 +490,20 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
         preempts=True,
         cooldown_s=1.0,
         resumes_on_complete=True,
+    ))
+    registry.register(ReflexHandler(
+        event_type="hostile_nearby",
+        handle=stub_handler,
+        # Pure awareness signal: never preempt the current action and never
+        # resume/wake Claude. The dispatcher appends every fire to `recent`
+        # before invoking the handler, so a no-op handler is enough to make
+        # "a creeper wandered into range" show up in the next gameState the
+        # agent naturally reads. cooldown coalesces a night-time swarm so a
+        # dozen mobs entering at once don't evict everything else from the
+        # 10-slot recent buffer.
+        preempts=False,
+        cooldown_s=3.0,
+        resumes_on_complete=False,
     ))
 
 
@@ -526,4 +547,16 @@ def _format_data_hint(entry: dict) -> str:
     if et == "tool_broke":
         item = data.get("item")
         return f" ({item})" if item else ""
+    if et == "hostile_nearby":
+        kind = data.get("kind")
+        dist = data.get("distance")
+        bits = []
+        if kind:
+            bits.append(str(kind))
+        if dist is not None:
+            try:
+                bits.append(f"{float(dist):.0f} blocks")
+            except (TypeError, ValueError):
+                pass
+        return f" ({', '.join(bits)})" if bits else ""
     return ""

@@ -249,18 +249,56 @@ async def test_register_default_handlers_preempt_flags():
     assert by_type["entered_lava"].preempts is True
     assert by_type["started_drowning"].preempts is True
     assert by_type["tool_broke"].preempts is True
+    assert by_type["hostile_nearby"].preempts is False  # informational
 
 
-async def test_register_default_handlers_all_resume_on_complete():
-    """Every default handler reprompts Claude after recovery so the agent
-    can react to whatever the reflex did. If a future handler shouldn't
-    resume (e.g. a hypothetical stop event), flip resumes_on_complete to
-    False at registration time."""
+async def test_register_default_handlers_recovery_handlers_resume():
+    """The recovery handlers reprompt Claude after acting so the agent can
+    react to whatever the reflex did. `hostile_nearby` is the deliberate
+    exception — it's a pure awareness signal and must never resume, or every
+    mob wandering past would wake Claude."""
     agent = FakeAgent()
     reg = ReflexRegistry(agent)
     register_default_handlers(reg)
-    for et in REFLEX_EVENT_TYPES:
+    recovery = ("damage_taken", "entered_lava", "started_drowning", "tool_broke")
+    for et in recovery:
         assert reg._handlers[et].resumes_on_complete is True, et
+    assert reg._handlers["hostile_nearby"].resumes_on_complete is False
+
+
+async def test_hostile_nearby_is_informational_only():
+    """hostile_nearby rides the reflex plumbing purely for awareness: the
+    dispatcher records it into `recent`, but the handler is a no-op that
+    never preempts the current action and never resumes/wakes Claude."""
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    register_default_handlers(reg)
+
+    data = {
+        "kind": "creeper",
+        "entity_id": 42,
+        "distance": 6.3,
+        "pos": {"x": 12.0, "y": 64.0, "z": 7.0},
+    }
+    await reg.dispatch("hostile_nearby", data)
+    await reg.flush()
+
+    assert len(reg.recent) == 1
+    assert reg.recent[0]["type"] == "hostile_nearby"
+    assert reg.recent[0]["data"] == data
+    assert agent.preempt_calls == 0
+    assert agent.resume_calls == []
+
+
+async def test_format_recent_renders_hostile_nearby_hint():
+    now = time.time()
+    recent = [
+        {"type": "hostile_nearby", "data": {"kind": "creeper", "distance": 6.3}, "ts": now},
+    ]
+    out = format_recent(recent, now=now)
+    assert "hostile_nearby" in out
+    assert "creeper" in out
+    assert "6 blocks" in out
 
 
 # --- damage_taken handler --------------------------------------------------

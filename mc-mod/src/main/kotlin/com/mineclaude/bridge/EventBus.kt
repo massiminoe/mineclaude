@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents
 import net.minecraft.client.network.ClientPlayerEntity
+import net.minecraft.entity.SpawnGroup
 import net.minecraft.item.Item
 import net.minecraft.item.ItemStack
 import net.minecraft.registry.Registries
@@ -30,6 +31,10 @@ import org.slf4j.LoggerFactory
  *                        same await-completion model as entered_lava)
  *   - tool_broke        (END_CLIENT_TICK detects the held damageable
  *                        stack vanishing without a slot change)
+ *   - hostile_nearby    (END_CLIENT_TICK edge on a SpawnGroup.MONSTER mob
+ *                        entering HOSTILE_RADIUS; scan throttled to every
+ *                        few ticks. Informational only — the agent's
+ *                        handler records it, never preempts.)
  *
  * Death detection nuance: yarn 1.21.5 doesn't ship the
  * `ClientLivingEntityEvents.LIVING_DEATH` callback in the version of
@@ -93,10 +98,22 @@ object EventBus {
     @Volatile private var lastHeldItem: Item? = null
     @Volatile private var lastHeldWasDamageable: Boolean = false
 
+    // Hostile-proximity edge state. We track the set of hostile entity IDs
+    // currently within HOSTILE_RADIUS so `hostile_nearby` fires once when a
+    // mob crosses into range (same edge model as lava re-entry), not every
+    // tick it lingers. The scan walks `world.entities`, so we throttle it to
+    // every HOSTILE_SCAN_INTERVAL_TICKS — ~4x/sec is ample for an
+    // informational signal and keeps the walk off the per-tick hot path.
+    @Volatile private var nearbyHostiles: Set<Int> = emptySet()
+    @Volatile private var hostileScanCounter = 0
+    private const val HOSTILE_SCAN_INTERVAL_TICKS = 5
+    private const val HOSTILE_RADIUS = 6.0
+    private val HOSTILE_RADIUS_SQ = HOSTILE_RADIUS * HOSTILE_RADIUS
+
     fun register() {
         registerChat()
         registerTickStateMachines()
-        log.info("EventBus: hooked chat / death / lava / drowning / damage / tool")
+        log.info("EventBus: hooked chat / death / lava / drowning / damage / tool / hostile")
     }
 
     private fun registerChat() {
@@ -164,6 +181,8 @@ object EventBus {
                     wasDrowning = false
                     lastHeldItem = null
                     lastHeldWasDamageable = false
+                    nearbyHostiles = emptySet()
+                    hostileScanCounter = 0
                     return@EndTick
                 }
                 if (!dead && wasDead) {
@@ -260,6 +279,52 @@ object EventBus {
                 lastHeldSlot = heldSlot
                 lastHeldItem = heldItem
                 lastHeldWasDamageable = heldDamageable
+
+                // 6. Hostile proximity — edge-triggered when a hostile mob
+                // (SpawnGroup.MONSTER) crosses into HOSTILE_RADIUS. The scan
+                // walks every loaded entity, so it's throttled to every
+                // HOSTILE_SCAN_INTERVAL_TICKS rather than run each tick.
+                // Informational only: the agent's handler just records the
+                // fire for the next gameState, so we emit one event per newly
+                // entered mob and let the handler coalesce bursts. IDs already
+                // in `nearbyHostiles` stay suppressed until they leave + re-enter.
+                hostileScanCounter++
+                if (hostileScanCounter >= HOSTILE_SCAN_INTERVAL_TICKS) {
+                    hostileScanCounter = 0
+                    val world = client.world
+                    if (world != null) {
+                        val px = player.x
+                        val py = player.y
+                        val pz = player.z
+                        val current = HashSet<Int>()
+                        for (entity in world.entities) {
+                            if (!entity.isAlive) continue
+                            if (entity.type.spawnGroup != SpawnGroup.MONSTER) continue
+                            val dx = entity.x - px
+                            val dy = entity.y - py
+                            val dz = entity.z - pz
+                            val distSq = dx * dx + dy * dy + dz * dz
+                            if (distSq > HOSTILE_RADIUS_SQ) continue
+                            current.add(entity.id)
+                            if (entity.id !in nearbyHostiles) {
+                                pushEvent(
+                                    "hostile_nearby",
+                                    mapOf(
+                                        "kind" to Registries.ENTITY_TYPE.getId(entity.type).path,
+                                        "entity_id" to entity.id,
+                                        "distance" to Math.sqrt(distSq),
+                                        "pos" to mapOf(
+                                            "x" to entity.x,
+                                            "y" to entity.y,
+                                            "z" to entity.z,
+                                        ),
+                                    ),
+                                )
+                            }
+                        }
+                        nearbyHostiles = current
+                    }
+                }
 
                 // Health tracking lives at the tail — damage detection
                 // above used the prior tick's value.

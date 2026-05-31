@@ -90,6 +90,10 @@ class MineclaudeBridgeClient : ClientModInitializer {
         EventsWebSocket.start(BIND_HOST, WS_PORT)
         EventBus.register()
 
+        // Idle cosmetic camera — look at the nearest entity when doing
+        // nothing. Yields to any real aim; disable with MINECLAUDE_IDLE_CAMERA=0.
+        CameraDirector.register()
+
         // Stop cleanly so a `/stop` from the launcher doesn't leak the
         // listener threads on next reload.
         ClientLifecycleEvents.CLIENT_STOPPING.register(

@@ -53,6 +53,9 @@ internal object WorldHelpers {
         val pitch = (-Math.toDegrees(atan2(dy, distXz))).toFloat()
         player.yaw = yaw
         player.pitch = pitch
+        // A real aim happened — keep the idle camera dormant so it can't
+        // pan away mid-action (break/place/attack/interact all land here).
+        CameraDirector.noteFunctionalAim()
     }
 
     /**
