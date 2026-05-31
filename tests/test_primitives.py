@@ -180,6 +180,18 @@ async def test_craft_mixed_planks_for_crafting_table(bridge, prims):
 
 
 @pytest.mark.asyncio
+async def test_craft_torch_from_charcoal(bridge, prims):
+    # Torch recipe wants "coal" but charcoal is interchangeable (vanilla's
+    # minecraft:coals tag). 1 coal/charcoal + 1 stick -> 4 torches, no table.
+    bridge._add_to_inventory("charcoal", 1)
+    bridge._add_to_inventory("stick", 1)
+    result = await prims["craft"]("torch", 4)
+    assert "Crafted" in result
+    assert any(i["name"] == "torch" and i["count"] == 4 for i in bridge._inventory)
+    assert not any(i["name"] == "charcoal" for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
 async def test_craft_3x3_fails_without_table(bridge, prims):
     bridge._add_to_inventory("cobblestone", 8)
     bridge._add_to_inventory("stick", 2)

@@ -48,6 +48,16 @@ internal object Recipes {
     )
 
     /**
+     * Ingredients with explicit interchangeable alternatives that don't share
+     * a suffix. Mirrors the vanilla item tags the recipe matcher honors but a
+     * suffix rule can't express. e.g. the torch recipe accepts coal OR
+     * charcoal (the `minecraft:coals` tag).
+     */
+    private val INGREDIENT_ALTERNATIVES: Map<String, Set<String>> = mapOf(
+        "coal" to setOf("charcoal"),
+    )
+
+    /**
      * Per-wood-type metadata used to emit one recipe per wood for stairs,
      * slabs, doors, trapdoors, fences, gates, buttons, pressure plates,
      * signs, planks, and (where applicable) boats. Variant outputs use the
@@ -286,6 +296,7 @@ internal object Recipes {
 
     fun matchesIngredient(required: String, available: String): Boolean {
         if (required == available) return true
+        if (INGREDIENT_ALTERNATIVES[required]?.contains(available) == true) return true
         val suffix = VARIANT_SUFFIXES[required] ?: return false
         return available.endsWith(suffix)
     }
@@ -405,10 +416,11 @@ internal object Recipes {
         if (required.isEmpty()) return "nothing"
         return required.entries.joinToString(", ") { (name, count) ->
             val suffix = VARIANT_SUFFIXES[name]
-            if (suffix != null) {
-                "${count}x ${suffix.removePrefix("_")} (any variant)"
-            } else {
-                "${count}x $name"
+            val alts = INGREDIENT_ALTERNATIVES[name]
+            when {
+                suffix != null -> "${count}x ${suffix.removePrefix("_")} (any variant)"
+                alts != null -> "${count}x $name (or ${alts.joinToString(" or ")})"
+                else -> "${count}x $name"
             }
         }
     }

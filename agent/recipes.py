@@ -705,10 +705,20 @@ VARIANT_SUFFIXES: dict[str, str] = {
     "oak_log": "_log",
 }
 
+# Ingredients with explicit interchangeable alternatives that don't share a
+# suffix. Mirrors the vanilla item tags the recipe matcher honors but a suffix
+# rule can't express. e.g. the torch recipe accepts coal OR charcoal (the
+# `minecraft:coals` tag).
+INGREDIENT_ALTERNATIVES: dict[str, set[str]] = {
+    "coal": {"charcoal"},
+}
+
 
 def _matches_ingredient(required: str, available: str) -> bool:
     """Check if an inventory item can satisfy a required ingredient."""
     if required == available:
+        return True
+    if available in INGREDIENT_ALTERNATIVES.get(required, ()):
         return True
     suffix = VARIANT_SUFFIXES.get(required)
     return suffix is not None and available.endswith(suffix)
