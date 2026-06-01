@@ -591,13 +591,19 @@ class Agent:
                         "input": block.input,
                     })
                 elif block.type in ("thinking", "redacted_thinking"):
-                    # Extended-thinking blocks must be preserved verbatim in
-                    # history: the provider validates a tool-use turn against the
-                    # thinking that preceded it, and the block must not be
-                    # stranded. Logged, never surfaced to chat.
-                    assistant_content.append(self._thinking_block(block))
+                    # Extended-thinking blocks are preserved verbatim in history
+                    # so a tool-use turn validates against the thinking that
+                    # preceded it. Logged, never surfaced to chat.
                     if block.type == "thinking":
                         logger.info(f"Claude thinking: {block.thinking[:LOG_TRIM]}")
+                    serialized = self._thinking_block(block)
+                    # Only replay blocks the provider will accept back. Anthropic
+                    # signs thinking and requires the signed block returned;
+                    # compat providers (Kimi/Gemini) emit *unsigned* thinking that
+                    # their own validator then 400s on the next turn ("signature:
+                    # expected string, received undefined"). Drop unsigned blocks.
+                    if block.type == "redacted_thinking" or "signature" in serialized:
+                        assistant_content.append(serialized)
                 else:
                     logger.warning(f"Unexpected block type: {block.type}")
 

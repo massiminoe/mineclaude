@@ -5,6 +5,12 @@ services:
       EULA: "TRUE"
       VERSION: "1.21.5"
       ONLINE_MODE: "false"
+      # Offline mode can't produce Mojang-signed chat; with secure-profile
+      # enforcement left on (the vanilla default), the server kicks human
+      # players ("lost connection: Disconnected") on join or first chat
+      # message. Disable enforcement so human players (e.g. Massimino) stay
+      # connected. The bot sidesteps this separately by speaking via /tellraw.
+      ENFORCE_SECURE_PROFILE: "false"
       DIFFICULTY: "peaceful"
       GAMEMODE: "survival"
       SPAWN_PROTECTION: "0"
@@ -51,6 +57,13 @@ services:
       # caves stay visible. Does NOT affect /screenshot (agent vision). Set
       # to "" to disable, or tweak gamma/brightness/contrast to taste.
       # MONITOR_VIDEO_FILTER: "eq=gamma=2.0:brightness=0.08:contrast=1.15"
+      # Persistent gameplay recorder: when "1", a second ffmpeg taps the same
+      # :99 framebuffer (x11grab is a read-only grab, so it doesn't conflict
+      # with /screenshot or /video/stream) and writes 5 fps / CRF 28 H.264
+      # segments (5 min each) to /recordings — bind-mounted to ./state/video on
+      # the host. Reuses MONITOR_VIDEO_FILTER for the same cave-brightening.
+      # Set to "0" to disable. ~170 MB/hr.
+      RECORD_VIDEO: "1"
     ports:
       # Native Fabric mod bridge — HTTP on 8081, events WS on 8082
       # (separate listener because JDK HttpServer doesn't speak WS
@@ -60,6 +73,9 @@ services:
       - "8082:8082"
     volumes:
       - hmc-assets:/headlessmc/HeadlessMC/run/assets
+      # Gameplay recordings land here (host: ./state/video). Created by the
+      # recorder ffmpeg in entrypoint.sh when RECORD_VIDEO=1.
+      - ./state/video:/recordings
     stdin_open: true
     tty: true
 
