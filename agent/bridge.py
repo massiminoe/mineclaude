@@ -96,6 +96,7 @@ class BridgeClient(Protocol):
         look_at: tuple[float, float, float] | None = None,
     ) -> BridgeResponse: ...
     async def events(self, callback) -> None: ...
+    async def record_roll(self, name: str | None = None) -> BridgeResponse: ...
     async def close(self) -> None: ...
 
 
@@ -332,6 +333,13 @@ class RealBridgeClient:
                 jitter = random.uniform(0, backoff * 0.5)
                 await asyncio.sleep(backoff + jitter)
                 backoff = min(backoff * 2, 30.0)
+
+    async def record_roll(self, name: str | None = None) -> BridgeResponse:
+        # Cut a fresh gameplay-recording file (see RecordRoute in the bridge
+        # mod). No-op on the mod side if nothing is recording, so callers can
+        # fire this blindly regardless of RECORD_VIDEO. `name` labels the file.
+        body = {} if name is None else {"name": name}
+        return self._parse(await self._http.post("/record/roll", json=body))
 
     async def close(self) -> None:
         if self._ws:
@@ -913,6 +921,10 @@ class MockBridgeClient:
                 await callback(event)
             except asyncio.TimeoutError:
                 continue
+
+    async def record_roll(self, name: str | None = None) -> BridgeResponse:
+        # No recorder in mock mode; report idle so callers treat it as a no-op.
+        return BridgeResponse("success", "not recording", {"recording": False})
 
     async def close(self) -> None:
         self._running = False

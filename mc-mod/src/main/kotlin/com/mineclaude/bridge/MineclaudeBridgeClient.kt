@@ -78,6 +78,12 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // Xvfb so the display is reachable from a child process.
         ScreenshotRoute.register(bridge)
         VideoStreamRoute.register(bridge)
+        // Single-file gameplay recorder. Owns the /record/* routes and, when
+        // RECORD_VIDEO=1, auto-starts one continuous .mp4 per run once we're in
+        // a world. Replaces the segmenting ffmpeg that used to live in
+        // entrypoint.sh — POST /record/roll cuts a fresh file without a
+        // container restart (the "one video per session" trigger).
+        RecordRoute.register(bridge)
 
         bridge.start()
 
@@ -99,6 +105,7 @@ class MineclaudeBridgeClient : ClientModInitializer {
         ClientLifecycleEvents.CLIENT_STOPPING.register(
             ClientLifecycleEvents.ClientStopping {
                 log.info("mineclaude bridge: stopping")
+                RecordRoute.shutdown()
                 EventsWebSocket.shutdown()
                 bridge.stop()
             }

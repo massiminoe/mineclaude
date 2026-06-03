@@ -57,12 +57,15 @@ services:
       # caves stay visible. Does NOT affect /screenshot (agent vision). Set
       # to "" to disable, or tweak gamma/brightness/contrast to taste.
       # MONITOR_VIDEO_FILTER: "eq=gamma=2.0:brightness=0.08:contrast=1.15"
-      # Persistent gameplay recorder: when "1", a second ffmpeg taps the same
-      # :99 framebuffer (x11grab is a read-only grab, so it doesn't conflict
-      # with /screenshot or /video/stream) and writes 5 fps / CRF 28 H.264
-      # segments (5 min each) to /recordings — bind-mounted to ./state/video on
-      # the host. Reuses MONITOR_VIDEO_FILTER for the same cave-brightening.
-      # Set to "0" to disable. ~170 MB/hr.
+      # Gameplay recorder (bridge mod's RecordRoute): when "1", an ffmpeg taps
+      # the same :99 framebuffer (x11grab is a read-only grab, so it doesn't
+      # conflict with /screenshot or /video/stream) and writes ONE continuous
+      # 5 fps / CRF 28 H.264 .mp4 per run to /recordings — bind-mounted to
+      # ./state/video on the host (plays natively in QuickTime; a clean
+      # stop/roll/shutdown finalizes it, an abrupt kill can spoil the open
+      # file). POST /record/roll cuts a fresh file without a restart.
+      # Reuses MONITOR_VIDEO_FILTER for the same cave-brightening. Set to "0"
+      # to disable. ~170 MB/hr.
       RECORD_VIDEO: "1"
     ports:
       # Native Fabric mod bridge — HTTP on 8081, events WS on 8082

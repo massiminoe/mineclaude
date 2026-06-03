@@ -83,6 +83,7 @@ from mcrcon import MCRcon
 try:
     with MCRcon('mc-server', 'mineclaude') as mcr:
         print(mcr.command('gamerule doImmediateRespawn true'))
+        print(mcr.command('gamerule keepInventory true'))
 except Exception as e:
     print(f'RCON failed: {e}')
 "
@@ -100,33 +101,12 @@ for i in $(seq 1 30); do
     echo "Waiting for bridge... ($i/30)"
 done
 
-# Persistent low-fps gameplay recorder (opt-in via RECORD_VIDEO=1). A second
-# ffmpeg taps the same :99 framebuffer as /screenshot + /video/stream — x11grab
-# is a read-only grab, so concurrent readers don't conflict. We start it here,
-# after the world join + bridge are up, so segments capture actual gameplay
-# rather than the loading screen. Output is 5-minute H.264 segments to
-# /recordings (bind-mounted to ./state/video on the host); segmenting keeps each
-# mp4 self-contained, so a `docker compose down` mid-write only loses the open
-# segment and "the last 30 min" is just the newest 6 files. -g 25 = a keyframe
-# every 5s (1500-frame segments split cleanly + scrubbable). Reuses
-# MONITOR_VIDEO_FILTER (unset -> brighten default; empty -> no filter, matching
-# the /video/stream semantics). Backgrounded + non-fatal: if ffmpeg can't start,
-# it logs to /tmp/recorder.log and the container carries on.
-if [ "${RECORD_VIDEO:-0}" = "1" ]; then
-    mkdir -p /recordings
-    REC_FILTER="${MONITOR_VIDEO_FILTER-eq=gamma=2.0:brightness=0.08:contrast=1.15}"
-    REC_VF=()
-    [ -n "$REC_FILTER" ] && REC_VF=(-vf "$REC_FILTER")
-    echo "Starting gameplay recorder (5fps CRF28) -> /recordings"
-    ffmpeg -nostdin -loglevel warning \
-        -f x11grab -r 5 -video_size 854x480 -i :99 \
-        "${REC_VF[@]}" \
-        -c:v libx264 -preset veryfast -crf 28 -pix_fmt yuv420p -g 25 -an \
-        -f segment -segment_time 300 -reset_timestamps 1 -strftime 1 \
-        /recordings/play-%Y%m%d-%H%M%S.mp4 \
-        > /tmp/recorder.log 2>&1 &
-    echo "Recorder ffmpeg pid $! (log: /tmp/recorder.log)"
-fi
+# Gameplay recording is owned by the bridge mod's RecordRoute, not this
+# script. When RECORD_VIDEO=1 the mod auto-starts one continuous .mp4 per run
+# (the first tick it's in a world) and exposes POST /record/{start,stop,roll}
+# so a fresh file can be cut without a container restart. It taps the same :99
+# framebuffer (read-only x11grab) as /screenshot + /video/stream. See
+# mc-mod/src/main/kotlin/com/mineclaude/bridge/RecordRoute.kt.
 
 # Keep container alive, streaming logs
 echo "=== Entering log tail ==="

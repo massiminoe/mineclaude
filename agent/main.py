@@ -139,6 +139,18 @@ def main() -> None:
         # In mock mode, inject a test chat event after a short delay
         async def run():
             await monitor.start()
+            # Cut a fresh gameplay recording for this agent run. The bridge mod
+            # auto-starts one .mp4 when the container comes up; rolling here
+            # gives THIS mineclaude process its own file without a container
+            # restart (see RecordRoute). Best-effort + self-gating: it's a no-op
+            # on the mod side when nothing's recording (RECORD_VIDEO=0), and a
+            # mock bridge / unreachable container just logs and moves on.
+            if not mock_bridge:
+                try:
+                    await bridge.record_roll()
+                    logger.info("rolled gameplay recording for this run")
+                except Exception as e:
+                    logger.warning(f"recording roll skipped: {e}")
             if not no_claude and mock_bridge and isinstance(bridge, MockBridgeClient):
                 async def inject_after_delay():
                     await asyncio.sleep(1.0)

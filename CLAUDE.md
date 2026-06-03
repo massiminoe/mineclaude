@@ -69,6 +69,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius
 - `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`). Optional aim: `?yaw=&pitch=` (degrees) **or** `?look_at_x=&look_at_y=&look_at_z=` (point eye at a world coord). New rotation persists. Aimed shots add ~200ms (render-settle window) before the grab
 - `GET /video/stream` — MJPEG video stream of game view
+- `POST /record/start`, `POST /record/stop`, `POST /record/roll`, `GET /record/status` — single-file gameplay recorder. One continuous `.mp4` (H.264) per run to `/recordings` (host `./state/video`), 5 fps / libx264 CRF 28, owned by the bridge mod's `RecordRoute`. Plays natively in QuickTime. Auto-starts on first in-world tick when `RECORD_VIDEO=1`. `/record/roll` finalizes the current file and opens a fresh one **without a container restart** — the "one video per run" trigger. It rotates an *active* recording only (no-op if not recording, so it self-gates on `RECORD_VIDEO` and never cold-starts; use `/record/start` to begin from idle); optional `{name}` labels the file (`play-<ts>-<name>.mp4`). The agent fires `record_roll()` on startup (`agent/main.py`) so each `mineclaude` launch gets its own video. Stop/roll/shutdown SIGTERM ffmpeg so the mp4 moov atom is written cleanly; an abrupt SIGKILL (hard crash) can leave the open file unplayable
 - `GET /health` — bridge liveness + ported endpoint list
 - `WS /events` — chat / death / respawn event stream
 
@@ -96,6 +97,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - **`/goto` held-slot leak:** Baritone auto-equips throwaway blocks while pathing. `GotoRoute` snapshots the held hotbar slot at entry and restores it on exit
 - **Events WS:** `ClientReceiveMessageEvents.CHAT` (sender.name) is the authoritative player-chat hook. `GAME` is a fallback — only fires for server-origin messages (`/say`, `/tellraw`). The chat regex on GAME drops bot self-echoes because `/tellraw` text doesn't match `<Name> message`
 - **Vision shell-out:** `ffmpeg -f x11grab -video_size 854x480 -i :99` runs on the HttpServer worker pool, not the tick thread (no MC state involved). Stderr drained concurrently to avoid pipe-fill deadlock; 5s timeout on `/screenshot`. `/video/stream` runs one persistent ffmpeg per client and SIGKILLs on disconnect (IOException on response write)
+- **Recorder shell-out (`RecordRoute`):** a third x11grab consumer of `:99` (x11grab is read-only, so `/screenshot` + `/video/stream` + the recorder coexist). Writes one continuous `.mp4` per run (chosen for native QuickTime playback; a clean stop/roll/shutdown finalizes the moov atom, an abrupt SIGKILL can spoil the open file — accepted trade-off). Auto-start is gated on the first in-world `END_CLIENT_TICK` and offloaded to a daemon thread so fork/exec doesn't stutter the render thread; `/record/start|stop|roll` run on the worker pool. Stop/roll send SIGTERM (clean moov) with a 5s grace before SIGKILL
 
 ## Debugging
 
