@@ -288,6 +288,11 @@ class ReflexRegistry:
     def known_types(self) -> set[str]:
         return set(self._handlers)
 
+    def get(self, event_type: str) -> ReflexHandler | None:
+        """Look up the handler for an event type (None if none registered).
+        Used by Runtime.get_handler / set_handler to read + replace policy."""
+        return self._handlers.get(event_type)
+
     async def dispatch(self, event_type: str, data: dict) -> None:
         handler = self._handlers.get(event_type)
         if handler is None:

@@ -13,6 +13,10 @@ from agent.bridge import BridgeClient, BridgeResponse
 # Shared log buffer, cleared before each sandbox execution
 _log_buffer: list[str] = []
 
+# Max chars per outgoing chat line. MC chat caps at 256; we split at 240 to
+# leave headroom for the `<Name> ` prefix the server prepends.
+CHAT_MAX_LEN = 240
+
 # Type for sub-action callback
 SubActionCallback = Callable[..., Coroutine[Any, Any, None]]
 
@@ -291,6 +295,22 @@ def make_primitives(
         entities = resp.data.get("entities", [])
         return [e for e in entities if e["type"] == entity_type or e["name"] == entity_type]
 
+    async def say(message: str) -> None:
+        """Send a chat message in-game. Splits long text at the 240-char limit,
+        preferring a word boundary. The talking primitive — chat is no longer a
+        top-level tool; an agent narrates / replies by calling say() inside
+        execute()."""
+        text = str(message).strip()
+        while text:
+            if len(text) <= CHAT_MAX_LEN:
+                await bridge.chat(text)
+                break
+            split_at = text.rfind(" ", 0, CHAT_MAX_LEN)
+            if split_at == -1:
+                split_at = CHAT_MAX_LEN
+            await bridge.chat(text[:split_at])
+            text = text[split_at:].lstrip()
+
     async def sleep(seconds: float) -> None:
         await asyncio.sleep(seconds)
 
@@ -326,6 +346,7 @@ def make_primitives(
         "findBlocks": findBlocks,
         "findMultipleBlocks": findMultipleBlocks,
         "findEntities": findEntities,
+        "say": say,
         "sleep": sleep,
         "log": log,
     }
