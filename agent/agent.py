@@ -9,17 +9,14 @@ import time
 import uuid
 from typing import Any, Callable, Coroutine
 
-from agent.action_queue import ActionQueue
 from agent.bridge import BridgeClient
 from agent.claude import ClaudeClient
 from agent.compaction import compact, needs_compaction
 from agent.pricing import accumulate as accumulate_usage, compute_cost, empty_totals
-from agent.primitives import make_primitives
 from agent.memory import read_memory, write_memory
 from agent.plan import read_plan, write_plan
 from agent.prompt import build_system_prompt, format_game_state
-from agent.reflexes import ReflexRegistry, register_default_handlers
-from agent.sandbox import SandboxError, execute
+from agent.runtime import Runtime
 from agent.session_log import SessionLogger
 
 try:
@@ -96,8 +93,14 @@ class Agent:
         self._handle_chat_enabled = True
         self.system_prompt = build_system_prompt(bot_name)
         self.messages: list[dict[str, Any]] = []
-        self.queue = ActionQueue()
-        self.primitives = make_primitives(bridge, on_subaction=self._on_subaction)
+        # The body lives in Runtime; the brain drives it. Inject _slog so
+        # sub-action logging reaches the per-turn session logger, _stage_resume
+        # so a completed reflex wakes the Claude loop, and a preempt-hook so a
+        # reflex/death preempt also cancels the in-flight Claude turn.
+        self.runtime = Runtime(bridge, slog=self._slog, on_resume=self._stage_resume)
+        self.runtime.add_preempt_hook(self._brain_preempt)
+        self.queue = self.runtime.queue        # alias: brain tool-dispatch + monitor
+        self.reflexes = self.runtime.reflexes  # alias: _handle_event dispatch + monitor
         self._session_ids: dict[str, str] = {}
         self._session_loggers: dict[str, SessionLogger] = {}
         self._current_session_logger: SessionLogger | None = None
@@ -105,7 +108,6 @@ class Agent:
         # tool return). Currently only updated; left in place as a low-cost
         # signal future monitor features may want.
         self.last_activity_ts: float = time.monotonic()
-        self._callbacks: dict[str, list[Callable[[str, Any], Coroutine[Any, Any, None]]]] = {}
 
         # Chat dispatch state. Two-layer design:
         #   * `_pending_user_inputs` collects user messages on receipt — fast,
@@ -144,45 +146,14 @@ class Agent:
         if self.claude is not None:
             self.claude.on_usage = self._on_claude_usage
 
-        # Reflex layer: dispatches mod-emitted events (damage, lava, drowning,
-        # tool-broke) to handlers configured in agent/reflexes.py.
-        self.reflexes = ReflexRegistry(self)
-        register_default_handlers(self.reflexes)
-
-        # Wire up executor and logging
-        self.queue.set_executor(self._execute_action)
-        self.queue.on("action:started", self._on_action_started)
-        self.queue.on("action:completed", self._on_action_completed)
-        # bridge.stop halts Baritone before the worker task is cancelled —
-        # otherwise an in-flight `#goto` keeps walking after preemption.
-        self.queue.set_pre_interrupt(self._pre_interrupt_stop_bridge)
-
     def on(self, event: str, callback: Callable[[str, Any], Coroutine[Any, Any, None]]) -> None:
-        self._callbacks.setdefault(event, []).append(callback)
+        # The event bus lives on the Runtime; the monitor subscribes via the
+        # Agent, so delegate. Body events (action:*, reflex:fired) and brain
+        # events (conversation:update, usage:update) share the one bus.
+        self.runtime.on(event, callback)
 
     async def _emit(self, event: str, data: Any = None) -> None:
-        for cb in self._callbacks.get(event, []):
-            try:
-                await cb(event, data)
-            except Exception:
-                pass
-
-    # --- Controller protocol (consumed by ReflexRegistry) ------------------
-    # Thin aliases onto the brain's internals so `ReflexRegistry(self)` can
-    # treat the Agent as a Controller. The Runtime (P2) implements these
-    # natively; until then the Agent is the controller. See runtime.Controller.
-
-    async def preempt(self) -> None:
-        await self._preempt()
-
-    def resume(self, event_type: str) -> None:
-        self._stage_resume(event_type)
-
-    def slog(self, event: str, **data: Any) -> None:
-        self._slog(event, **data)
-
-    async def emit_event(self, event: str, data: Any = None) -> None:
-        await self._emit(event, data)
+        await self.runtime._emit(event, data)
 
     async def _on_claude_usage(self, model: str, usage: dict[str, int]) -> None:
         """Called by ClaudeClient after every API response.
@@ -212,7 +183,7 @@ class Agent:
         self._handle_chat_enabled = handle_chat
         mode = "normal" if handle_chat else "headless (no Claude)"
         logger.info(f"Starting agent as {self.bot_name} ({mode})")
-        self.queue.start()
+        self.runtime.start()
         if handle_chat and self._chat_worker_task is None:
             self._chat_worker_task = asyncio.create_task(self._chat_worker())
         await self.bridge.events(self._handle_event)
@@ -230,40 +201,24 @@ class Agent:
         elif event_type in self.reflexes.known_types():
             await self.reflexes.dispatch(event_type, event.get("data") or {})
 
-    async def _pre_interrupt_stop_bridge(self) -> None:
-        """Pre-interrupt hook: halt Baritone *and* any in-flight /attack loop
-        before worker cancellation. Both are fire-and-forget effects on the
-        bridge — preemption must reach into bridge-side state, not just
-        local-side awaiters, or a preempted reflex would still be swinging
-        in the background while the new reflex (e.g. flee) tries to path."""
-        try:
-            await self.bridge.stop()
-        except Exception:
-            logger.exception("bridge.stop in preempt failed")
-        try:
-            await self.bridge.attack_stop()
-        except Exception:
-            logger.exception("bridge.attack_stop in preempt failed")
-
-    async def _preempt(self) -> None:
-        """Halt everything in flight without erasing user input.
-
-        Called by reflex handlers (preempts=True) and by death. Cancels the
-        active Claude turn (kills the in-flight HTTP call + iteration loop),
-        clears the trigger so a stale set from before preempt doesn't
-        immediately fire a new turn, and interrupts the action queue (which
-        also halts Baritone via the pre-interrupt hook). `_pending_user_inputs`
-        is intentionally NOT touched — the user's queued words wait for the
-        next chat to flush them in.
-        """
+    async def _brain_preempt(self) -> None:
+        """Preempt-hook registered on the Runtime. Cancels the active Claude
+        turn (kills the in-flight HTTP call + iteration loop) and clears the
+        trigger so a stale set from before preempt doesn't immediately fire a
+        new turn. The body half — queue interrupt + bridge stop — lives in
+        Runtime.preempt. `_pending_user_inputs` is intentionally NOT touched:
+        the user's queued words wait for the next chat to flush them in."""
         task = self._active_chat_task
         if task is not None and not task.done():
             task.cancel()
         self._chat_trigger.clear()
-        try:
-            await self.queue.interrupt()
-        except Exception:
-            logger.exception("queue interrupt failed during preempt")
+
+    async def _preempt(self) -> None:
+        """Halt everything in flight. Delegates to Runtime.preempt, which runs
+        the brain preempt-hook (cancel Claude turn) then interrupts the queue
+        and halts Baritone via the queue's pre-interrupt hook. Called by reflex
+        handlers (preempts=True) and by death."""
+        await self.runtime.preempt()
 
     async def _handle_death(self) -> None:
         """Handle player death: stop everything (including any in-flight chat)."""
@@ -858,44 +813,6 @@ class Agent:
                 message=str(e),
             )
             return f"Error: {e}"
-
-    async def _on_subaction(
-        self, sub_id: str, name: str, args: dict | None, status: str, **kwargs: Any
-    ) -> None:
-        """Callback from instrumented primitives — forwards to queue.
-
-        Also emits a `subaction` session-log entry so post-hoc analysis can
-        see which specific primitive (goToPosition, breakBlockAt, ...) in a
-        multi-step newAction chain failed, without having to parse the
-        error string.
-        """
-        self._slog(
-            "subaction",
-            id=sub_id,
-            name=name,
-            args=args,
-            status=status,
-            result=kwargs.get("result"),
-            error=kwargs.get("error"),
-        )
-        await self.queue.record_subaction(sub_id, name, args, status, **kwargs)
-
-    async def _on_action_started(self, event: str, action, *_extra) -> None:
-        logger.info(f"Action {action.id} STARTED: {action.code[:200]}")
-
-    async def _on_action_completed(self, event: str, action, *_extra) -> None:
-        elapsed = (action.finished_at - action.started_at) if action.started_at and action.finished_at else 0
-        if action.status.value == "completed":
-            logger.info(f"Action {action.id} COMPLETED ({elapsed:.1f}s): {action.result or 'no output'}")
-        else:
-            logger.warning(f"Action {action.id} {action.status.value.upper()} ({elapsed:.1f}s): {action.error or 'no error'}")
-
-    async def _execute_action(self, code: str) -> str:
-        """Execute action code in the sandbox. Injected as queue executor."""
-        try:
-            return await execute(code, self.primitives)
-        except SandboxError as e:
-            return f"Sandbox error: {e}"
 
     async def _send_chat(self, text: str) -> None:
         """Send a message in-game, splitting if needed."""
