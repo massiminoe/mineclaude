@@ -100,8 +100,8 @@ def _block(name: str, x: int, y: int, z: int, distance: float = 1.0) -> dict:
 
 
 class FakeAgent:
-    """Minimal Agent stand-in. The registry only touches `_slog`,
-    `_emit`, `_preempt`, `_stage_resume`, and (via handlers) `bridge`."""
+    """Minimal Controller stand-in. The registry only touches `slog`,
+    `emit_event`, `preempt`, `resume`, and (via handlers) `bridge`."""
 
     def __init__(self, bridge: _FakeBridge | None = None):
         self.slog_calls: list[tuple[str, dict]] = []
@@ -111,16 +111,16 @@ class FakeAgent:
         self.queue = _FakeQueue()
         self.bridge = bridge or _FakeBridge()
 
-    def _slog(self, event: str, **data) -> None:
+    def slog(self, event: str, **data) -> None:
         self.slog_calls.append((event, data))
 
-    async def _emit(self, event: str, data) -> None:
+    async def emit_event(self, event: str, data) -> None:
         self.emit_calls.append((event, data))
 
-    async def _preempt(self) -> None:
+    async def preempt(self) -> None:
         self.preempt_calls += 1
 
-    def _stage_resume(self, event_type: str) -> None:
+    def resume(self, event_type: str) -> None:
         self.resume_calls.append(event_type)
 
 

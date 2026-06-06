@@ -167,6 +167,23 @@ class Agent:
             except Exception:
                 pass
 
+    # --- Controller protocol (consumed by ReflexRegistry) ------------------
+    # Thin aliases onto the brain's internals so `ReflexRegistry(self)` can
+    # treat the Agent as a Controller. The Runtime (P2) implements these
+    # natively; until then the Agent is the controller. See runtime.Controller.
+
+    async def preempt(self) -> None:
+        await self._preempt()
+
+    def resume(self, event_type: str) -> None:
+        self._stage_resume(event_type)
+
+    def slog(self, event: str, **data: Any) -> None:
+        self._slog(event, **data)
+
+    async def emit_event(self, event: str, data: Any = None) -> None:
+        await self._emit(event, data)
+
     async def _on_claude_usage(self, model: str, usage: dict[str, int]) -> None:
         """Called by ClaudeClient after every API response.
 

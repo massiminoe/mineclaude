@@ -9,11 +9,11 @@ happened in the next gameState injection, and the preemption hook into
 the action queue + in-flight chat task.
 
 A handler with `preempts=True` causes the dispatcher to call
-`agent._preempt()` BEFORE running the handler — that halts Baritone,
+`controller.preempt()` BEFORE running the handler — that halts Baritone,
 cancels the running newAction, and cancels any in-flight Claude
 iteration. Handlers that decide preemption conditionally (e.g.
 damage_taken, which only acts on hostile-mob hits) register with
-`preempts=False` and call `agent._preempt()` themselves.
+`preempts=False` and call `controller.preempt()` themselves.
 
 Latest-wins: handlers run as their own asyncio.Tasks. When a new reflex
 fires, the registry cancels any in-flight prior handler before running
@@ -56,7 +56,7 @@ HAZARD_BLOCKS = frozenset({
 })
 
 if TYPE_CHECKING:
-    from agent.agent import Agent
+    from agent.runtime import Controller
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ WEAPON_PRIORITY: tuple[str, ...] = (
 )
 
 
-HandlerFn = Callable[["Agent", dict], Coroutine[Any, Any, None]]
+HandlerFn = Callable[["Controller", dict], Coroutine[Any, Any, None]]
 
 
 def pick_best_weapon(inventory: list[dict]) -> str | None:
@@ -249,7 +249,7 @@ class ReflexHandler:
     _last_fire: float = field(default=0.0, repr=False)
 
 
-async def stub_handler(agent: "Agent", data: dict) -> None:
+async def stub_handler(controller: "Controller", data: dict) -> None:
     """No-op handler — used when the only desired effect is preempt + record."""
     return None
 
@@ -275,8 +275,8 @@ class ReflexRegistry:
     arriving.
     """
 
-    def __init__(self, agent: "Agent"):
-        self.agent = agent
+    def __init__(self, controller: "Controller"):
+        self.controller = controller
         self.recent: deque[dict] = deque(maxlen=RECENT_MAXLEN)
         self._handlers: dict[str, ReflexHandler] = {}
         self.last_fire_ts: float = 0.0
@@ -305,12 +305,12 @@ class ReflexRegistry:
         self.recent.append(entry)
 
         try:
-            self.agent._slog("reflex_fired", type=event_type, data=data)
+            self.controller.slog("reflex_fired", type=event_type, data=data)
         except Exception:
             logger.exception("reflex slog failed")
 
         try:
-            await self.agent._emit("reflex:fired", entry)
+            await self.controller.emit_event("reflex:fired", entry)
         except Exception:
             logger.exception("reflex emit failed")
 
@@ -330,7 +330,7 @@ class ReflexRegistry:
 
         if handler.preempts:
             try:
-                await self.agent._preempt()
+                await self.controller.preempt()
             except Exception:
                 logger.exception("reflex preempt failed")
 
@@ -344,7 +344,7 @@ class ReflexRegistry:
 
     async def _run_handler(self, handler: ReflexHandler, data: dict) -> None:
         try:
-            await handler.handle(self.agent, data)
+            await handler.handle(self.controller, data)
         except asyncio.CancelledError:
             # Cancelled by a newer reflex (or shutdown). Propagate so the
             # task's done state reflects the cancellation — `prior.cancel()
@@ -361,7 +361,7 @@ class ReflexRegistry:
         # await points).
         if handler.resumes_on_complete:
             try:
-                self.agent._stage_resume(handler.event_type)
+                self.controller.resume(handler.event_type)
             except Exception:
                 logger.exception("reflex resume staging failed")
 
@@ -390,7 +390,7 @@ REFLEX_EVENT_TYPES = (
 # --- Default handlers ------------------------------------------------------
 
 
-async def damage_taken_handler(agent: "Agent", data: dict) -> None:
+async def damage_taken_handler(controller: "Controller", data: dict) -> None:
     """React to incoming damage.
 
     No attacker (fall, fire, suffocation): record only — caller has nothing
@@ -419,7 +419,7 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
     amount = data.get("amount", 0.0)
     hp_after = hp_before - amount
 
-    await agent._preempt()
+    await controller.preempt()
 
     if hp_after <= LOW_HP_THRESHOLD:
         ax = attacker_pos.get("x")
@@ -427,7 +427,7 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
         if ax is None or az is None:
             return  # no direction to flee
         try:
-            status = (await agent.bridge.get_status()).data
+            status = (await controller.bridge.get_status()).data
         except Exception:
             return
         pos = status.get("position") or {}
@@ -444,7 +444,7 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
         fx = px + (dx / mag) * FLEE_DISTANCE
         fz = pz + (dz / mag) * FLEE_DISTANCE
         try:
-            await agent.bridge.goto(fx, py, fz)
+            await controller.bridge.goto(fx, py, fz)
         except Exception:
             logger.exception("flee goto failed")
         return
@@ -461,11 +461,11 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
         # rather retaliate bare-handed than do nothing, and bridge.equip is
         # idempotent (held weapon → cheap re-verify, no swap).
         try:
-            status = (await agent.bridge.get_status()).data
+            status = (await controller.bridge.get_status()).data
             weapon = pick_best_weapon(status.get("inventory") or [])
             if weapon is not None:
                 try:
-                    await agent.bridge.equip(weapon)
+                    await controller.bridge.equip(weapon)
                 except Exception:
                     logger.exception("retaliation equip failed")
         except Exception:
@@ -473,8 +473,8 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
 
         try:
             resp = await timed_op(
-                agent.bridge.attack(str(attacker_id)),
-                agent.bridge.attack_stop,
+                controller.bridge.attack(str(attacker_id)),
+                controller.bridge.attack_stop,
             )
         except Exception:
             logger.exception("retaliation attack failed")
@@ -486,7 +486,7 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
         # whether to re-engage the now-distant mob.
         logger.info("retaliation timed out after %.0fs — stopped", RETALIATE_TIMEOUT_S)
         try:
-            agent._slog("retaliation_timeout", attacker_id=attacker_id, attacker_kind=attacker_kind)
+            controller.slog("retaliation_timeout", attacker_id=attacker_id, attacker_kind=attacker_kind)
         except Exception:
             pass
         return
@@ -496,12 +496,12 @@ async def damage_taken_handler(agent: "Agent", data: dict) -> None:
         # don't masquerade as successful retaliation.
         logger.warning("retaliation attack rejected: %s", resp.message)
         try:
-            agent._slog("retaliation_failed", attacker_id=attacker_id, attacker_kind=attacker_kind, message=resp.message)
+            controller.slog("retaliation_failed", attacker_id=attacker_id, attacker_kind=attacker_kind, message=resp.message)
         except Exception:
             pass
 
 
-async def _escape_to_shore(agent: "Agent") -> None:
+async def _escape_to_shore(controller: "Controller") -> None:
     """Find the nearest standable land tile and ask Baritone to walk there.
 
     A "shore" is any non-hazard solid block whose two blocks above are air
@@ -515,7 +515,7 @@ async def _escape_to_shore(agent: "Agent") -> None:
     entry in `recent` on the next iteration and can take over.
     """
     try:
-        status = (await agent.bridge.get_status()).data
+        status = (await controller.bridge.get_status()).data
     except Exception:
         return
     pos = status.get("position") or {}
@@ -524,7 +524,7 @@ async def _escape_to_shore(agent: "Agent") -> None:
         return
 
     try:
-        resp = await agent.bridge.get_nearby_blocks(radius=SHORE_SEARCH_RADIUS)
+        resp = await controller.bridge.get_nearby_blocks(radius=SHORE_SEARCH_RADIUS)
     except Exception:
         return
     blocks = resp.data.get("blocks") or []
@@ -546,18 +546,18 @@ async def _escape_to_shore(agent: "Agent") -> None:
         if abs(y - py) > SHORE_MAX_Y_DELTA:
             continue
         try:
-            await agent.bridge.goto(float(x), float(y + 1), float(z))
+            await controller.bridge.goto(float(x), float(y + 1), float(z))
         except Exception:
             logger.exception("escape goto failed")
         return
 
 
-async def entered_lava_handler(agent: "Agent", data: dict) -> None:
+async def entered_lava_handler(controller: "Controller", data: dict) -> None:
     """Find shore and walk there. Preempt has already fired (preempts=True)."""
-    await _escape_to_shore(agent)
+    await _escape_to_shore(controller)
 
 
-async def started_drowning_handler(agent: "Agent", data: dict) -> None:
+async def started_drowning_handler(controller: "Controller", data: dict) -> None:
     """Surface, then find shore and walk there. Preempt has already fired.
 
     The /surface call is a workaround for a Baritone limitation: from a
@@ -568,10 +568,10 @@ async def started_drowning_handler(agent: "Agent", data: dict) -> None:
     selected below.
     """
     try:
-        await agent.bridge.surface()
+        await controller.bridge.surface()
     except Exception:
         logger.exception("surface failed during drowning escape")
-    await _escape_to_shore(agent)
+    await _escape_to_shore(controller)
 
 
 def register_default_handlers(registry: ReflexRegistry) -> None:
