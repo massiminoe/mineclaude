@@ -209,6 +209,43 @@ async def test_craft_2x2_works_without_table(bridge, prims):
 
 
 @pytest.mark.asyncio
+async def test_craft_oak_planks_rejects_foreign_log(bridge, prims):
+    # Regression: crafting a variant-specific output (oak_planks) must NOT
+    # consume a foreign log (acacia_log). Pre-fix, the oak_log ingredient was
+    # in VARIANT_SUFFIXES and matched any *_log, so this silently produced the
+    # wrong wood — the real bridge then tripped its output-slot guard with
+    # "Output slot showed 'acacia_planks', expected 'oak_planks'".
+    bridge._add_to_inventory("acacia_log", 56)
+    with pytest.raises(RuntimeError, match="missing"):
+        await prims["craft"]("oak_planks", 4)
+    # Foreign log untouched on the failed (pre-flight) craft.
+    assert any(i["name"] == "acacia_log" and i["count"] == 56 for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_craft_planks_prefers_matching_log(bridge, prims):
+    # When both the matching and a foreign log are present, the exact wood is
+    # consumed and the foreign log is left alone.
+    bridge._add_to_inventory("oak_log", 1)
+    bridge._add_to_inventory("acacia_log", 56)
+    result = await prims["craft"]("oak_planks", 4)
+    assert "Crafted" in result
+    assert not any(i["name"] == "oak_log" for i in bridge._inventory)
+    assert any(i["name"] == "acacia_log" and i["count"] == 56 for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_craft_oak_stairs_rejects_foreign_planks(bridge, prims):
+    # Same bug class one level up: a typed output (oak_stairs) must require its
+    # own planks exactly, not any *_planks.
+    bridge._nearby_blocks.append({"name": "crafting_table", "x": 1, "y": 64, "z": 1, "distance": 1.4})
+    bridge._add_to_inventory("spruce_planks", 64)
+    with pytest.raises(RuntimeError, match="missing"):
+        await prims["craft"]("oak_stairs", 4)
+    assert any(i["name"] == "spruce_planks" and i["count"] == 64 for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
 async def test_break_block(bridge, prims):
     result = await prims["breakBlockAt"](1, 64, 0)
     assert "Broke" in result

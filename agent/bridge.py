@@ -532,7 +532,12 @@ class MockBridgeClient:
         )
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
-        from agent.recipes import get_recipe, get_required_ingredients, resolve_ingredients
+        from agent.recipes import (
+            format_required_ingredients,
+            get_recipe,
+            get_required_ingredients,
+            resolve_ingredients,
+        )
 
         item = item.replace("minecraft:", "")
         recipe = get_recipe(item)
@@ -559,7 +564,7 @@ class MockBridgeClient:
 
         resolved = resolve_ingredients(required, have)
         if resolved is None:
-            need_str = ", ".join(f"{v}x {k}" for k, v in required.items())
+            need_str = format_required_ingredients(required)
             have_str = ", ".join(f"{v}x {k}" for k, v in have.items()) if have else "nothing"
             msg = f"Cannot craft {item}: missing ingredients. Need: {need_str}. Have: {have_str}."
             return BridgeResponse("error", msg, {"crafted": 0, "method": "simulated"})

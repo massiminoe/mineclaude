@@ -39,12 +39,21 @@ internal object Recipes {
     )
 
     /**
-     * Ingredients that accept any variant with the same suffix.
-     * e.g. recipe says "oak_planks" but any *_planks works.
+     * Sentinel ingredients that accept any variant with the same suffix.
+     * Used ONLY by recipes whose output doesn't depend on wood type (stick,
+     * crafting_table, chest, wooden tools, bed, etc.) — `any_planks` matches
+     * any `*_planks`, `any_log` any `*_log`.
+     *
+     * Deliberately NOT keyed on a real wood (e.g. `oak_planks`): a recipe whose
+     * output *is* variant-specific (`oak_planks` from `oak_log`, `oak_stairs`
+     * from `oak_planks`) must match its ingredient EXACTLY, or it would grab
+     * the wrong wood and produce the wrong variant. Those recipes keep their
+     * literal `oak_*`/`spruce_*`/... ingredient names, which aren't in this
+     * map and therefore match exactly.
      */
     private val VARIANT_SUFFIXES: Map<String, String> = mapOf(
-        "oak_planks" to "_planks",
-        "oak_log" to "_log",
+        "any_planks" to "_planks",
+        "any_log" to "_log",
     )
 
     /**
@@ -60,11 +69,13 @@ internal object Recipes {
     /**
      * Per-wood-type metadata used to emit one recipe per wood for stairs,
      * slabs, doors, trapdoors, fences, gates, buttons, pressure plates,
-     * signs, planks, and (where applicable) boats. Variant outputs use the
-     * specific plank name as ingredient (e.g. spruce_door wants spruce_planks)
-     * so vanilla MC accepts the placement — only `oak_*` outputs inherit the
-     * existing "any plank works" matcher quirk because their key is the
-     * canonical `oak_planks` head of VARIANT_SUFFIXES.
+     * signs, planks, and (where applicable) boats. Every variant output uses
+     * its specific plank/log as ingredient (e.g. spruce_door wants
+     * spruce_planks, oak_planks wants oak_log) so the ingredient matches
+     * EXACTLY — vanilla MC won't accept a foreign plank, and a loose match
+     * would silently craft the wrong variant. The "any plank works" affordance
+     * lives only on the wood-agnostic recipes via the `any_planks`/`any_log`
+     * sentinels, never here.
      */
     private data class WoodType(
         val name: String,
@@ -168,23 +179,23 @@ internal object Recipes {
         // 2x2 stone → 4 stone_bricks
         put("stone_bricks", Recipe("stone_bricks", 4, listOf("##", "##"), mapOf('#' to "stone"), false))
 
-        // --- Stick (any plank works via VARIANT_SUFFIXES). ---
-        put("stick", Recipe("stick", 4, listOf("#", "#"), mapOf('#' to "oak_planks"), false))
+        // --- Stick (any plank works via the any_planks sentinel). ---
+        put("stick", Recipe("stick", 4, listOf("#", "#"), mapOf('#' to "any_planks"), false))
 
         // --- Basic blocks ---
-        put("crafting_table", Recipe("crafting_table", 1, listOf("##", "##"), mapOf('#' to "oak_planks"), false))
+        put("crafting_table", Recipe("crafting_table", 1, listOf("##", "##"), mapOf('#' to "any_planks"), false))
         put("furnace", Recipe("furnace", 1, listOf("###", "# #", "###"), mapOf('#' to "cobblestone"), true))
-        put("chest", Recipe("chest", 1, listOf("###", "# #", "###"), mapOf('#' to "oak_planks"), true))
+        put("chest", Recipe("chest", 1, listOf("###", "# #", "###"), mapOf('#' to "any_planks"), true))
 
         // --- Torches ---
         put("torch", Recipe("torch", 4, listOf("C", "S"), mapOf('C' to "coal", 'S' to "stick"), false))
 
         // --- Wooden tools ---
-        put("wooden_pickaxe", Recipe("wooden_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "oak_planks", 'S' to "stick"), true))
-        put("wooden_axe", Recipe("wooden_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "oak_planks", 'S' to "stick"), true))
-        put("wooden_shovel", Recipe("wooden_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "oak_planks", 'S' to "stick"), true))
-        put("wooden_sword", Recipe("wooden_sword", 1, listOf("#", "#", "S"), mapOf('#' to "oak_planks", 'S' to "stick"), true))
-        put("wooden_hoe", Recipe("wooden_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "oak_planks", 'S' to "stick"), true))
+        put("wooden_pickaxe", Recipe("wooden_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "any_planks", 'S' to "stick"), true))
+        put("wooden_axe", Recipe("wooden_axe", 1, listOf("##", "#S", " S"), mapOf('#' to "any_planks", 'S' to "stick"), true))
+        put("wooden_shovel", Recipe("wooden_shovel", 1, listOf("#", "S", "S"), mapOf('#' to "any_planks", 'S' to "stick"), true))
+        put("wooden_sword", Recipe("wooden_sword", 1, listOf("#", "#", "S"), mapOf('#' to "any_planks", 'S' to "stick"), true))
+        put("wooden_hoe", Recipe("wooden_hoe", 1, listOf("##", " S", " S"), mapOf('#' to "any_planks", 'S' to "stick"), true))
 
         // --- Stone tools ---
         put("stone_pickaxe", Recipe("stone_pickaxe", 1, listOf("###", " S ", " S "), mapOf('#' to "cobblestone", 'S' to "stick"), true))
@@ -249,9 +260,9 @@ internal object Recipes {
 
         // --- Survival essentials ---
         // Bed: alias `bed` → white_bed. Other wool colors yield other-colored beds; only white is stocked here for now.
-        put("bed", Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "oak_planks"), true))
-        put("white_bed", Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "oak_planks"), true))
-        put("shield", Recipe("shield", 1, listOf("#I#", "###", " # "), mapOf('#' to "oak_planks", 'I' to "iron_ingot"), true))
+        put("bed", Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "any_planks"), true))
+        put("white_bed", Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "any_planks"), true))
+        put("shield", Recipe("shield", 1, listOf("#I#", "###", " # "), mapOf('#' to "any_planks", 'I' to "iron_ingot"), true))
         put("bread", Recipe("bread", 1, listOf("###"), mapOf('#' to "wheat"), true))
         put("flint_and_steel", Recipe("flint_and_steel", 1, listOf("I ", " F"), mapOf('I' to "iron_ingot", 'F' to "flint"), false))
         put("fishing_rod", Recipe("fishing_rod", 1, listOf("  #", " #X", "# X"), mapOf('#' to "stick", 'X' to "string"), true))
@@ -267,7 +278,7 @@ internal object Recipes {
         // --- Paper, books, navigation ---
         put("paper", Recipe("paper", 3, listOf("###"), mapOf('#' to "sugar_cane"), true))
         put("book", Recipe("book", 1, listOf("PP", "PL"), mapOf('P' to "paper", 'L' to "leather"), false))
-        put("bookshelf", Recipe("bookshelf", 1, listOf("###", "BBB", "###"), mapOf('#' to "oak_planks", 'B' to "book"), true))
+        put("bookshelf", Recipe("bookshelf", 1, listOf("###", "BBB", "###"), mapOf('#' to "any_planks", 'B' to "book"), true))
         put("compass", Recipe("compass", 1, listOf(" I ", "IRI", " I "), mapOf('I' to "iron_ingot", 'R' to "redstone"), true))
         put("clock", Recipe("clock", 1, listOf(" G ", "GRG", " G "), mapOf('G' to "gold_ingot", 'R' to "redstone"), true))
         // `map` recipe yields filled_map (the empty/explorable version) — name resolution at the slot-0 check needs the actual item id.
@@ -286,12 +297,12 @@ internal object Recipes {
         put("hopper", Recipe("hopper", 1, listOf("I I", "ICI", " I "), mapOf('I' to "iron_ingot", 'C' to "chest"), true))
         put("dispenser", Recipe("dispenser", 1, listOf("###", "#B#", "#R#"), mapOf('#' to "cobblestone", 'B' to "bow", 'R' to "redstone"), true))
         put("dropper", Recipe("dropper", 1, listOf("###", "# #", "#R#"), mapOf('#' to "cobblestone", 'R' to "redstone"), true))
-        put("piston", Recipe("piston", 1, listOf("###", "CIC", "CRC"), mapOf('#' to "oak_planks", 'C' to "cobblestone", 'I' to "iron_ingot", 'R' to "redstone"), true))
+        put("piston", Recipe("piston", 1, listOf("###", "CIC", "CRC"), mapOf('#' to "any_planks", 'C' to "cobblestone", 'I' to "iron_ingot", 'R' to "redstone"), true))
 
         // --- Misc tools ---
         put("bucket", Recipe("bucket", 1, listOf("# #", " # "), mapOf('#' to "iron_ingot"), true))
         put("ladder", Recipe("ladder", 3, listOf("# #", "###", "# #"), mapOf('#' to "stick"), true))
-        put("bowl", Recipe("bowl", 4, listOf("# #", " # "), mapOf('#' to "oak_planks"), true))
+        put("bowl", Recipe("bowl", 4, listOf("# #", " # "), mapOf('#' to "any_planks"), true))
     }
 
     fun matchesIngredient(required: String, available: String): Boolean {

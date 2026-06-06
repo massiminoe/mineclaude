@@ -96,7 +96,7 @@ RECIPES: dict[str, Recipe] = {
     "stick": Recipe(
         output="stick", output_count=4,
         pattern=["#", "#"],
-        key={"#": "oak_planks"},
+        key={"#": "any_planks"},
         needs_table=False,
     ),
 
@@ -104,7 +104,7 @@ RECIPES: dict[str, Recipe] = {
     "crafting_table": Recipe(
         output="crafting_table", output_count=1,
         pattern=["##", "##"],
-        key={"#": "oak_planks"},
+        key={"#": "any_planks"},
         needs_table=False,
     ),
     "furnace": Recipe(
@@ -116,7 +116,7 @@ RECIPES: dict[str, Recipe] = {
     "chest": Recipe(
         output="chest", output_count=1,
         pattern=["###", "# #", "###"],
-        key={"#": "oak_planks"},
+        key={"#": "any_planks"},
         needs_table=True,
     ),
 
@@ -132,31 +132,31 @@ RECIPES: dict[str, Recipe] = {
     "wooden_pickaxe": Recipe(
         output="wooden_pickaxe", output_count=1,
         pattern=["###", " S ", " S "],
-        key={"#": "oak_planks", "S": "stick"},
+        key={"#": "any_planks", "S": "stick"},
         needs_table=True,
     ),
     "wooden_axe": Recipe(
         output="wooden_axe", output_count=1,
         pattern=["##", "#S", " S"],
-        key={"#": "oak_planks", "S": "stick"},
+        key={"#": "any_planks", "S": "stick"},
         needs_table=True,
     ),
     "wooden_shovel": Recipe(
         output="wooden_shovel", output_count=1,
         pattern=["#", "S", "S"],
-        key={"#": "oak_planks", "S": "stick"},
+        key={"#": "any_planks", "S": "stick"},
         needs_table=True,
     ),
     "wooden_sword": Recipe(
         output="wooden_sword", output_count=1,
         pattern=["#", "#", "S"],
-        key={"#": "oak_planks", "S": "stick"},
+        key={"#": "any_planks", "S": "stick"},
         needs_table=True,
     ),
     "wooden_hoe": Recipe(
         output="wooden_hoe", output_count=1,
         pattern=["##", " S", " S"],
-        key={"#": "oak_planks", "S": "stick"},
+        key={"#": "any_planks", "S": "stick"},
         needs_table=True,
     ),
 
@@ -441,19 +441,19 @@ RECIPES: dict[str, Recipe] = {
     "bed": Recipe(
         output="white_bed", output_count=1,
         pattern=["WWW", "###"],
-        key={"W": "white_wool", "#": "oak_planks"},
+        key={"W": "white_wool", "#": "any_planks"},
         needs_table=True,
     ),
     "white_bed": Recipe(
         output="white_bed", output_count=1,
         pattern=["WWW", "###"],
-        key={"W": "white_wool", "#": "oak_planks"},
+        key={"W": "white_wool", "#": "any_planks"},
         needs_table=True,
     ),
     "shield": Recipe(
         output="shield", output_count=1,
         pattern=["#I#", "###", " # "],
-        key={"#": "oak_planks", "I": "iron_ingot"},
+        key={"#": "any_planks", "I": "iron_ingot"},
         needs_table=True,
     ),
     "bread": Recipe(
@@ -529,7 +529,7 @@ RECIPES: dict[str, Recipe] = {
     "bookshelf": Recipe(
         output="bookshelf", output_count=1,
         pattern=["###", "BBB", "###"],
-        key={"#": "oak_planks", "B": "book"},
+        key={"#": "any_planks", "B": "book"},
         needs_table=True,
     ),
     "compass": Recipe(
@@ -614,7 +614,7 @@ RECIPES: dict[str, Recipe] = {
     "piston": Recipe(
         output="piston", output_count=1,
         pattern=["###", "CIC", "CRC"],
-        key={"#": "oak_planks", "C": "cobblestone", "I": "iron_ingot", "R": "redstone"},
+        key={"#": "any_planks", "C": "cobblestone", "I": "iron_ingot", "R": "redstone"},
         needs_table=True,
     ),
 
@@ -634,7 +634,7 @@ RECIPES: dict[str, Recipe] = {
     "bowl": Recipe(
         output="bowl", output_count=4,
         pattern=["# #", " # "],
-        key={"#": "oak_planks"},
+        key={"#": "any_planks"},
         needs_table=True,
     ),
 }
@@ -698,11 +698,19 @@ RECIPES["stone_pressure_plate"] = Recipe("stone_pressure_plate", 1, ["##"], {"#"
 RECIPES["stone_bricks"] = Recipe("stone_bricks", 4, ["##", "##"], {"#": "stone"}, False)
 
 
-# Ingredients that accept any variant with the same suffix.
-# e.g. recipe says "oak_planks" but any *_planks works (matches real MC behavior).
+# Sentinel ingredients that accept any variant with the same suffix. Used ONLY
+# by recipes whose output doesn't depend on wood type (stick, crafting_table,
+# chest, wooden tools, bed, etc.): "any_planks" matches any *_planks, "any_log"
+# any *_log (matches real MC behavior — these recipes honor the planks/logs tag).
+#
+# Deliberately NOT keyed on a real wood (e.g. "oak_planks"): a recipe whose
+# output *is* variant-specific (oak_planks from oak_log, oak_stairs from
+# oak_planks) must match its ingredient EXACTLY or it would grab the wrong wood
+# and craft the wrong variant. Those recipes keep their literal oak_*/spruce_*
+# ingredient names, which aren't in this map and so match exactly.
 VARIANT_SUFFIXES: dict[str, str] = {
-    "oak_planks": "_planks",
-    "oak_log": "_log",
+    "any_planks": "_planks",
+    "any_log": "_log",
 }
 
 # Ingredients with explicit interchangeable alternatives that don't share a
@@ -731,10 +739,11 @@ def resolve_ingredients(
 
     Returns {actual_item: count_to_consume} or None if insufficient.
 
-    Two-pass pick: exact matches first, then variant fallbacks. Without this,
-    an `oak_planks` requirement could grab `spruce_planks` even when oak is
-    available — fine for `stick` (any plank works) but wrong for variant
-    outputs where the recipe key was set to the canonical `oak_planks`.
+    Two-pass pick: exact matches first, then variant fallbacks. The fallback
+    only fires for the `any_planks`/`any_log` sentinels (wood-agnostic recipes
+    like `stick`); variant-specific recipes use a literal ingredient (e.g.
+    `oak_log`) that matches exactly, so crafting `oak_planks` never grabs
+    `acacia_log`.
     """
     resolved: dict[str, int] = {}
     for ingredient, needed in required.items():
@@ -791,6 +800,28 @@ def get_required_ingredients(item: str, count: int = 1) -> dict[str, int] | None
 
     # Scale by number of crafts
     return {k: v * crafts_needed for k, v in ingredient_counts.items()}
+
+
+def format_required_ingredients(required: dict[str, int]) -> str:
+    """Render required ingredients for error messages, hiding the any_* sentinels.
+
+    Mirrors Recipes.formatRequiredIngredients in the native mod: an `any_planks`
+    requirement surfaces as "planks (any variant)" rather than the misleading
+    literal, and tag alternatives (coal/charcoal) are spelled out.
+    """
+    if not required:
+        return "nothing"
+    parts: list[str] = []
+    for name, count in required.items():
+        suffix = VARIANT_SUFFIXES.get(name)
+        alts = INGREDIENT_ALTERNATIVES.get(name)
+        if suffix is not None:
+            parts.append(f"{count}x {suffix.lstrip('_')} (any variant)")
+        elif alts:
+            parts.append(f"{count}x {name} (or {' or '.join(sorted(alts))})")
+        else:
+            parts.append(f"{count}x {name}")
+    return ", ".join(parts)
 
 
 # ---------------------------------------------------------------------------
