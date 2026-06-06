@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Coroutine
+
+logger = logging.getLogger("agent.action_queue")
+
+# interrupt() runs on the reflex/death preempt path, which has NO outer
+# timeout. Every await it makes must be hard-bounded or a wedged bridge /
+# un-cancellable in-flight request can hang the whole agent (the +780s
+# deadlock in state/sessions/20260603-174507-8c32e18c.jsonl). On timeout we
+# ABANDON the offending awaitable rather than waiting on it: asyncio.wait()
+# (unlike wait_for) returns after the deadline without itself awaiting the
+# cancellation, so a task that ignores cancellation can't re-wedge us.
+_PRE_INTERRUPT_TIMEOUT_S = 8.0  # > 2x bridge _HALT_TIMEOUT_S (stop + attack_stop)
+_WORKER_CANCEL_TIMEOUT_S = 5.0
 
 
 class ActionStatus(Enum):
@@ -52,6 +65,10 @@ class ActionQueue:
         self._drain_event: asyncio.Event = asyncio.Event()
         self._drain_event.set()  # starts drained (empty)
         self._pre_interrupt: Callable[[], Coroutine[Any, Any, None]] | None = None
+        # Strong refs to awaitables we gave up waiting on in interrupt() so
+        # they aren't GC'd mid-unwind (which would log "Task was destroyed but
+        # it is pending"). Each self-removes via a done callback.
+        self._abandoned: set[asyncio.Task] = set()
 
     def set_executor(self, executor: Executor) -> None:
         self._executor = executor
@@ -175,21 +192,51 @@ class ActionQueue:
         return count
 
     async def interrupt(self) -> None:
-        """Cancel running action + clear all pending."""
+        """Cancel running action + clear all pending.
+
+        Every await here is hard-bounded (see module constants): this runs on
+        the reflex/death preempt path with no outer timeout, so a wedged
+        bridge stop-call or an in-flight request whose cancellation won't
+        unwind must not be able to hang the whole agent.
+        """
         if self._pre_interrupt is not None:
-            try:
-                await self._pre_interrupt()
-            except Exception:
-                pass
+            hook = asyncio.ensure_future(self._pre_interrupt())
+            _done, pending = await asyncio.wait(
+                {hook}, timeout=_PRE_INTERRUPT_TIMEOUT_S
+            )
+            if pending:
+                # Stop-calls couldn't be serviced in time; abandon and proceed.
+                hook.cancel()
+                self._abandon(hook)
+                logger.warning(
+                    "pre_interrupt hook exceeded %ss; abandoning it",
+                    _PRE_INTERRUPT_TIMEOUT_S,
+                )
         await self.clear()
         if self._worker_task:
-            self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                pass
+            worker = self._worker_task
+            worker.cancel()
+            # asyncio.wait (NOT wait_for) so a worker that ignores cancellation
+            # — e.g. an httpx request mid-flight that won't abort — returns us
+            # control after the deadline instead of re-wedging on the cancel.
+            _done, pending = await asyncio.wait(
+                {worker}, timeout=_WORKER_CANCEL_TIMEOUT_S
+            )
+            if pending:
+                logger.error(
+                    "action worker did not cancel within %ss; abandoning it "
+                    "and starting a fresh worker",
+                    _WORKER_CANCEL_TIMEOUT_S,
+                )
+                self._abandon(worker)
             self._worker_task = asyncio.create_task(self._worker())
             self._drain_event.set()
+
+    def _abandon(self, task: asyncio.Task) -> None:
+        """Hold a strong ref to a cancelled-but-not-yet-finished task so it
+        can unwind without being GC'd, then self-remove when it completes."""
+        self._abandoned.add(task)
+        task.add_done_callback(self._abandoned.discard)
 
     async def drain(self) -> None:
         """Wait for all pending and running actions to complete."""

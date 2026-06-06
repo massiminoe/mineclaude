@@ -100,6 +100,16 @@ class BridgeClient(Protocol):
     async def close(self) -> None: ...
 
 
+# Halt endpoints (`/stop`, `/attack/stop`) are fire-and-forget: they flip a
+# flag / interrupt a thread bridge-side and return immediately. They run on
+# the preempt path (reflex/death), which has no other timeout — so they get a
+# short dedicated deadline instead of the 90s client default. If the bridge is
+# wedged we'd rather raise fast and let the caller proceed than block the whole
+# agent waiting on a stop that can't be serviced. See the +780s deadlock in
+# state/sessions/20260603-174507-8c32e18c.jsonl.
+_HALT_TIMEOUT_S = 3.0
+
+
 class RealBridgeClient:
     """HTTP/WS client for the native Fabric mod bridge.
 
@@ -165,7 +175,7 @@ class RealBridgeClient:
         return self._parse(await self._http.post("/explore"))
 
     async def stop(self) -> BridgeResponse:
-        return self._parse(await self._http.post("/stop"))
+        return self._parse(await self._http.post("/stop", timeout=_HALT_TIMEOUT_S))
 
     async def place(self, block: str, x: int, z: int, y: int | None = None) -> BridgeResponse:
         body: dict[str, Any] = {"block": block, "x": x, "z": z}
@@ -183,7 +193,7 @@ class RealBridgeClient:
         return self._parse(await self._http.post("/attack", json={"entity_id": entity_id}))
 
     async def attack_stop(self) -> BridgeResponse:
-        return self._parse(await self._http.post("/attack/stop"))
+        return self._parse(await self._http.post("/attack/stop", timeout=_HALT_TIMEOUT_S))
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
         return self._parse(await self._http.post("/craft", json={"item": item, "count": count}))

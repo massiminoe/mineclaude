@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from agent import action_queue
 from agent.action_queue import ActionQueue, ActionStatus
 
 
@@ -122,6 +123,70 @@ async def test_interrupt(queue):
     # Both should be in recent as cancelled
     cancelled = [r for r in status["recent"] if r["status"] == "cancelled"]
     assert len(cancelled) == 2
+
+
+@pytest.mark.asyncio
+async def test_interrupt_abandons_uncancellable_worker(monkeypatch):
+    """A running action whose cancellation won't unwind (e.g. an httpx request
+    mid-flight) must not hang interrupt() — it gets abandoned and a fresh
+    worker takes over. Regression for the +780s preempt-path deadlock."""
+    monkeypatch.setattr(action_queue, "_WORKER_CANCEL_TIMEOUT_S", 0.2)
+    release = asyncio.Event()
+
+    async def stubborn(code: str) -> str:
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            # Simulate an await that ignores cancellation until much later.
+            await release.wait()
+        return code
+
+    q = ActionQueue(timeout=30.0)
+    q.set_executor(stubborn)
+    q.start()
+    await q.enqueue("running")
+    await asyncio.sleep(0.05)  # let the worker pick it up
+
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    await asyncio.wait_for(q.interrupt(), timeout=2.0)  # must NOT hang on 60s
+    assert loop.time() - t0 < 1.5  # bounded by _WORKER_CANCEL_TIMEOUT_S
+
+    # The fresh worker is functional after abandoning the stuck one.
+    q.set_executor(simple_executor)
+    await q.enqueue("after")
+    await asyncio.wait_for(q.drain(), timeout=2.0)
+    assert any(r["status"] == "completed" for r in q.status()["recent"])
+
+    release.set()  # let the abandoned task unwind cleanly
+    await asyncio.sleep(0.05)
+    await q.stop()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_bounds_hanging_pre_interrupt(monkeypatch):
+    """A pre_interrupt hook (bridge stop-calls) that never returns must not
+    hang interrupt() — it's abandoned after the deadline."""
+    monkeypatch.setattr(action_queue, "_PRE_INTERRUPT_TIMEOUT_S", 0.2)
+    q = ActionQueue(timeout=30.0)
+    q.set_executor(simple_executor)
+    q.start()
+
+    started = asyncio.Event()
+
+    async def hang() -> None:
+        started.set()
+        await asyncio.sleep(60)
+
+    q.set_pre_interrupt(hang)
+
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    await asyncio.wait_for(q.interrupt(), timeout=2.0)
+    assert started.is_set()
+    assert loop.time() - t0 < 1.5  # bounded by _PRE_INTERRUPT_TIMEOUT_S
+
+    await q.stop()
 
 
 @pytest.mark.asyncio
