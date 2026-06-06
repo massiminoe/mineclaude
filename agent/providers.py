@@ -19,6 +19,19 @@ import os
 from dataclasses import dataclass, replace
 
 
+# OpenRouter's documented effort_ratio: it sizes a reasoning budget as
+# ratio × max_tokens for an effort level. We invert it — given an effort, send a
+# budget of ratio × max_tokens so OpenRouter buckets it back to that effort on
+# effort-only models (GPT-5/o-series). Keys are the valid `reasoning_effort`s.
+EFFORT_RATIOS: dict[str, float] = {
+    "xhigh": 0.95,
+    "high": 0.8,
+    "medium": 0.5,
+    "low": 0.2,
+    "minimal": 0.1,
+}
+
+
 @dataclass(frozen=True)
 class LLMProvider:
     name: str
@@ -36,6 +49,13 @@ class LLMProvider:
     # Extended thinking. thinking_budget_tokens drives "how much" when enabled.
     supports_thinking: bool = False
     thinking_budget_tokens: int = 0
+    # Effort-based reasoning (OpenAI GPT-5 / o-series via OpenRouter). When set
+    # (e.g. "medium"), the client expresses it as an Anthropic thinking budget of
+    # EFFORT_RATIOS[effort] × max_tokens — OpenRouter's /v1/messages skin DROPS a
+    # top-level reasoning:{effort} field but accepts the thinking block and
+    # buckets the budget back to an effort level for effort-only models. Takes
+    # precedence over thinking_budget_tokens. Valid keys: see EFFORT_RATIOS.
+    reasoning_effort: str | None = None
     # Sampling. Anthropic forbids `temperature` when thinking is on, so the
     # client only applies this when thinking is off.
     default_temperature: float | None = None
@@ -90,6 +110,25 @@ _PROVIDERS: dict[str, LLMProvider] = {
         thinking_budget_tokens=1024,    # "small thinking"
         default_temperature=0.3,        # only used if thinking is disabled
     ),
+    "gpt5mini": LLMProvider(
+        name="gpt5mini",
+        label="GPT-5.4 Mini (OpenRouter, medium reasoning)",
+        model="openai/gpt-5.4-mini",
+        # Its OWN override env, NOT OPENROUTER_MODEL — that one belongs to the
+        # gemini `openrouter` entry, and sharing it would clobber this model to
+        # gemini whenever OPENROUTER_MODEL is set in the env.
+        model_env="GPT5MINI_MODEL",
+        api_key_env="OPENROUTER_API_KEY",
+        # Same OpenRouter Anthropic skin as the `openrouter` entry — only the
+        # model + reasoning control differ. No /v1 suffix; the SDK appends it.
+        base_url="https://openrouter.ai/api",
+        supports_prompt_caching=False,  # rely on OpenRouter/OpenAI implicit caching
+        supports_vision=True,           # GPT-5.4 Mini takes image input
+        supports_thinking=True,         # a reasoning model — but driven by effort, below
+        thinking_budget_tokens=0,       # not a budget model; reasoning_effort drives it
+        reasoning_effort="medium",      # OpenRouter unified reasoning effort
+        default_temperature=None,       # reasoning models ignore temperature
+    ),
 }
 
 DEFAULT_PROVIDER = "anthropic"
@@ -115,4 +154,12 @@ def resolve_provider(name: str | None) -> LLMProvider:
         override = os.environ.get(provider.model_env)
         if override:
             provider = replace(provider, model=override)
+    # REASONING_EFFORT tunes effort-based providers (gpt5mini) without a code
+    # edit — handy for trying low/high. Scoped to providers that already route
+    # effort, so it can't accidentally flip on reasoning for a budget/no-think
+    # provider.
+    if provider.reasoning_effort:
+        effort_override = os.environ.get("REASONING_EFFORT")
+        if effort_override:
+            provider = replace(provider, reasoning_effort=effort_override.strip())
     return provider

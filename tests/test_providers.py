@@ -47,6 +47,31 @@ def test_openrouter_gemini_provider_shape():
     assert p.default_temperature == 0.3
 
 
+def test_gpt5mini_provider_shape():
+    p = resolve_provider("gpt5mini")
+    assert p.model == "openai/gpt-5.4-mini"
+    assert p.api_key_env == "OPENROUTER_API_KEY"
+    # Shares the OpenRouter Anthropic skin with the gemini `openrouter` entry.
+    assert p.base_url == "https://openrouter.ai/api"
+    assert p.supports_prompt_caching is False
+    assert p.supports_vision is True
+    # Reasoning is effort-driven, not a token budget.
+    assert p.reasoning_effort == "medium"
+    assert p.thinking_budget_tokens == 0
+    assert p.default_temperature is None
+
+
+def test_gpt5mini_model_env_isolated_from_gemini(monkeypatch):
+    # OPENROUTER_MODEL belongs to the gemini `openrouter` entry; it must NOT
+    # clobber gpt5mini (both route through OpenRouter but are distinct models).
+    monkeypatch.setenv("OPENROUTER_MODEL", "google/gemini-3.5-flash")
+    assert resolve_provider("gpt5mini").model == "openai/gpt-5.4-mini"
+    # gpt5mini has its own override knob.
+    monkeypatch.setenv("GPT5MINI_MODEL", "openai/gpt-5.4")
+    assert resolve_provider("gpt5mini").model == "openai/gpt-5.4"
+    assert resolve_provider("openrouter").model == "google/gemini-3.5-flash"
+
+
 def test_unknown_provider_raises():
     with pytest.raises(ValueError, match="Unknown LLM_PROVIDER"):
         resolve_provider("does-not-exist")
@@ -99,6 +124,44 @@ def test_openrouter_client_request_shaping():
     assert any(t["name"] == "screenshot" for t in c.tools())
     # Routed at OpenRouter's Anthropic skin (SDK normalizes a trailing slash).
     assert str(c._client.base_url).rstrip("/") == "https://openrouter.ai/api"
+
+
+def test_gpt5mini_client_request_shaping():
+    c = _client(resolve_provider("gpt5mini"))
+    # OpenRouter implicit caching -> no cache_control marker.
+    assert "cache_control" not in c._system_blocks("hi")[0]
+    # Effort "medium" -> Anthropic thinking budget of 0.5 * max_tokens (OpenRouter
+    # buckets it to medium effort). NOT a top-level reasoning field (the skin
+    # drops that), and no temperature.
+    sk = c._sampling_kwargs(4096)
+    assert sk == {"thinking": {"type": "enabled", "budget_tokens": 2048}}
+    assert "extra_body" not in sk and "temperature" not in sk
+    # Compaction skips reasoning; with no default_temperature, nothing is sent.
+    assert c._sampling_kwargs(2048, allow_thinking=False) == {}
+    # GPT-5.4 Mini is multimodal -> screenshot tool retained.
+    assert any(t["name"] == "screenshot" for t in c.tools())
+
+
+def test_reasoning_effort_scales_with_max_tokens_and_ratio():
+    # Budget tracks the documented effort_ratio against the call's max_tokens.
+    from dataclasses import replace
+
+    from agent.providers import EFFORT_RATIOS
+
+    c = _client(resolve_provider("gpt5mini"))
+    assert c._sampling_kwargs(1000)["thinking"]["budget_tokens"] == 500  # 0.5 * 1000
+    # "high" ratio is 0.8; budget still kept under max_tokens-256.
+    hi = _client(replace(resolve_provider("gpt5mini"), reasoning_effort="high"))
+    assert hi._sampling_kwargs(4096)["thinking"]["budget_tokens"] == round(0.8 * 4096)
+    assert EFFORT_RATIOS["medium"] == 0.5
+
+
+def test_reasoning_effort_env_override(monkeypatch):
+    monkeypatch.setenv("REASONING_EFFORT", "high")
+    # Tunes the effort-routing provider.
+    assert resolve_provider("gpt5mini").reasoning_effort == "high"
+    # Scoped: a no-reasoning provider stays put (can't be flipped on).
+    assert resolve_provider("anthropic").reasoning_effort is None
 
 
 def test_text_only_provider_drops_screenshot():

@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable
 import anthropic
 
 from agent.pricing import usage_to_dict
-from agent.providers import LLMProvider, resolve_provider
+from agent.providers import EFFORT_RATIOS, LLMProvider, resolve_provider
 
 UsageCallback = Callable[[str, dict[str, int]], Awaitable[None]]
 
@@ -179,9 +179,22 @@ class ClaudeClient:
         calls (compaction) where a reasoning budget would just eat output room.
         """
         p = self.provider
-        if allow_thinking and p.supports_thinking and p.thinking_budget_tokens > 0:
+        budget = 0
+        if allow_thinking and p.reasoning_effort:
+            # Effort-based reasoning (GPT-5 / o-series via OpenRouter). OpenRouter's
+            # /v1/messages skin DROPS a top-level reasoning:{effort} field (verified:
+            # minimal vs high produced identical output, 0 thinking tokens), but it
+            # DOES accept the Anthropic thinking block and translates a token budget
+            # into an effort level for effort-only models. A budget ≈ ratio×max_tokens
+            # lands in the matching bucket (OpenRouter's documented effort_ratio:
+            # medium=0.5, high=0.8, …). So we express effort as a budget here.
+            ratio = EFFORT_RATIOS.get(p.reasoning_effort, EFFORT_RATIOS["medium"])
+            budget = round(ratio * max_tokens)
+        elif allow_thinking and p.supports_thinking and p.thinking_budget_tokens > 0:
+            budget = p.thinking_budget_tokens
+        if budget > 0:
             # max_tokens must exceed the thinking budget; keep some output room.
-            budget = min(p.thinking_budget_tokens, max(1, max_tokens - 256))
+            budget = min(budget, max(1, max_tokens - 256))
             return {"thinking": {"type": "enabled", "budget_tokens": budget}}
         if p.default_temperature is not None:
             return {"temperature": p.default_temperature}
