@@ -246,6 +246,12 @@ class ActionQueue:
         """Return True while the queue is executing an action."""
         return self._running_action is not None
 
+    def running_action(self) -> Action | None:
+        """The action currently executing, or None. The same object the worker
+        mutates, so a caller can hold the reference across interrupt() and read
+        its final status once cancellation has settled."""
+        return self._running_action
+
     def status(self) -> dict[str, Any]:
         pending = []
         # Snapshot pending queue without consuming

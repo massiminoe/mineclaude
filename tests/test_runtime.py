@@ -239,6 +239,22 @@ async def test_get_state_no_flush_peeks_without_draining():
     assert len(rt._events) == 1
 
 
+async def test_get_state_caps_returned_events_and_flags_truncation():
+    from mineclaude.runtime import MAX_RETURNED_EVENTS
+
+    rt = _runtime()
+    n = MAX_RETURNED_EVENTS + 30
+    for i in range(n):
+        rt._record_event("block_broken", {"i": i})
+    state = await rt.get_state(flush=False)
+    # Returned list is capped to the newest MAX_RETURNED_EVENTS, truncation flagged.
+    assert len(state.events) == MAX_RETURNED_EVENTS
+    assert state.events_truncated is True
+    # Kept the most recent ones (highest i), dropped the oldest.
+    kept = [e["data"]["i"] for e in state.events]
+    assert kept == list(range(n - MAX_RETURNED_EVENTS, n))
+
+
 async def test_get_state_running_action_view():
     rt = _runtime()
     rt.start()
@@ -348,6 +364,46 @@ async def test_wait_for_event_any_type_when_none():
     rt._record_event("respawn", {})
     ev = await waiter
     assert ev.type == "respawn"
+
+
+# --- action_done events (companion to the status="running" handle) ---------
+
+
+async def test_backgrounded_action_emits_action_done_on_completion():
+    # A long action handed back as a running handle fires action_done when it
+    # finishes, so a wait_for_event(["action_done"]) consumer unblocks.
+    rt = _runtime()
+    rt.start()
+    res = await rt.execute("await sleep(0.2)\nreturn 'deep'", timeout=30, wait=0.05)
+    assert res.status == "running"
+    waiter = asyncio.create_task(rt.wait_for_event(["action_done"], timeout=2.0))
+    ev = await waiter
+    assert ev.type == "action_done"
+    assert ev.data["action_id"] == res.action_id
+    assert ev.data["status"] == "completed"
+    assert ev.data["result"] == "deep"
+
+
+async def test_blocking_action_emits_no_action_done():
+    # A normal inline execute already returned its result — no buffer noise.
+    rt = _runtime()
+    rt.start()
+    await rt.execute("return 'fast'")
+    state = await rt.get_state()
+    assert [e for e in state.events if e["type"] == "action_done"] == []
+
+
+async def test_interrupted_backgrounded_action_emits_action_done():
+    rt = _runtime()
+    rt.start()
+    res = await rt.execute("await sleep(5)\nreturn 'never'", timeout=30, wait=0.05)
+    assert res.status == "running"
+    await rt.interrupt()
+    state = await rt.get_state()
+    done = [e for e in state.events if e["type"] == "action_done"]
+    assert len(done) == 1
+    assert done[0]["data"]["status"] == "cancelled"
+    assert done[0]["data"]["action_id"] == res.action_id
 
 
 # --- handlers --------------------------------------------------------------

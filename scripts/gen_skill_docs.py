@@ -108,6 +108,11 @@ def gen_events() -> str:
         "chat": "a player said something — recorded only",
         "death": "the bot died — preempts the action slot, then recorded",
         "respawn": "recorded only",
+        "action_done": (
+            "a backgrounded action (execute() returned status='running') ended — "
+            "carries `{action_id, status, result, error, duration_s}`; "
+            "wait_for_event(['action_done']) to await it instead of polling"
+        ),
     }
     for et, preempts in _DEFAULT_EVENT_POLICY.items():
         out.append(f"| `{et}` | {preempts} | {other_notes.get(et, '')} |")

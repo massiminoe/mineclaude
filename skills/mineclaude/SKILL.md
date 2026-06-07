@@ -25,10 +25,11 @@ short trips, frequent check-ins. The journey is part of it.
    comes back `busy`. If an action runs longer than the inline-wait budget
    (`wait`, default ~50s), `execute` returns `status:"running"` with an
    `action_id` *while the action keeps going in the background* — it still holds
-   the slot. Don't treat that as an error: poll `get_state()` (its
-   `action.result` fills in when the action completes) or `interrupt()` to
-   abort. Pass a larger `wait` for an action you expect to be long but want to
-   block on; pass `wait=0` to fire-and-watch.
+   the slot. Don't treat that as an error: `wait_for_event(["action_done"])` to
+   block until it finishes (the event carries `{action_id, status, result,
+   error}`), or poll `get_state()` (its `action.result` fills in on
+   completion), or `interrupt()` to abort. Pass a larger `wait` for an action
+   you expect to be long but want to block on; pass `wait=0` to fire-and-watch.
 3. **React** — between actions, `wait_for_event(...)` or poll `get_state` for
    chat, death, and world events. Install standing reactions with `set_handler`.
 

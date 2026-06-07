@@ -39,6 +39,14 @@ logger = logging.getLogger(__name__)
 # masquerade as a quiet world.
 EVENT_BUFFER_MAXLEN = 200
 
+# Hard cap on how many events a single get_state() returns. Our own flushable
+# buffer is already bounded by EVENT_BUFFER_MAXLEN, but get_state(flush=True)
+# *merges in* the mod's world-mutation log from the bridge, which is unbounded
+# — a long busy span produced 500+ events and blew past the MCP tool's token
+# limit. We keep the most recent MAX_RETURNED_EVENTS (newest are most useful)
+# and flag events_truncated so a silent drop can't masquerade as a quiet world.
+MAX_RETURNED_EVENTS = 100
+
 # Grace added to the inline-wait when the action's hard `timeout` is the
 # binding constraint (timeout <= inline budget): wait this much past the cap so
 # execute() observes the action's own timeout-kill and reports the true
@@ -70,6 +78,10 @@ _DEFAULT_EVENT_POLICY = {
     "death": True,
     "chat": False,
     "respawn": False,
+    # Synthesized when a backgrounded action (one execute() handed back as a
+    # status="running" handle) terminates. Never preempts — it's a completion
+    # signal for wait_for_event(["action_done"]).
+    "action_done": False,
 }
 
 
@@ -167,6 +179,13 @@ class Runtime:
         # client waits longer. A per-call `wait` arg to execute() overrides it.
         self._inline_wait_s = _env_float("MINECLAUDE_EXECUTE_WAIT_S", 50.0)
 
+        # Id of the action execute() handed back as a status="running" handle
+        # (if any). Only such backgrounded actions emit an `action_done` event
+        # on termination — a normal blocking execute already returned its
+        # result inline, so emitting would just be buffer noise. Single-flight
+        # means at most one is outstanding. Cleared when it terminates.
+        self._backgrounded_action_id: str | None = None
+
         self.queue = ActionQueue()
         self.primitives = make_primitives(bridge, on_subaction=self._on_subaction)
         self.reflexes = ReflexRegistry(self)
@@ -217,6 +236,9 @@ class Runtime:
                 await hook()
             except Exception:
                 logger.exception("preempt hook failed")
+        # Hold the running action ref across interrupt() so we can report its
+        # outcome — the worker mutates this same object to CANCELLED.
+        interrupted = self.queue.running_action()
         try:
             await self.queue.interrupt()
         except Exception:
@@ -225,6 +247,17 @@ class Runtime:
         # re-raises CancelledError past that emit), so release the slot here —
         # otherwise an interrupted "running" action would wedge it busy.
         self._executing = False
+        # If the cancelled action was backgrounded, emit action_done so a
+        # wait_for_event(["action_done"]) waiter unblocks. Guard on the settled
+        # status: if it actually finished naturally in the race window, the
+        # completion hook already emitted — don't double-fire a bogus "cancelled".
+        if (
+            interrupted is not None
+            and interrupted.id == self._backgrounded_action_id
+            and self._action_to_result(interrupted).status == "cancelled"
+        ):
+            self._backgrounded_action_id = None
+            self._record_action_done(interrupted)
 
     async def interrupt(self) -> None:
         """Public name for preempt() — the out-of-band 'stop everything' verb."""
@@ -278,6 +311,13 @@ class Runtime:
         # have already handed back a status="running" handle). The cancelled
         # path (interrupt) skips this emit, so preempt() clears the slot too.
         self._executing = False
+        # If this was the backgrounded action (execute() handed back a "running"
+        # handle for it), surface its terminal-ness as an event so a caller can
+        # wait_for_event(["action_done"]) instead of polling. The cancelled path
+        # skips this emit (worker re-raises past it) — preempt() handles that.
+        if action.id == self._backgrounded_action_id:
+            self._backgrounded_action_id = None
+            self._record_action_done(action)
         elapsed = (action.finished_at - action.started_at) if action.started_at and action.finished_at else 0
         if action.status.value == "completed":
             logger.info(f"Action {action.id} COMPLETED ({elapsed:.1f}s): {action.result or 'no output'}")
@@ -363,6 +403,9 @@ class Runtime:
             # Outlived the inline budget. Leave it running (slot stays held);
             # hand back a handle the caller can poll / interrupt.
             elapsed = time.time() - (action.started_at or action.enqueued_at)
+            # Mark it backgrounded so its terminal `action_done` event fires for
+            # a wait_for_event(["action_done"]) consumer to pick up.
+            self._backgrounded_action_id = action.id
             self.slog(
                 "execute_running",
                 action_id=action.id,
@@ -429,6 +472,11 @@ class Runtime:
         else:
             events = [{"type": e.type, "data": e.data, "ts": e.ts} for e in self._events]
             truncated = self._events_truncated
+        # Bound the returned list (the merged mod log is unbounded) — keep the
+        # newest, flag the drop so it can't pass as a quiet world.
+        if len(events) > MAX_RETURNED_EVENTS:
+            events = events[-MAX_RETURNED_EVENTS:]
+            truncated = True
         return build_game_state(
             status,
             self.queue.status(),
@@ -548,6 +596,24 @@ class Runtime:
         self._events.append(ev)
         self._resolve_waiters(ev)
         return ev
+
+    def _record_action_done(self, action: Action) -> Event:
+        """Emit an `action_done` event for a terminated action. Status is
+        normalized via _action_to_result so it matches what execute() returns
+        (completed / failed / cancelled / timeout), and the payload carries the
+        result/error so a wait_for_event(["action_done"]) consumer gets the
+        outcome without a follow-up get_state."""
+        res = self._action_to_result(action)
+        return self._record_event(
+            "action_done",
+            {
+                "action_id": res.action_id,
+                "status": res.status,
+                "result": res.result,
+                "error": res.error,
+                "duration_s": round(res.duration_s, 3),
+            },
+        )
 
     def _resolve_waiters(self, ev: Event) -> None:
         if not self._event_waiters:
