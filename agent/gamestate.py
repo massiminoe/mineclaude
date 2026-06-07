@@ -1,9 +1,7 @@
 """Build the structured GameState snapshot returned by Runtime.get_state().
 
-This is the structured sibling of prompt.format_game_state: that one renders a
-string for the Claude loop; this one shapes the same bridge `/status` + queue +
-reflex inputs into the typed `models.GameState` the MCP surface returns. The
-string formatter stays in prompt.py until the brain is deleted (P5).
+Shapes a bridge `/status` payload + queue snapshot + recent-reflex buffer into
+the typed `models.GameState` the MCP `get_state` surface returns.
 
 Pure shaping — no I/O, no event draining. The Runtime owns the event buffer and
 hands the already-assembled `events` list in; here we only fold the bridge

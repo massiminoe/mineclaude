@@ -16,8 +16,9 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 
 ## Project Structure
 
-- `agent/` — Python package. Body/runtime: `bridge`, `sandbox`, `primitives`, `action_queue`, `reflexes`, `runtime` (headless Runtime + Controller seam), `gamestate` (structured snapshot), `models` (typed return shapes), `mcp_server` (FastMCP, 7 tools), `monitor`, `main`. Brain (being removed — MCP is the target interface): `agent`, `claude`, `prompt`, `compaction`, `providers`, `pricing`, `memory`, `plan`
-- `frontend/` — React + TypeScript + Vite monitor UI
+- `agent/` — Python package: `bridge`, `sandbox`, `primitives`, `action_queue`, `reflexes`, `runtime` (headless Runtime + Controller seam), `gamestate` (structured snapshot), `models` (typed return shapes), `mcp_server` (FastMCP, 7 tools), `monitor`, `session_log`, `main` (MCP launcher). The brain (Claude loop + LLM providers) was deleted — MCP is the only interface.
+- `skills/mineclaude/` — the Claude Code skill: how to drive the bot. `SKILL.md` + hand-written `mental-model`/`snippets`/`handlers` + generated `primitives`/`events`/`tools` (run `scripts/gen_skill_docs.py` to regenerate the latter from code)
+- `frontend/` — React + TypeScript + Vite monitor UI (still has brain panels; pending removal)
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
 - `mc-client/` — Dockerfile + entrypoint for the headless MC client container that runs the bridge mod
 - `mc-mod/` — Kotlin Fabric mod (`mineclaude-bridge`). Owns every bridge endpoint the agent + frontend hit. Built in stage 1 of `mc-client/Dockerfile`. HTTP on 8081 (JDK HttpServer), events WS on 8082 (Java-WebSocket). The Phase 0–8 migration history lives in `docs/superpowers/specs/2026-04-*-native-mod-*`
@@ -85,7 +86,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 - Rendering via Xvfb virtual framebuffer + Mesa llvmpipe (software OpenGL 4.5)
 - `hmc.check.xvfb=true` in config.properties, `LIBGL_ALWAYS_SOFTWARE=1` env var
 - `NativeImage.writeTo()` produces 0-byte PNGs on the Mesa llvmpipe software stack (amd64-under-emulation on Apple Silicon, since the `3arthqu4ke/headlessmc` base image is amd64-only) — vision endpoints capture via ffmpeg x11grab from `:99` instead
-- Vision: Claude `screenshot` tool sends game view as base64 JPEG in tool_result image block
+- Vision: the `screenshot` MCP tool returns the game view as an image block (base64 JPEG)
 
 ## Bridge mod (mc-mod) gotchas
 
@@ -100,7 +101,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 
 ## Debugging
 
-- `state/sessions/<ts>-<id>.jsonl` — agent-side replay log. Every turn, every Claude iteration, every tool call with timing. Emitted by `agent/session_log.py`. Render as a timeline: `python scripts/session_report.py --latest`
+- `state/sessions/<ts>-<id>.jsonl` — `SessionLogger` replay log (`agent/session_log.py`), rendered by `python scripts/session_report.py --latest`. NOTE: MCP-mode runs don't write one yet — the launcher constructs `Runtime(bridge)` with no `slog` hook, so for now debug MCP runs from `docker compose logs mc-client` (authoritative mutation log) + the `state/video/*.mp4` recording. Wiring a `SessionLogger` into the launcher (`slog=`) is a pending follow-up.
 - Bridge-side logs go through SLF4J to MC's standard log — `docker compose logs mc-client` for the live stream, or filter for `mineclaude-bridge` loggers. The legacy mutation-log JSONL is gone with Phase 8; if you need before/after world snapshots, the agent's session log captures pre/post `/status` around each tool call
 
 For hands-on primitive debugging, run `NO_CLAUDE=1 mineclaude` and use the **Console** panel in the monitor frontend. You type the same code Claude would put in `newAction` (e.g. `await goToPosition(0, 64, 0)`), it enqueues on the same action queue, and the resulting trace renders in the Action Queue panel with full subaction breakdown. Useful for reproducing "Claude did X and something weird happened" without Claude in the loop.

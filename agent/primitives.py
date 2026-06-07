@@ -86,12 +86,15 @@ def make_primitives(
         return _check(await bridge.goto(x, z, y))
 
     async def goToPlayer(player: str, distance: int = 3) -> str:
+        """Walk to within `distance` blocks of a named player."""
         return _check(await bridge.follow(player, distance))
 
     async def followPlayer(player: str, distance: int = 3) -> str:
+        """Continuously follow a named player (fire-and-forget; call stop() to end)."""
         return _check(await bridge.follow(player, distance))
 
     async def stop() -> str:
+        """Halt all movement — cancels Baritone pathing / mining / following."""
         return _check(await bridge.stop())
 
     async def placeBlock(block_type: str, x: int, z: int, *, y: int | None = None) -> str:
@@ -145,15 +148,26 @@ def make_primitives(
         return resp.data
 
     async def breakBlockAt(x: int, y: int, z: int) -> str:
+        """Mine/break the block at (x, y, z). Self-navigates within reach
+        (Baritone, ~15s budget) — don't goToPosition first. Equip the right
+        tool beforehand or you mine bare-handed (slow, no drops on stone)."""
         return _check(await bridge.break_block(x, y, z))
 
     async def collectItems(radius: float = 6) -> str:
+        """Walk to and pick up dropped item entities within `radius`. Call after
+        breaking blocks or killing mobs; bump radius to ~10 after a mining run."""
         return _check(await bridge.collect(radius))
 
     async def attack(entity_id: int | str) -> str:
+        """Fight the entity with this numeric id to the death — loops swings,
+        auto-paths into melee, ~30s cap. Get ids from getNearbyEntities /
+        findEntities. One call per kill, not per swing. Equip a sword first."""
         return _check(await bridge.attack(str(entity_id)))
 
     async def craft(item: str, count: int = 1) -> str:
+        """Craft `count` of the OUTPUT item (not iterations/inputs); returns the
+        amount actually produced — read it. 3x3 recipes auto-locate a nearby
+        crafting table; only place one if craft fails with 'no crafting table'."""
         return _check(await bridge.craft(item, count))
 
     async def furnaceLoad(
@@ -165,6 +179,9 @@ def make_primitives(
         y: int | None = None,
         z: int | None = None,
     ) -> str:
+        """Load a nearby furnace's input + fuel slots and start smelting. Returns
+        immediately — does NOT wait for the cook (compute fuel yourself: coal=8
+        items, planks/logs=1.5, round up). Auto-walks to the furnace."""
         return _check(await bridge.furnace_load(
             input_item, input_count, fuel_item, fuel_count, x, y, z,
         ))
@@ -174,6 +191,8 @@ def make_primitives(
         y: int | None = None,
         z: int | None = None,
     ) -> dict:
+        """Read furnace state without modifying it: {position, lit, input, fuel,
+        output}. Smelting takes ~10s/item; sleep the cook time, then poll."""
         resp = await bridge.furnace_inspect(x, y, z)
         if resp.status == "error":
             raise RuntimeError(resp.message)
@@ -184,6 +203,8 @@ def make_primitives(
         y: int | None = None,
         z: int | None = None,
     ) -> dict:
+        """Pull everything from the furnace (output, then leftover input + fuel):
+        {output, input_left, fuel_left}. Calling mid-cook aborts the cook."""
         resp = await bridge.furnace_extract(x, y, z)
         if resp.status == "error":
             raise RuntimeError(resp.message)
@@ -208,27 +229,38 @@ def make_primitives(
         return out
 
     async def chestStore(x: int, y: int, z: int, items: Any) -> dict:
+        """Deposit into the chest at (x, y, z). `items` is [(name, count|'all'), ...].
+        Coords required. Returns {stored, skipped} — partial success is the shape,
+        not an error. Auto-walks to the chest."""
         resp = await bridge.chest_store(x, y, z, _normalize_chest_items(items))
         if resp.status == "error":
             raise RuntimeError(resp.message)
         return resp.data
 
     async def chestTake(x: int, y: int, z: int, items: Any) -> dict:
+        """Withdraw from the chest at (x, y, z) into inventory. Same `items` shape
+        as chestStore; returns {taken, skipped}."""
         resp = await bridge.chest_take(x, y, z, _normalize_chest_items(items))
         if resp.status == "error":
             raise RuntimeError(resp.message)
         return resp.data
 
     async def chestInspect(x: int, y: int, z: int) -> dict:
+        """Read chest contents without modifying: {size, slots, totals}. Use
+        `totals` for 'do I have N of X here?'."""
         resp = await bridge.chest_inspect(x, y, z)
         if resp.status == "error":
             raise RuntimeError(resp.message)
         return resp.data
 
     async def equip(item: str, slot: str = "hand") -> str:
+        """Equip an item to hand (default) or an armor slot. Equip the right tool
+        BEFORE mining/fighting — placing/eating swaps your hand off the tool."""
         return _check(await bridge.equip(item, slot))
 
     async def discard(slot: int, count: int = 1) -> str:
+        """Drop `count` items from PI slot (0..8 hotbar, 9..35 main inventory).
+        Find the slot via getInventory(). Armor/offhand aren't discardable."""
         return _check(await bridge.discard(slot, count))
 
     async def useItem(item: str) -> str:
@@ -260,27 +292,36 @@ def make_primitives(
         return _check(await bridge.interact(x, y, z))
 
     async def getStats() -> dict:
+        """Return {health, hunger, position:{x,y,z}, biome, time}. Position is a
+        NESTED dict — use stats['position']['x']."""
         resp = await bridge.get_status()
         return resp.data
 
     async def getInventory() -> list[dict]:
+        """Return the inventory as a list of {name, count, slot}. Tools + armor
+        also carry durability:{remaining, max}."""
         resp = await bridge.get_status()
         return resp.data.get("inventory", [])
 
     async def getNearbyBlocks(range_: int = 16) -> list[dict]:
+        """Return blocks within `range_` as {name, x, y, z, distance}, nearest first."""
         resp = await bridge.get_nearby_blocks(range_)
         return resp.data.get("blocks", [])
 
     async def getNearbyEntities(range_: int = 32) -> list[dict]:
+        """Return entities within `range_` as {id, name, type, x, y, z, health, distance}.
+        Pass an entity's `id` to attack()."""
         resp = await bridge.get_nearby_entities(range_)
         return resp.data.get("entities", [])
 
     async def findBlocks(block_type: str, range_: int = 32, count: int = 10) -> list[dict]:
+        """Find up to `count` of one block type within `range_` (max 64), nearest first."""
         resp = await bridge.get_nearby_blocks(range_, block_types=[block_type])
         blocks = resp.data.get("blocks", [])
         return blocks[:count]
 
     async def findMultipleBlocks(block_types: list[str], range_: int = 32, count: int = 10) -> dict[str, list[dict]]:
+        """Find several block types in one scan (max range 64). Returns {type: [blocks]}."""
         resp = await bridge.get_nearby_blocks(range_, block_types=block_types)
         blocks = resp.data.get("blocks", [])
         result: dict[str, list[dict]] = {t: [] for t in block_types}
@@ -291,6 +332,7 @@ def make_primitives(
         return result
 
     async def findEntities(entity_type: str, range_: int = 32) -> list[dict]:
+        """Find entities matching a type/name within `range_`."""
         resp = await bridge.get_nearby_entities(range_)
         entities = resp.data.get("entities", [])
         return [e for e in entities if e["type"] == entity_type or e["name"] == entity_type]
@@ -312,9 +354,12 @@ def make_primitives(
             text = text[split_at:].lstrip()
 
     async def sleep(seconds: float) -> None:
+        """Wait `seconds` (async). Use to let a furnace cook or a mob settle."""
         await asyncio.sleep(seconds)
 
     def log(message: str) -> None:
+        """Append a message to the action's output log (also returned in the result).
+        `print(...)` works too. The only non-async primitive."""
         _log_buffer.append(str(message))
 
     primitives = {
