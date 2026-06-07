@@ -8,7 +8,7 @@ import inspect
 import uuid
 from typing import Any, Callable, Coroutine
 
-from agent.bridge import BridgeClient, BridgeResponse
+from mineclaude.bridge import BridgeClient, BridgeResponse
 
 # Shared log buffer, cleared before each sandbox execution
 _log_buffer: list[str] = []

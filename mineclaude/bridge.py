@@ -532,7 +532,7 @@ class MockBridgeClient:
         )
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
-        from agent.recipes import get_recipe, get_required_ingredients, resolve_ingredients
+        from mineclaude.recipes import get_recipe, get_required_ingredients, resolve_ingredients
 
         item = item.replace("minecraft:", "")
         recipe = get_recipe(item)
@@ -623,7 +623,7 @@ class MockBridgeClient:
         # Simulate smelting: produce output equal to min(input_count, fuel_count * fuel_value).
         # Mock fuel value is hardcoded to 1.5 for parity with planks/log; good enough
         # for tests that exercise the round-trip.
-        from agent.recipes import get_smelting_by_input
+        from mineclaude.recipes import get_smelting_by_input
         recipe = get_smelting_by_input(input_item)
         state = self._furnace_state(b)
         if recipe is not None:

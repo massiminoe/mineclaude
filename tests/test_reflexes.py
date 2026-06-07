@@ -15,10 +15,10 @@ from collections import deque
 
 import pytest
 
-from agent.action_queue import ActionQueue
-from agent.bridge import BridgeResponse
-from agent import reflexes
-from agent.reflexes import (
+from mineclaude.action_queue import ActionQueue
+from mineclaude.bridge import BridgeResponse
+from mineclaude import reflexes
+from mineclaude.reflexes import (
     REFLEX_EVENT_TYPES,
     WEAPON_PRIORITY,
     ReflexHandler,

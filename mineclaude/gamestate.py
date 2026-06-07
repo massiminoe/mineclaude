@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from agent.models import GameState
+from mineclaude.models import GameState
 
 # Armor + hand slots, in the order get_state surfaces them. A missing slot
 # reads as None so the shape is stable whether or not the bridge reports it.

@@ -20,7 +20,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
 
-from agent.runtime import Runtime
+from mineclaude.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 

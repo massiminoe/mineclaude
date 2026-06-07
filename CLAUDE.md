@@ -1,6 +1,6 @@
 # Mineclaude
 
-Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. Claude Code). The built-in Claude loop and all LLM-provider code were removed in the brain teardown — `agent/runtime.py` is the body, `agent/mcp_server.py` the interface.
+Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. Claude Code). The built-in Claude loop and all LLM-provider code were removed in the brain teardown — `mineclaude/runtime.py` is the body, `mineclaude/mcp_server.py` the interface.
 
 ## Commands
 
@@ -16,7 +16,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 
 ## Project Structure
 
-- `agent/` — Python package: `bridge`, `sandbox`, `primitives`, `action_queue`, `reflexes`, `runtime` (headless Runtime + Controller seam), `gamestate` (structured snapshot), `models` (typed return shapes), `mcp_server` (FastMCP, 7 tools), `monitor`, `session_log`, `main` (MCP launcher). The brain (Claude loop + LLM providers) was deleted — MCP is the only interface.
+- `mineclaude/` — Python package: `bridge`, `sandbox`, `primitives`, `action_queue`, `reflexes`, `runtime` (headless Runtime + Controller seam), `gamestate` (structured snapshot), `models` (typed return shapes), `mcp_server` (FastMCP, 7 tools), `monitor`, `session_log`, `main` (MCP launcher). The brain (Claude loop + LLM providers) was deleted — MCP is the only interface.
 - `skills/mineclaude/` — the Claude Code skill: how to drive the bot. `SKILL.md` + hand-written `mental-model`/`snippets`/`handlers` + generated `primitives`/`events`/`tools` (run `scripts/gen_skill_docs.py` to regenerate the latter from code)
 - `frontend/` — React + TypeScript + Vite monitor UI (still has brain panels; pending removal)
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
@@ -69,7 +69,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 - `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius
 - `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`). Optional aim: `?yaw=&pitch=` (degrees) **or** `?look_at_x=&look_at_y=&look_at_z=` (point eye at a world coord). New rotation persists. Aimed shots add ~200ms (render-settle window) before the grab
 - `GET /video/stream` — MJPEG video stream of game view
-- `POST /record/start`, `POST /record/stop`, `POST /record/roll`, `GET /record/status` — single-file gameplay recorder. One continuous `.mp4` (H.264) per run to `/recordings` (host `./state/video`), 5 fps / libx264 CRF 28, owned by the bridge mod's `RecordRoute`. Plays natively in QuickTime. Auto-starts on first in-world tick when `RECORD_VIDEO=1`. `/record/roll` finalizes the current file and opens a fresh one **without a container restart** — the "one video per run" trigger. It rotates an *active* recording only (no-op if not recording, so it self-gates on `RECORD_VIDEO` and never cold-starts; use `/record/start` to begin from idle); optional `{name}` labels the file (`play-<ts>-<name>.mp4`). The agent fires `record_roll()` on startup (`agent/main.py`) so each `mineclaude` launch gets its own video. Stop/roll/shutdown SIGTERM ffmpeg so the mp4 moov atom is written cleanly; an abrupt SIGKILL (hard crash) can leave the open file unplayable
+- `POST /record/start`, `POST /record/stop`, `POST /record/roll`, `GET /record/status` — single-file gameplay recorder. One continuous `.mp4` (H.264) per run to `/recordings` (host `./state/video`), 5 fps / libx264 CRF 28, owned by the bridge mod's `RecordRoute`. Plays natively in QuickTime. Auto-starts on first in-world tick when `RECORD_VIDEO=1`. `/record/roll` finalizes the current file and opens a fresh one **without a container restart** — the "one video per run" trigger. It rotates an *active* recording only (no-op if not recording, so it self-gates on `RECORD_VIDEO` and never cold-starts; use `/record/start` to begin from idle); optional `{name}` labels the file (`play-<ts>-<name>.mp4`). The agent fires `record_roll()` on startup (`mineclaude/main.py`) so each `mineclaude` launch gets its own video. Stop/roll/shutdown SIGTERM ffmpeg so the mp4 moov atom is written cleanly; an abrupt SIGKILL (hard crash) can leave the open file unplayable
 - `GET /health` — bridge liveness + ported endpoint list
 - `WS /events` — chat / death / respawn event stream
 
@@ -101,7 +101,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 
 ## Debugging
 
-- `state/sessions/<ts>-<id>.jsonl` — `SessionLogger` replay log (`agent/session_log.py`), rendered by `python scripts/session_report.py --latest`. NOTE: MCP-mode runs don't write one yet — the launcher constructs `Runtime(bridge)` with no `slog` hook, so for now debug MCP runs from `docker compose logs mc-client` (authoritative mutation log) + the `state/video/*.mp4` recording. Wiring a `SessionLogger` into the launcher (`slog=`) is a pending follow-up.
+- `state/sessions/<ts>-<id>.jsonl` — `SessionLogger` replay log (`mineclaude/session_log.py`), rendered by `python scripts/session_report.py --latest`. The launcher wires `Runtime(bridge, slog=SessionLogger(...).emit)`, so each `mineclaude` run writes one (set `SESSION_LOG=0` to opt out). The log carries the run timeline: `execute_start`/`execute_done` (the code + outcome), inbound `event`s (chat/death/respawn/hazards), `handler_set`, and per-step `subaction`s. Cross-reference with `docker compose logs mc-client` (authoritative mutation log) + the `state/video/*.mp4` recording for bridge-side detail.
 - Bridge-side logs go through SLF4J to MC's standard log — `docker compose logs mc-client` for the live stream, or filter for `mineclaude-bridge` loggers. The legacy mutation-log JSONL is gone with Phase 8; if you need before/after world snapshots, the agent's session log captures pre/post `/status` around each tool call
 
 For hands-on primitive debugging, run `NO_CLAUDE=1 mineclaude` and use the **Console** panel in the monitor frontend. You type the same code Claude would put in `newAction` (e.g. `await goToPosition(0, 64, 0)`), it enqueues on the same action queue, and the resulting trace renders in the Action Queue panel with full subaction breakdown. Useful for reproducing "Claude did X and something weird happened" without Claude in the loop.

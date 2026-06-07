@@ -7,7 +7,7 @@ import math
 import traceback
 from typing import Any
 
-from agent.primitives import _log_buffer
+from mineclaude.primitives import _log_buffer
 
 
 class SandboxError(Exception):

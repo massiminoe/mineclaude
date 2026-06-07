@@ -4,7 +4,7 @@ Owns the bridge handle, the primitive namespace, the single-flight executor +
 action queue, the reflex registry, the flushable event buffer, and a small
 event bus the monitor subscribes to. It also implements the `Controller` seam
 the reflex layer reaches its host through (`reflexes.py` depends on that
-protocol type-only, not on Runtime). `agent/mcp_server.py` exposes Runtime's
+protocol type-only, not on Runtime). `mineclaude/mcp_server.py` exposes Runtime's
 MCP-facing methods (execute / get_state / screenshot / handlers / wait_for_event)
 as tools.
 """
@@ -17,18 +17,18 @@ import time
 from collections import deque
 from typing import Any, Callable, Coroutine, Iterable, Protocol
 
-from agent.action_queue import Action, ActionQueue
-from agent.bridge import BridgeClient
-from agent.gamestate import build_game_state
-from agent.models import Event, ExecuteResult, GameState, HandlerInfo, Screenshot
-from agent.primitives import make_primitives
-from agent.reflexes import (
+from mineclaude.action_queue import Action, ActionQueue
+from mineclaude.bridge import BridgeClient
+from mineclaude.gamestate import build_game_state
+from mineclaude.models import Event, ExecuteResult, GameState, HandlerInfo, Screenshot
+from mineclaude.primitives import make_primitives
+from mineclaude.reflexes import (
     REFLEX_EVENT_TYPES,
     ReflexHandler,
     ReflexRegistry,
     register_default_handlers,
 )
-from agent.sandbox import _validate_ast, execute
+from mineclaude.sandbox import _validate_ast, execute
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ class Runtime:
     # MCP-facing surface
     #
     # The methods an MCP server (P4) maps tools onto. They return the typed
-    # holders in agent/models.py. `say()` is a primitive inside execute(), not
+    # holders in mineclaude/models.py. `say()` is a primitive inside execute(), not
     # here — talking is something action code does, not a top-level verb.
     # ======================================================================
 

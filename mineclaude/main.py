@@ -6,8 +6,8 @@ One process, one shared Runtime, three faces:
   * the bridge event subscription (Runtime owns it via run_events).
 
 MCP is the only way to drive the bot. The built-in Claude loop and every LLM
-provider integration were removed in the brain teardown — `agent/runtime.py`
-is the body, `agent/mcp_server.py` the interface.
+provider integration were removed in the brain teardown — `mineclaude/runtime.py`
+is the body, `mineclaude/mcp_server.py` the interface.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stderr,
     )
-    logger = logging.getLogger("agent")
+    logger = logging.getLogger("mineclaude")
 
     # Config from environment.
     mock_bridge = os.environ.get("MOCK_BRIDGE", "").lower() in ("1", "true", "yes")
@@ -59,11 +59,11 @@ def main() -> None:
     mcp_host = os.environ.get("MCP_HOST", "127.0.0.1")
     mcp_port = int(os.environ.get("MCP_PORT", "5556"))
 
-    from agent import mcp_server
-    from agent.bridge import create_bridge
-    from agent.monitor import MonitorServer
-    from agent.runtime import Runtime
-    from agent.session_log import SessionLogger
+    from mineclaude import mcp_server
+    from mineclaude.bridge import create_bridge
+    from mineclaude.monitor import MonitorServer
+    from mineclaude.runtime import Runtime
+    from mineclaude.session_log import SessionLogger
 
     # Session log: one JSONL per launch under state/sessions/ (replayable via
     # `python scripts/session_report.py --latest`). The Runtime drops traces when

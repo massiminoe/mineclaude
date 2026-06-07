@@ -16,8 +16,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from agent.action_queue import ActionQueue
-from agent.monitor import MonitorServer
+from mineclaude.action_queue import ActionQueue
+from mineclaude.monitor import MonitorServer
 
 
 @dataclass

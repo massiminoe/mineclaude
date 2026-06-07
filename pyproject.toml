@@ -1,7 +1,7 @@
 [project]
 name = "mineclaude"
 version = "0.1.0"
-description = "LLM-powered Minecraft bot agent"
+description = "Headless Minecraft bot runtime, driven over MCP"
 requires-python = ">=3.13"
 dependencies = [
     "aiohttp",
@@ -18,10 +18,10 @@ dev = [
 ]
 
 [project.scripts]
-mineclaude = "agent.main:main"
+mineclaude = "mineclaude.main:main"
 
 [tool.setuptools]
-packages = ["agent"]
+packages = ["mineclaude"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

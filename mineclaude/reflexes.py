@@ -56,7 +56,7 @@ HAZARD_BLOCKS = frozenset({
 })
 
 if TYPE_CHECKING:
-    from agent.runtime import Controller
+    from mineclaude.runtime import Controller
 
 logger = logging.getLogger(__name__)
 

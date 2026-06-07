@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from agent import action_queue
-from agent.action_queue import ActionQueue, ActionStatus
+from mineclaude import action_queue
+from mineclaude.action_queue import ActionQueue, ActionStatus
 
 
 async def simple_executor(code: str) -> str:

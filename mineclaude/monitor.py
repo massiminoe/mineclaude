@@ -11,7 +11,7 @@ from typing import Any
 
 from aiohttp import web
 
-from agent.session_log import DEFAULT_BASE_DIR as SESSIONS_DIR, IMAGES_DIRNAME
+from mineclaude.session_log import DEFAULT_BASE_DIR as SESSIONS_DIR, IMAGES_DIRNAME
 
 logger = logging.getLogger(__name__)
 

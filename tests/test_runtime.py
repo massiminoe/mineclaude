@@ -12,11 +12,11 @@ import asyncio
 
 import pytest
 
-from agent.bridge import BridgeResponse
-from agent.models import Event, GameState
-from agent.primitives import make_primitives
-from agent.runtime import Runtime
-from agent.sandbox import SandboxError
+from mineclaude.bridge import BridgeResponse
+from mineclaude.models import Event, GameState
+from mineclaude.primitives import make_primitives
+from mineclaude.runtime import Runtime
+from mineclaude.sandbox import SandboxError
 
 
 def _default_status() -> dict:
