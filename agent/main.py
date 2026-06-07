@@ -55,6 +55,60 @@ def _shutdown_langfuse(logger: logging.Logger) -> None:
         pass
 
 
+def _run_mcp_mode(
+    logger: logging.Logger,
+    *,
+    mock_bridge: bool,
+    bridge_url: str,
+    bridge_ws_url: str,
+    bot_name: str,
+) -> None:
+    """Co-hosted MCP launcher: one process, one shared Runtime, three faces —
+    the MCP server (streamable-HTTP, for Claude Code), the aiohttp monitor, and
+    the bridge event subscription. No brain, no LLM provider. This is the path
+    the project converges on; the Claude-loop branch below is deleted in P5.
+
+    The Runtime owns the WS subscription here (runtime.run_events) — the P3
+    "subscription flip" the brain path still defers."""
+    from agent import mcp_server
+    from agent.bridge import create_bridge
+    from agent.monitor import MonitorServer
+    from agent.runtime import Runtime
+
+    monitor_port = int(os.environ.get("MONITOR_PORT", "5555"))
+    mcp_host = os.environ.get("MCP_HOST", "127.0.0.1")
+    mcp_port = int(os.environ.get("MCP_PORT", "5556"))
+
+    bridge = create_bridge(mock=mock_bridge, base_url=bridge_url, ws_url=bridge_ws_url)
+    runtime = Runtime(bridge)
+    monitor = MonitorServer(runtime, port=monitor_port)
+
+    logger.info(
+        f"Mineclaude MCP mode (mock={mock_bridge}, bot={bot_name}) — "
+        f"monitor http://0.0.0.0:{monitor_port}, MCP http://{mcp_host}:{mcp_port}/mcp"
+    )
+
+    async def run() -> None:
+        runtime.start()
+        await monitor.start()
+        # Cut a fresh recording for this run (best-effort; no-op on mock /
+        # when RECORD_VIDEO=0). Mirrors the brain launcher.
+        if not mock_bridge:
+            try:
+                await bridge.record_roll()
+                logger.info("rolled gameplay recording for this run")
+            except Exception as e:
+                logger.warning(f"recording roll skipped: {e}")
+        # Both run forever: the MCP HTTP server and the bridge event loop
+        # (reconnecting WS). gather lets either's failure surface + exit.
+        await asyncio.gather(
+            mcp_server.serve(runtime, host=mcp_host, port=mcp_port),
+            runtime.run_events(),
+        )
+
+    asyncio.run(run())
+
+
 def main() -> None:
     _load_dotenv()
 
@@ -70,12 +124,26 @@ def main() -> None:
     # Read config from environment
     mock_bridge = os.environ.get("MOCK_BRIDGE", "").lower() in ("1", "true", "yes")
     no_claude = os.environ.get("NO_CLAUDE", "").lower() in ("1", "true", "yes")
+    # MCP mode: drive the bot from an external agent (Claude Code) over MCP
+    # instead of the built-in Claude loop. The end-state path — the brain
+    # branch below is deleted in P5.
+    mcp_mode = os.environ.get("MCP", "").lower() in ("1", "true", "yes")
     # Native Fabric mod owns every endpoint after Phase 8. HTTP on 8081
     # (JDK HttpServer), events WS on 8082 (Java-WebSocket — separate
     # listener because JDK HttpServer doesn't speak WS upgrades).
     bridge_url = os.environ.get("BRIDGE_URL", "http://localhost:8081")
     bridge_ws_url = os.environ.get("BRIDGE_WS_URL", "ws://localhost:8082/events")
     bot_name = os.environ.get("BOT_NAME", "Claude")
+
+    if mcp_mode:
+        _run_mcp_mode(
+            logger,
+            mock_bridge=mock_bridge,
+            bridge_url=bridge_url,
+            bridge_ws_url=bridge_ws_url,
+            bot_name=bot_name,
+        )
+        return
     # LLM_PROVIDER selects the model + endpoint (see agent/providers.py).
     # CLAUDE_MODEL / FIREWORKS_MODEL still override the model within a provider.
     llm_provider_name = os.environ.get("LLM_PROVIDER", "anthropic")

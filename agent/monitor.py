@@ -189,7 +189,9 @@ class MonitorServer:
         # the frontend (which prepends incoming events).
         reflexes = list(reversed(list(self.agent.reflexes.recent)))
         return web.json_response({
-            "conversation": self.agent.messages,
+            # `messages` is brain-only; a Runtime-backed monitor (MCP mode) has
+            # no conversation, so degrade to empty rather than AttributeError.
+            "conversation": getattr(self.agent, "messages", []),
             "queue": self.agent.queue.status(),
             "game": game,
             "plan": read_plan(),
@@ -200,7 +202,7 @@ class MonitorServer:
         })
 
     async def _handle_conversation(self, request: web.Request) -> web.Response:
-        return web.json_response({"messages": self.agent.messages})
+        return web.json_response({"messages": getattr(self.agent, "messages", [])})
 
     async def _handle_queue(self, request: web.Request) -> web.Response:
         return web.json_response(self.agent.queue.status())
