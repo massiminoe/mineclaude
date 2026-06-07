@@ -89,6 +89,7 @@ class BridgeClient(Protocol):
         near_y: int | None = None,
     ) -> BridgeResponse: ...
     async def get_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
+    async def get_blocks(self, coords: list[tuple[int, int, int]]) -> BridgeResponse: ...
     async def screenshot(
         self,
         yaw: float | None = None,
@@ -306,6 +307,10 @@ class RealBridgeClient:
 
     async def get_block(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.get("/block", params={"x": str(x), "y": str(y), "z": str(z)}))
+
+    async def get_blocks(self, coords: list[tuple[int, int, int]]) -> BridgeResponse:
+        payload = [[int(x), int(y), int(z)] for (x, y, z) in coords]
+        return self._parse(await self._http.post("/blocks", json={"coords": payload}))
 
     async def screenshot(
         self,
@@ -913,6 +918,27 @@ class MockBridgeClient:
             "success",
             f"air at ({x}, {y}, {z})",
             {"block": "air", "replaceable": True},
+        )
+
+    async def get_blocks(self, coords: list[tuple[int, int, int]]) -> BridgeResponse:
+        # Mock: each cell reports its name if present in _nearby_blocks, else air.
+        present = {(b["x"], b["y"], b["z"]): b["name"] for b in self._nearby_blocks}
+        blocks = []
+        for (x, y, z) in coords:
+            name = present.get((x, y, z))
+            blocks.append(
+                {
+                    "x": x,
+                    "y": y,
+                    "z": z,
+                    "block": name or "air",
+                    "replaceable": name is None,
+                }
+            )
+        return BridgeResponse(
+            "success",
+            f"Inspected {len(blocks)} cells",
+            {"blocks": blocks},
         )
 
     async def screenshot(

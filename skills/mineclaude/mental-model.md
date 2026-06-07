@@ -82,6 +82,10 @@ tool — re-`equip` the pickaxe/sword after eating mid-task.
    before the next break/attack, or you fall back to bare-hands speed.
 5. For build sites, `getHeightmap(x0,z0,w,h)` once and reduce in Python — never
    loop a per-cell query (that trap ate minutes of wall-time on a 20×20 sweep).
+   To inspect a specific *set* of cells (footprint preflight, re-checking known
+   coords), batch them with `getBlocks([(x,y,z), ...])` — one tick, one
+   round-trip. Looping `getBlock` instead pays one server tick *per cell*,
+   served serially.
 
 ## Combat
 

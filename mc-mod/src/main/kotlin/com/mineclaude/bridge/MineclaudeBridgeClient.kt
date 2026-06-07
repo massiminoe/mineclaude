@@ -60,6 +60,10 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // agent can verify a cell is replaceable before attempting a
         // placement that would fail with "Block already at …".
         BlockRoute.register(bridge)
+        // Batch single-cell inspection — the loop-free way to preflight a
+        // build footprint or re-check a set of known coords. One tick, one
+        // round-trip for the whole coord list.
+        BlocksRoute.register(bridge)
         // Direct-input swim-up. Used by the drowning reflex to surface the
         // player before handing off to Baritone — Baritone can't path from
         // a fully submerged start (PathNode map size: 1 → instant give-up).

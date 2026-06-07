@@ -88,6 +88,21 @@ async def test_find_multiple_blocks_missing_type(bridge, prims):
 
 
 @pytest.mark.asyncio
+async def test_get_blocks_batch(bridge, prims):
+    # One known solid cell (dirt at 0,63,0), one empty cell -> air.
+    result = await prims["getBlocks"]([(0, 63, 0), (50, 70, 50)])
+    assert [b["block"] for b in result] == ["dirt", "air"]
+    # Order preserved, coords echoed, shape matches getBlock.
+    assert result[0] == {"x": 0, "y": 63, "z": 0, "block": "dirt", "replaceable": False}
+    assert result[1] == {"x": 50, "y": 70, "z": 50, "block": "air", "replaceable": True}
+
+
+@pytest.mark.asyncio
+async def test_get_blocks_empty(bridge, prims):
+    assert await prims["getBlocks"]([]) == []
+
+
+@pytest.mark.asyncio
 async def test_craft(bridge, prims):
     bridge._add_to_inventory("oak_log", 1)
     result = await prims["craft"]("oak_planks", 4)

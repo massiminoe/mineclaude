@@ -119,6 +119,28 @@ def make_primitives(
             raise RuntimeError(resp.message)
         return resp.data
 
+    async def getBlocks(coords: list[tuple[int, int, int]]) -> list[dict]:
+        """Batch-inspect many cells in ONE round-trip. Pass a list of
+        `(x, y, z)` tuples; get back a list of `{x, y, z, block, replaceable}`
+        in the same order — same per-cell shape as `getBlock`.
+
+        This is the scalable form of cell inspection. Each `getBlock` is one
+        bridge round-trip and one server tick, so looping it over a coord list
+        costs N ticks served serially (the classic 50-cell preflight = ~2.5s+
+        of pure wait). `getBlocks` collapses the whole list into a single tick
+        and a single round-trip. Reach for it whenever you'd otherwise write
+        `for c in coords: await getBlock(*c)` — build-footprint preflight,
+        re-checking a set of known ore/coords, verifying a wall is clear, etc.
+
+        Capped at 4096 coords per call. For a contiguous ground sweep prefer
+        `getHeightmap`; for a radius scan around the player prefer
+        `getNearbyBlocks` / `findBlocks` — those already read in one tick too.
+        """
+        resp = await bridge.get_blocks(list(coords))
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data["blocks"]
+
     async def getHeightmap(
         x0: int,
         z0: int,
@@ -370,6 +392,7 @@ def make_primitives(
         "placeBlock": placeBlock,
         "getHeightmap": getHeightmap,
         "getBlock": getBlock,
+        "getBlocks": getBlocks,
         "breakBlockAt": breakBlockAt,
         "collectItems": collectItems,
         "attack": attack,
