@@ -1,24 +1,24 @@
 # Mineclaude
 
-Minecraft bot — Python agent that uses Claude to control a headless MC client.
+Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. Claude Code). The built-in Claude loop and all LLM-provider code were removed in the brain teardown — `mineclaude/runtime.py` is the body, `mineclaude/mcp_server.py` the interface.
 
 ## Commands
 
 - `pytest` — run tests
 - `docker compose up --build` — run full stack (MC server + headless client w/ native bridge mod)
 - `docker compose down -v` — full clean restart (clears volumes, regenerates ops)
-- `mineclaude` — run the agent process (requires `.env` with `ANTHROPIC_API_KEY`)
-- `MOCK_BRIDGE=1 mineclaude` — test agent loop without MC server
+- `mineclaude` — run the MCP launcher. One process, one shared `Runtime`, three faces: the MCP server (streamable-HTTP, default `http://127.0.0.1:5556/mcp` — `MCP_HOST`/`MCP_PORT`), the aiohttp monitor (`MONITOR_PORT`, default 5555), and the bridge event WS (the Runtime owns the subscription). No API key needed — the driving agent is external. `mcp`+`uvicorn` are core deps (plain `pip install -e .`).
+- `MOCK_BRIDGE=1 mineclaude` — run the launcher without a MC server (mock bridge)
 - `BRIDGE_URL` (env, default `http://localhost:8081`) — native bridge HTTP
 - `BRIDGE_WS_URL` (env, default `ws://localhost:8082/events`) — native bridge events WS
-- `NO_CLAUDE=1 mineclaude` — headless mode (no Claude); queue + bridge + monitor stay up so you can drive primitives manually from the frontend Console panel
-- `LLM_PROVIDER` (env, default `anthropic`) — selects model + endpoint from the registry in `agent/providers.py`. `anthropic` = Claude via `api.anthropic.com` (`ANTHROPIC_API_KEY`); `fireworks` = Kimi K2.6 via Fireworks' Anthropic-compatible endpoint (`FIREWORKS_API_KEY`); `openrouter` = Gemini 3.5 Flash via OpenRouter's Anthropic-compatible `/v1/messages` skin (`OPENROUTER_API_KEY`); `gpt5mini` = GPT-5.4 Mini via the same OpenRouter skin with effort-based reasoning (`OPENROUTER_API_KEY`). Same `anthropic` SDK for all four — only base_url/api_key/model/capability-flags differ. `CLAUDE_MODEL`/`FIREWORKS_MODEL`/`OPENROUTER_MODEL`/`GPT5MINI_MODEL` override the model within a provider (`gpt5mini` has its own `GPT5MINI_MODEL` knob so it doesn't share — and get clobbered by — the gemini entry's `OPENROUTER_MODEL`). All providers shape reasoning via Anthropic's `thinking: {budget_tokens}` block. Budget-based providers (Fireworks/Gemini) carry a fixed `thinking_budget_tokens`. Effort-based providers (`gpt5mini`, GPT-5/o-series) carry a `reasoning_effort` instead — the client converts it to a budget of `EFFORT_RATIOS[effort] × max_tokens` (medium=0.5), which OpenRouter buckets back to an effort level for the OpenAI model. We do NOT send a top-level `reasoning: {effort}` field — OpenRouter's `/v1/messages` skin silently drops it (verified: minimal vs high gave identical output / 0 thinking tokens). `REASONING_EFFORT` env tunes the effort (xhigh/high/medium/low/minimal) for effort-based providers
+- **MCP tools (7):** `execute(code, timeout, wait)` (single-flight; blocks up to the inline-wait budget `wait` (default `MINECLAUDE_EXECUTE_WAIT_S`=50s, sized under the client's request timeout) then returns `status:"running"` while the action keeps running in the background and holds the slot; `timeout` is the action's hard cap), `interrupt()` (out-of-band slot purge), `get_state(flush)`, `screenshot(yaw/pitch/look_at)`, `get_handler(event_type)`, `set_handler(event_type, code, preempts, cooldown_s)`, `wait_for_event(types, timeout)`. `say(message)` is a primitive inside `execute`, not a tool. Connect Claude Code: `claude mcp add --transport http mineclaude http://127.0.0.1:5556/mcp`
 - `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
 ## Project Structure
 
-- `agent/` — Python package (bridge, sandbox, primitives, claude, agent, prompt, main, monitor)
-- `frontend/` — React + TypeScript + Vite monitor UI
+- `mineclaude/` — Python package: `bridge`, `sandbox`, `primitives`, `action_queue`, `reflexes`, `runtime` (headless Runtime + Controller seam), `gamestate` (structured snapshot), `models` (typed return shapes), `mcp_server` (FastMCP, 7 tools), `monitor`, `session_log`, `main` (MCP launcher). The brain (Claude loop + LLM providers) was deleted — MCP is the only interface.
+- `skills/mineclaude/` — the Claude Code skill: how to drive the bot. `SKILL.md` + hand-written `mental-model`/`snippets`/`handlers` + generated `primitives`/`events`/`tools` (run `scripts/gen_skill_docs.py` to regenerate the latter from code)
+- `frontend/` — React + TypeScript + Vite monitor UI (still has brain panels; pending removal)
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
 - `mc-client/` — Dockerfile + entrypoint for the headless MC client container that runs the bridge mod
 - `mc-mod/` — Kotlin Fabric mod (`mineclaude-bridge`). Owns every bridge endpoint the agent + frontend hit. Built in stage 1 of `mc-client/Dockerfile`. HTTP on 8081 (JDK HttpServer), events WS on 8082 (Java-WebSocket). The Phase 0–8 migration history lives in `docs/superpowers/specs/2026-04-*-native-mod-*`
@@ -28,17 +28,17 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 
 - Protocol-based bridge (mock/real share interface)
 - Executor injection on ActionQueue (decoupled from sandbox)
-- exec() sandbox with AST validation (no imports, no dunders)
-- Static system prompt enables Anthropic prompt caching. The `cache_control` marker is provider-gated in `ClaudeClient._system_blocks` — emitted for Anthropic, omitted for Fireworks (which auto-caches the longest prefix and rejects the marker on tool defs). The stable-prefix injection pattern below is what makes Fireworks' automatic prefix caching pay off too
-- gameState injected as synthetic tool_use/tool_result pair on EVERY Claude iteration (not just once per chat turn) — unique `gamestate_auto_<iter>` tool_use_id keeps the cache prefix stable through prior messages and only diverges at the latest injection. Prevents Claude from deciding on a 10-iteration-old snapshot
-- Plan document (`state/plan.md`) injected chat-level via the same synthetic pair mechanism
+- exec() sandbox with AST validation (no imports, no dunders) — used both by `execute` and by authored `set_handler` bodies
+- `Controller` seam: `reflexes.py` depends on a Protocol (`preempt`/`resume`/`slog`/`emit_event`/`bridge`), not on a concrete host. `Runtime` implements it
+- Single-flight slot: exactly one action drives the bridge at a time. `execute()` takes it (rejects concurrent calls as `busy`); `interrupt()` is out-of-band. This is why the MCP server + monitor Console **must** share one `Runtime` in one process
+- Two event surfaces on `Runtime`: `reflexes.recent` (rolling hazard fires → `get_state.reflexes_recent`) vs the flushable `_events` buffer (chat/death/respawn + mod world-mutations → `get_state.events` / `wait_for_event`)
 - `.env` file loaded at startup (not committed, see `.env.example`)
 
 ## Tech
 
-- Python 3.13, deps: aiohttp, anthropic, httpx, websockets
+- Python 3.13, deps: aiohttp, httpx, websockets, mcp, uvicorn
     - use the virtual environment at .venv/
-- Entry point: `mineclaude = "agent.main:main"`
+- Entry point: `mineclaude = "agent.main:main"` (the MCP launcher)
 - Monitor: aiohttp server on port 5555 (MONITOR_PORT) inside agent process
 - Frontend: React + Vite dev server on port 5173, proxies `/api` to monitor
   - `cd frontend && npm run dev` — dev server
@@ -69,7 +69,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - `POST /collect` `{radius}` — walk to and pick up dropped item entities within radius
 - `GET /screenshot` — capture game view (returns base64 JPEG, or raw with `?raw=true`). Optional aim: `?yaw=&pitch=` (degrees) **or** `?look_at_x=&look_at_y=&look_at_z=` (point eye at a world coord). New rotation persists. Aimed shots add ~200ms (render-settle window) before the grab
 - `GET /video/stream` — MJPEG video stream of game view
-- `POST /record/start`, `POST /record/stop`, `POST /record/roll`, `GET /record/status` — single-file gameplay recorder. One continuous `.mp4` (H.264) per run to `/recordings` (host `./state/video`), 5 fps / libx264 CRF 28, owned by the bridge mod's `RecordRoute`. Plays natively in QuickTime. Auto-starts on first in-world tick when `RECORD_VIDEO=1`. `/record/roll` finalizes the current file and opens a fresh one **without a container restart** — the "one video per run" trigger. It rotates an *active* recording only (no-op if not recording, so it self-gates on `RECORD_VIDEO` and never cold-starts; use `/record/start` to begin from idle); optional `{name}` labels the file (`play-<ts>-<name>.mp4`). The agent fires `record_roll()` on startup (`agent/main.py`) so each `mineclaude` launch gets its own video. Stop/roll/shutdown SIGTERM ffmpeg so the mp4 moov atom is written cleanly; an abrupt SIGKILL (hard crash) can leave the open file unplayable
+- `POST /record/start`, `POST /record/stop`, `POST /record/roll`, `GET /record/status` — single-file gameplay recorder. One continuous `.mp4` (H.264) per run to `/recordings` (host `./state/video`), 5 fps / libx264 CRF 28, owned by the bridge mod's `RecordRoute`. Plays natively in QuickTime. Auto-starts on first in-world tick when `RECORD_VIDEO=1`. `/record/roll` finalizes the current file and opens a fresh one **without a container restart** — the "one video per run" trigger. It rotates an *active* recording only (no-op if not recording, so it self-gates on `RECORD_VIDEO` and never cold-starts; use `/record/start` to begin from idle); optional `{name}` labels the file (`play-<ts>-<name>.mp4`). The agent fires `record_roll()` on startup (`mineclaude/main.py`) so each `mineclaude` launch gets its own video. Stop/roll/shutdown SIGTERM ffmpeg so the mp4 moov atom is written cleanly; an abrupt SIGKILL (hard crash) can leave the open file unplayable
 - `GET /health` — bridge liveness + ported endpoint list
 - `WS /events` — chat / death / respawn event stream
 
@@ -86,7 +86,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 - Rendering via Xvfb virtual framebuffer + Mesa llvmpipe (software OpenGL 4.5)
 - `hmc.check.xvfb=true` in config.properties, `LIBGL_ALWAYS_SOFTWARE=1` env var
 - `NativeImage.writeTo()` produces 0-byte PNGs on the Mesa llvmpipe software stack (amd64-under-emulation on Apple Silicon, since the `3arthqu4ke/headlessmc` base image is amd64-only) — vision endpoints capture via ffmpeg x11grab from `:99` instead
-- Vision: Claude `screenshot` tool sends game view as base64 JPEG in tool_result image block
+- Vision: the `screenshot` MCP tool returns the game view as an image block (base64 JPEG)
 
 ## Bridge mod (mc-mod) gotchas
 
@@ -101,7 +101,7 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 
 ## Debugging
 
-- `state/sessions/<ts>-<id>.jsonl` — agent-side replay log. Every turn, every Claude iteration, every tool call with timing. Emitted by `agent/session_log.py`. Render as a timeline: `python scripts/session_report.py --latest`
+- `state/sessions/<ts>-<id>.jsonl` — `SessionLogger` replay log (`mineclaude/session_log.py`), rendered by `python scripts/session_report.py --latest`. The launcher wires `Runtime(bridge, slog=SessionLogger(...).emit)`, so each `mineclaude` run writes one (set `SESSION_LOG=0` to opt out). The log carries the run timeline: `execute_start`/`execute_done` (the code + outcome), inbound `event`s (chat/death/respawn/hazards), `handler_set`, and per-step `subaction`s. Cross-reference with `docker compose logs mc-client` (authoritative mutation log) + the `state/video/*.mp4` recording for bridge-side detail.
 - Bridge-side logs go through SLF4J to MC's standard log — `docker compose logs mc-client` for the live stream, or filter for `mineclaude-bridge` loggers. The legacy mutation-log JSONL is gone with Phase 8; if you need before/after world snapshots, the agent's session log captures pre/post `/status` around each tool call
 
 For hands-on primitive debugging, run `NO_CLAUDE=1 mineclaude` and use the **Console** panel in the monitor frontend. You type the same code Claude would put in `newAction` (e.g. `await goToPosition(0, 64, 0)`), it enqueues on the same action queue, and the resulting trace renders in the Action Queue panel with full subaction breakdown. Useful for reproducing "Claude did X and something weird happened" without Claude in the loop.

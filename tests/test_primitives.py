@@ -2,8 +2,8 @@
 
 import pytest
 
-from agent.bridge import BridgeResponse, MockBridgeClient
-from agent.primitives import _check, make_primitives
+from mineclaude.bridge import BridgeResponse, MockBridgeClient
+from mineclaude.primitives import _check, make_primitives
 
 
 def test_check_returns_message_on_success():
@@ -406,7 +406,7 @@ async def test_chest_dict_and_string_input_forms(bridge, prims):
 
 @pytest.mark.asyncio
 async def test_log(prims):
-    from agent.primitives import _log_buffer
+    from mineclaude.primitives import _log_buffer
     _log_buffer.clear()
     prims["log"]("test message")
     assert "test message" in _log_buffer

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Coroutine
 
-logger = logging.getLogger("agent.action_queue")
+logger = logging.getLogger("mineclaude.action_queue")
 
 # interrupt() runs on the reflex/death preempt path, which has NO outer
 # timeout. Every await it makes must be hard-bounded or a wedged bridge /

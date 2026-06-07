@@ -15,11 +15,10 @@ from collections import deque
 
 import pytest
 
-from agent.action_queue import ActionQueue
-from agent.bridge import BridgeResponse
-from agent.prompt import format_game_state
-from agent import reflexes
-from agent.reflexes import (
+from mineclaude.action_queue import ActionQueue
+from mineclaude.bridge import BridgeResponse
+from mineclaude import reflexes
+from mineclaude.reflexes import (
     REFLEX_EVENT_TYPES,
     WEAPON_PRIORITY,
     ReflexHandler,
@@ -100,8 +99,8 @@ def _block(name: str, x: int, y: int, z: int, distance: float = 1.0) -> dict:
 
 
 class FakeAgent:
-    """Minimal Agent stand-in. The registry only touches `_slog`,
-    `_emit`, `_preempt`, `_stage_resume`, and (via handlers) `bridge`."""
+    """Minimal Controller stand-in. The registry only touches `slog`,
+    `emit_event`, `preempt`, `resume`, and (via handlers) `bridge`."""
 
     def __init__(self, bridge: _FakeBridge | None = None):
         self.slog_calls: list[tuple[str, dict]] = []
@@ -111,16 +110,16 @@ class FakeAgent:
         self.queue = _FakeQueue()
         self.bridge = bridge or _FakeBridge()
 
-    def _slog(self, event: str, **data) -> None:
+    def slog(self, event: str, **data) -> None:
         self.slog_calls.append((event, data))
 
-    async def _emit(self, event: str, data) -> None:
+    async def emit_event(self, event: str, data) -> None:
         self.emit_calls.append((event, data))
 
-    async def _preempt(self) -> None:
+    async def preempt(self) -> None:
         self.preempt_calls += 1
 
-    def _stage_resume(self, event_type: str) -> None:
+    def resume(self, event_type: str) -> None:
         self.resume_calls.append(event_type)
 
 
@@ -974,7 +973,7 @@ async def test_escape_handler_swallows_nearby_blocks_failure():
     await started_drowning_handler(agent, {})
 
 
-# --- format_recent / format_game_state -------------------------------------
+# --- format_recent ---------------------------------------------------------
 
 
 def test_format_recent_empty_returns_empty_string():
@@ -1004,132 +1003,6 @@ def test_format_recent_caps_to_three():
     ]
     out = format_recent(recent, now=now)
     assert len(out.splitlines()) == 1 + 3
-
-
-def test_format_game_state_appends_reflex_section():
-    status = {
-        "position": {"x": 1.0, "y": 64.0, "z": 2.0},
-        "health": 18.0,
-        "hunger": 16,
-        "biome": "plains",
-        "time": 1000,
-        "inventory": [],
-    }
-    queue_status = {"running": None, "pending": [], "recent": []}
-    reflexes = [
-        {"type": "tool_broke", "data": {"item": "iron_pickaxe"}, "ts": time.time() - 1},
-    ]
-    out = format_game_state(status, queue_status, recent_reflexes=reflexes)
-    assert "Recent reflex events" in out
-    assert "tool_broke" in out
-    assert "iron_pickaxe" in out
-
-
-def test_format_game_state_omits_reflex_section_when_empty():
-    status = {
-        "position": {"x": 0, "y": 64, "z": 0},
-        "health": 20.0,
-        "hunger": 20,
-        "biome": "plains",
-        "time": 0,
-        "inventory": [],
-    }
-    out = format_game_state(status, {"running": None, "pending": [], "recent": []})
-    assert "Recent reflex events" not in out
-
-
-# --- format_game_state events section --------------------------------------
-
-
-def _bare_status() -> dict:
-    return {
-        "position": {"x": 0, "y": 64, "z": 0},
-        "health": 20.0,
-        "hunger": 20,
-        "biome": "plains",
-        "time": 0,
-        "inventory": [],
-    }
-
-
-def test_format_game_state_omits_events_section_when_empty():
-    out = format_game_state(_bare_status(), {"running": None, "pending": [], "recent": []}, events=[])
-    assert "Events since last gameState" not in out
-
-
-def test_format_game_state_omits_events_section_when_none():
-    out = format_game_state(_bare_status(), {"running": None, "pending": [], "recent": []}, events=None)
-    assert "Events since last gameState" not in out
-
-
-def test_format_game_state_renders_block_events_one_line_each():
-    events = [
-        {"ts_ms": 1_700_000_000_000, "type": "block_broken", "block": "stone",
-         "pos": {"x": 100, "y": 64, "z": 50}},
-        {"ts_ms": 1_700_000_000_420, "type": "block_broken", "block": "stone",
-         "pos": {"x": 100, "y": 65, "z": 50}},
-        {"ts_ms": 1_700_000_001_180, "type": "block_placed", "block": "torch",
-         "pos": {"x": 101, "y": 65, "z": 50}},
-    ]
-    out = format_game_state(
-        _bare_status(),
-        {"running": None, "pending": [], "recent": []},
-        events=events,
-    )
-    # Header reports event count and span.
-    assert "=== Events since last gameState (3 events, 1.18s span) ===" in out
-    # One line per event, in order, with wallclock deltas from oldest.
-    assert "[+0.00s] block_broken stone @ (100, 64, 50)" in out
-    assert "[+0.42s] block_broken stone @ (100, 65, 50)" in out
-    assert "[+1.18s] block_placed torch @ (101, 65, 50)" in out
-
-
-def test_format_game_state_renders_entity_attacked_with_rounded_pos():
-    events = [
-        {"ts_ms": 1_700_000_000_000, "type": "entity_attacked", "kind": "zombie",
-         "entity_id": 4421, "pos": {"x": 103.234, "y": 64.0, "z": 49.876}},
-    ]
-    out = format_game_state(
-        _bare_status(),
-        {"running": None, "pending": [], "recent": []},
-        events=events,
-    )
-    assert "[+0.00s] entity_attacked zombie #4421 @ (103.2, 64.0, 49.9)" in out
-
-
-def test_format_game_state_does_not_collapse_repeats():
-    # Same block, same coords, three times. Verbose-by-design: three lines.
-    events = [
-        {"ts_ms": 1_700_000_000_000, "type": "block_broken", "block": "oak_log",
-         "pos": {"x": 5, "y": 64, "z": 5}},
-        {"ts_ms": 1_700_000_000_500, "type": "block_broken", "block": "oak_log",
-         "pos": {"x": 5, "y": 64, "z": 5}},
-        {"ts_ms": 1_700_000_001_000, "type": "block_broken", "block": "oak_log",
-         "pos": {"x": 5, "y": 64, "z": 5}},
-    ]
-    out = format_game_state(
-        _bare_status(),
-        {"running": None, "pending": [], "recent": []},
-        events=events,
-    )
-    rendered = out.splitlines()
-    matching = [ln for ln in rendered if "block_broken oak_log @ (5, 64, 5)" in ln]
-    assert len(matching) == 3
-
-
-def test_format_game_state_renders_unknown_event_type_as_fallback():
-    events = [
-        {"ts_ms": 1_700_000_000_000, "type": "future_event_kind",
-         "some_field": "value", "another": 42},
-    ]
-    out = format_game_state(
-        _bare_status(),
-        {"running": None, "pending": [], "recent": []},
-        events=events,
-    )
-    assert "[+0.00s] future_event_kind" in out
-    assert "some_field" in out
-    assert "value" in out
 
 
 # --- action_queue pre-interrupt hook ---------------------------------------

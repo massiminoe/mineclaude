@@ -62,21 +62,13 @@ def mc_stack():
 
 @pytest_asyncio.fixture
 async def agent(mc_stack):
-    """In-process Agent connected to the live bridge."""
-    from agent.agent import Agent
-    from agent.bridge import RealBridgeClient
-    from agent.claude import ClaudeClient
-
-    bridge = RealBridgeClient(base_url="http://localhost:8081")
-    claude = ClaudeClient(api_key=os.environ["ANTHROPIC_API_KEY"])
-    ag = Agent(bridge=bridge, claude=claude, bot_name="Claude")
-    ag.queue.set_executor(ag._execute_action)
-    ag.queue.start()
-    try:
-        yield ag
-    finally:
-        await ag.queue.interrupt()
-        await bridge.close()
+    """Retired. The in-process Agent (built-in Claude loop) was removed in the
+    brain teardown — the bot is now driven over MCP. An MCP-driven e2e
+    replacement (connect a client to the launcher, drive the 7 tools against the
+    live stack) is pending; see the P6 plan. Until then this suite skips so
+    `--run-e2e` doesn't error on the deleted Agent."""
+    pytest.skip("brain e2e retired; MCP-driven e2e pending (P6)")
+    yield  # unreachable — keeps the async-generator fixture shape valid
 
 
 @pytest.fixture

@@ -11,10 +11,7 @@ from typing import Any
 
 from aiohttp import web
 
-from agent.memory import read_memory
-from agent.plan import read_plan
-from agent.pricing import compute_cost
-from agent.session_log import DEFAULT_BASE_DIR as SESSIONS_DIR, IMAGES_DIRNAME
+from mineclaude.session_log import DEFAULT_BASE_DIR as SESSIONS_DIR, IMAGES_DIRNAME
 
 logger = logging.getLogger(__name__)
 
@@ -114,12 +111,6 @@ def _summarize_session(path: Path) -> dict[str, Any]:
                     cost = data.get("cost_usd")
                     if isinstance(cost, (int, float)):
                         u["cost_usd"] += float(cost)
-                    else:
-                        # Older logs (pre-pricing rollout) won't have cost_usd
-                        # — fall back to recomputing from model+usage.
-                        m = data.get("model")
-                        if isinstance(m, str) and isinstance(raw, dict):
-                            u["cost_usd"] += compute_cost(m, raw)
                     u["calls"] += 1
         summary["started_at"] = first_ts
         summary["ended_at"] = last_ts
@@ -161,11 +152,9 @@ class MonitorServer:
             self._app.router.add_get("/{path:.*}", self._handle_spa_fallback)
 
     def _register_hooks(self) -> None:
-        self.agent.on("conversation:update", self._on_conversation_update)
-        self.agent.on("plan:update", self._on_plan_update)
-        self.agent.on("memory:update", self._on_memory_update)
+        # conversation/plan/memory/usage were brain bus events — the Runtime
+        # never emits them. Only reflex + queue/subaction events remain.
         self.agent.on("reflex:fired", self._on_reflex_fired)
-        self.agent.on("usage:update", self._on_usage_update)
         self.agent.queue.on("action:enqueued", self._on_action_event)
         self.agent.queue.on("action:started", self._on_action_event)
         self.agent.queue.on("action:completed", self._on_action_event)
@@ -189,18 +178,23 @@ class MonitorServer:
         # the frontend (which prepends incoming events).
         reflexes = list(reversed(list(self.agent.reflexes.recent)))
         return web.json_response({
-            "conversation": self.agent.messages,
+            # `messages` is brain-only; a Runtime-backed monitor (MCP mode) has
+            # no conversation, so degrade to empty rather than AttributeError.
+            # conversation/plan/memory/usage were brain-only. Kept as empty keys
+            # so the (yet-untouched) frontend contract holds; their panels are
+            # removed in the P6 frontend pass.
+            "conversation": [],
             "queue": self.agent.queue.status(),
             "game": game,
-            "plan": read_plan(),
-            "memory": read_memory(),
+            "plan": "",
+            "memory": "",
             "reflexes": reflexes,
             "usage": getattr(self.agent, "usage_totals", None),
             "video_url": f"{video_base}/video/stream?fps=10&quality=50" if video_base else None,
         })
 
     async def _handle_conversation(self, request: web.Request) -> web.Response:
-        return web.json_response({"messages": self.agent.messages})
+        return web.json_response({"messages": []})
 
     async def _handle_queue(self, request: web.Request) -> web.Response:
         return web.json_response(self.agent.queue.status())
@@ -210,10 +204,10 @@ class MonitorServer:
         return web.json_response(game)
 
     async def _handle_plan(self, request: web.Request) -> web.Response:
-        return web.json_response({"plan": read_plan()})
+        return web.json_response({"plan": ""})
 
     async def _handle_memory(self, request: web.Request) -> web.Response:
-        return web.json_response({"memory": read_memory()})
+        return web.json_response({"memory": ""})
 
     async def _handle_sessions_list(self, request: web.Request) -> web.Response:
         sessions_dir = Path(SESSIONS_DIR)
@@ -317,21 +311,9 @@ class MonitorServer:
 
     # --- Event callbacks ---
 
-    async def _on_conversation_update(self, event: str, messages: Any) -> None:
-        await self._broadcast("conversation:update", {"messages": messages})
-
-    async def _on_plan_update(self, event: str, plan: Any) -> None:
-        await self._broadcast("plan:update", {"plan": plan if isinstance(plan, str) else ""})
-
-    async def _on_memory_update(self, event: str, memory: Any) -> None:
-        await self._broadcast("memory:update", {"memory": memory if isinstance(memory, str) else ""})
-
     async def _on_reflex_fired(self, event: str, entry: Any) -> None:
         # entry is the dict pushed onto reflexes.recent: {type, data, ts}.
         await self._broadcast("reflex:fired", entry if isinstance(entry, dict) else {})
-
-    async def _on_usage_update(self, event: str, totals: Any) -> None:
-        await self._broadcast("usage:update", totals if isinstance(totals, dict) else {})
 
     async def _on_action_event(self, event: str, action: Any, *_extra: Any) -> None:
         await self._broadcast(event.replace(":", "_"), {

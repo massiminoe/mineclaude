@@ -2,9 +2,9 @@
 
 import pytest
 
-from agent.bridge import MockBridgeClient
-from agent.primitives import make_primitives
-from agent.sandbox import SandboxError, execute
+from mineclaude.bridge import MockBridgeClient
+from mineclaude.primitives import make_primitives
+from mineclaude.sandbox import SandboxError, execute
 
 
 @pytest.fixture

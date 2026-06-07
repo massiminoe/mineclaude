@@ -37,9 +37,14 @@ RUN mkdir -p /headlessmc/HeadlessMC && \
 # Download and install Fabric for MC 1.21.5
 RUN hmc download fabric:1.21.5
 
-# Copy mod JARs into the Fabric mods directory
-# The mods dir location depends on the MC instance path; we copy after launch dir is created
-COPY mc-client/mods/*.jar /tmp/mods/
+# Download the runtime mod JARs into the image so a fresh `docker compose up
+# --build` is self-contained — no host-side pre-step. Reuses the SAME
+# download-mods.sh as the host path (via a MODS_DIR override) so the jar list +
+# versions live in exactly one place. Version-pinned, so this layer caches
+# until the script changes. (curl is installed above; the entrypoint copies
+# /tmp/mods/* into the real mods dir after the launch dir exists.)
+COPY mc-client/download-mods.sh /tmp/download-mods.sh
+RUN MODS_DIR=/tmp/mods bash /tmp/download-mods.sh
 
 # Pull the freshly built mineclaude bridge mod from stage 1.
 # Loom emits the remapped production jar plus a sources jar; only the remapped
