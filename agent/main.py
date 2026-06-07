@@ -17,6 +17,7 @@ import logging
 import os
 import pathlib
 import sys
+import uuid
 
 
 def _load_dotenv() -> None:
@@ -62,15 +63,27 @@ def main() -> None:
     from agent.bridge import create_bridge
     from agent.monitor import MonitorServer
     from agent.runtime import Runtime
+    from agent.session_log import SessionLogger
+
+    # Session log: one JSONL per launch under state/sessions/ (replayable via
+    # `python scripts/session_report.py --latest`). The Runtime drops traces when
+    # slog is None, so SESSION_LOG=0 opts out cleanly.
+    slog = None
+    session_log = None
+    if os.environ.get("SESSION_LOG", "1").lower() not in ("0", "false", "no"):
+        session_log = SessionLogger(str(uuid.uuid4()))
+        slog = session_log.emit
 
     bridge = create_bridge(mock=mock_bridge, base_url=bridge_url, ws_url=bridge_ws_url)
-    runtime = Runtime(bridge)
+    runtime = Runtime(bridge, slog=slog)
     monitor = MonitorServer(runtime, port=monitor_port)
 
     logger.info(
         f"Mineclaude MCP launcher (mock={mock_bridge}, bot={bot_name}) — "
         f"monitor http://0.0.0.0:{monitor_port}, MCP http://{mcp_host}:{mcp_port}/mcp"
     )
+    if session_log is not None:
+        logger.info(f"session log: {session_log.path}")
 
     async def run() -> None:
         runtime.start()

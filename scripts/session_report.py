@@ -5,9 +5,10 @@ Usage:
     python scripts/session_report.py state/sessions/<session>.jsonl
     python scripts/session_report.py --latest
 
-The report summarizes each chat turn: iterations, tool calls with timing,
-exceptions, and the final reply. Invoke when diagnosing a reliability
-regression — it saves you from tailing raw JSONL.
+The report summarizes each execute() action — its code, sub-step timeline, and
+outcome — interleaved with inbound world events (chat/death/respawn/hazards) and
+handler installs. Invoke when diagnosing a reliability regression — it saves you
+from tailing raw JSONL.
 """
 
 from __future__ import annotations
@@ -46,37 +47,40 @@ def _truncate(s: str, n: int = 140) -> str:
     return s[: n - 3] + "..."
 
 
-def _render_tool_dispatch(e: dict) -> str:
-    d = e.get("data", {})
-    name = d.get("name")
-    elapsed = d.get("elapsed_ms")
-    result = d.get("result")
-    if isinstance(result, dict):
-        result_str = result.get("text") or json.dumps(result)
+def _code_preview(code: str) -> str:
+    """First non-blank line of the submitted code, with a tail count if multi-line."""
+    lines = [ln for ln in (code or "").splitlines() if ln.strip()]
+    if not lines:
+        return "<empty>"
+    head = _truncate(lines[0].strip(), 120)
+    extra = len(lines) - 1
+    return f"{head}  (+{extra} more line{'s' if extra != 1 else ''})" if extra else head
+
+
+def _render_execute_done(d: dict) -> str:
+    status = d.get("status")
+    dur = d.get("duration_s")
+    detail = ""
+    if status in ("failed", "timeout", "cancelled"):
+        detail = f"  {_truncate(str(d.get('error') or ''), 140)}"
     else:
-        result_str = str(result) if result is not None else ""
-    first_line = result_str.splitlines()[0] if result_str else ""
-    flag = ""
-    if first_line.startswith("[partial]"):
-        flag = " PARTIAL"
-    elif first_line.startswith("[status=error") or first_line.startswith("Error"):
-        flag = " ERROR"
-    return f"tool.{name} ({elapsed}ms){flag}  →  {_truncate(first_line, 120)}"
+        result = d.get("result")
+        if isinstance(result, str) and result.strip():
+            detail = f"  →  {_truncate(result.splitlines()[0], 120)}"
+    return f"execute #{d.get('action_id')} {status} ({dur}s){detail}"
 
 
-def _render_claude_response(e: dict) -> str:
-    d = e.get("data", {})
-    stop = d.get("stop_reason")
-    blocks = d.get("blocks") or []
-    tool_names = [b.get("tool_name") for b in blocks if b.get("tool_name")]
-    text_preview = ""
-    for b in blocks:
-        if b.get("type") == "text" and b.get("text"):
-            text_preview = _truncate(b["text"].replace("\n", " "), 100)
-            break
-    tool_str = f" tools={tool_names}" if tool_names else ""
-    text_str = f' text="{text_preview}"' if text_preview else ""
-    return f"claude_response stop={stop}{tool_str}{text_str}"
+def _render_event(d: dict) -> str:
+    data = d.get("data") or {}
+    preview = _truncate(json.dumps(data, default=str), 120) if data else ""
+    return f"event {d.get('type')}  {preview}".rstrip()
+
+
+def _render_handler_set(d: dict) -> str:
+    return (
+        f"handler_set {d.get('event_type')} "
+        f"preempts={d.get('preempts')} cooldown={d.get('cooldown_s')}s"
+    )
 
 
 def _render_subaction(e: dict) -> str:
@@ -97,11 +101,6 @@ def _render_subaction(e: dict) -> str:
     return f"  └─ {name}({arg_str}) {status}"
 
 
-def _render_exception(e: dict) -> str:
-    d = e.get("data", {})
-    return f"exception {d.get('stage')} {d.get('exc')}: {_truncate(d.get('message', ''), 160)}"
-
-
 def _render(events: Iterable[dict]) -> str:
     lines: list[str] = []
     for e in events:
@@ -110,23 +109,20 @@ def _render(events: Iterable[dict]) -> str:
         d = e.get("data", {})
         if kind == "session_open":
             lines.append(f"{ts}  == session {d.get('session_id')} ==")
-        elif kind == "chat_in":
-            lines.append(f"{ts}  ── chat from {d.get('username')}: {_truncate(d.get('message', ''), 140)}")
-        elif kind == "claude_request":
-            iteration = d.get("iteration")
-            lines.append(f"{ts}    iter {iteration} → claude.send (msgs={d.get('message_count')})")
-        elif kind == "claude_response":
-            lines.append(f"{ts}    iter {d.get('iteration')} ← {_render_claude_response(e)}")
-        elif kind == "tool_dispatch":
-            lines.append(f"{ts}      {_render_tool_dispatch(e)}")
+        elif kind == "execute_start":
+            lines.append(f"{ts}  → execute #{d.get('action_id')}  {_code_preview(d.get('code', ''))}")
         elif kind == "subaction":
             # Only render completed/failed states; started is just noise.
-            if e.get("data", {}).get("status") in ("completed", "failed"):
+            if d.get("status") in ("completed", "failed"):
                 lines.append(f"{ts}    {_render_subaction(e)}")
-        elif kind == "chat_out":
-            lines.append(f"{ts}  → reply: {_truncate(d.get('text', ''), 200)}")
-        elif kind == "exception":
-            lines.append(f"{ts}  XX {_render_exception(e)}")
+        elif kind == "execute_done":
+            lines.append(f"{ts}  ← {_render_execute_done(d)}")
+        elif kind == "execute_rejected":
+            lines.append(f"{ts}  XX execute rejected ({d.get('reason')})")
+        elif kind == "event":
+            lines.append(f"{ts}  ·· {_render_event(d)}")
+        elif kind == "handler_set":
+            lines.append(f"{ts}  :: {_render_handler_set(d)}")
     return "\n".join(lines)
 
 

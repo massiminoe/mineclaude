@@ -103,7 +103,9 @@ class Runtime:
     Controller for the reflexes, and exposes the MCP-facing surface.
 
     `slog` is an optional structured-logging hook (e.g. a SessionLogger.emit)
-    for sub-action + reflex tracing; when None those traces are dropped.
+    carrying the run timeline — execute_start/execute_done (with the code +
+    outcome), inbound `event`s, handler_set, and per-step subactions. When None
+    those traces are dropped.
     """
 
     def __init__(
@@ -273,6 +275,7 @@ class Runtime:
         watcher that calls interrupt(), not from overlapping executes.
         """
         if self._executing:
+            self.slog("execute_rejected", reason="busy", code=code)
             return ExecuteResult(
                 status="busy",
                 action_id="",
@@ -282,8 +285,18 @@ class Runtime:
         self._executing = True
         try:
             action = await self.queue.enqueue(code, timeout=timeout)
+            self.slog("execute_start", action_id=action.id, code=code, timeout=timeout)
             await self.queue.drain()
-            return self._action_to_result(action)
+            result = self._action_to_result(action)
+            self.slog(
+                "execute_done",
+                action_id=action.id,
+                status=result.status,
+                duration_s=round(result.duration_s, 3),
+                result=result.result,
+                error=result.error,
+            )
+            return result
         finally:
             self._executing = False
 
@@ -408,6 +421,7 @@ class Runtime:
             resumes_on_complete=False,
         ))
         self._authored_handlers[event_type] = code
+        self.slog("handler_set", event_type=event_type, preempts=preempts, cooldown_s=cooldown_s)
         return self.get_handler(event_type)
 
     # --- events: subscription, recording, waiting -------------------------
@@ -428,6 +442,7 @@ class Runtime:
         if event_type is None:
             return
         data = event.get("data") or {}
+        self.slog("event", type=event_type, data=data)
         if event_type not in HAZARD_EVENT_TYPES:
             self._record_event(event_type, data)
         if event_type == "death":
