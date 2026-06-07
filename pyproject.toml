@@ -5,23 +5,16 @@ description = "LLM-powered Minecraft bot agent"
 requires-python = ">=3.13"
 dependencies = [
     "aiohttp",
-    "anthropic",
     "httpx",
     "websockets",
+    "mcp",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
     "pytest-asyncio",
-]
-tracing = [
-    "langfuse",
-    "opentelemetry-instrumentation-anthropic",
-]
-mcp = [
-    "mcp",
-    "uvicorn",
 ]
 
 [project.scripts]

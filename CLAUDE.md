@@ -1,19 +1,17 @@
 # Mineclaude
 
-Minecraft bot — Python agent that uses Claude to control a headless MC client.
+Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. Claude Code). The built-in Claude loop and all LLM-provider code were removed in the brain teardown — `agent/runtime.py` is the body, `agent/mcp_server.py` the interface.
 
 ## Commands
 
 - `pytest` — run tests
 - `docker compose up --build` — run full stack (MC server + headless client w/ native bridge mod)
 - `docker compose down -v` — full clean restart (clears volumes, regenerates ops)
-- `mineclaude` — run the agent process (requires `.env` with `ANTHROPIC_API_KEY`)
-- `MOCK_BRIDGE=1 mineclaude` — test agent loop without MC server
+- `mineclaude` — run the MCP launcher. One process, one shared `Runtime`, three faces: the MCP server (streamable-HTTP, default `http://127.0.0.1:5556/mcp` — `MCP_HOST`/`MCP_PORT`), the aiohttp monitor (`MONITOR_PORT`, default 5555), and the bridge event WS (the Runtime owns the subscription). No API key needed — the driving agent is external. `mcp`+`uvicorn` are core deps (plain `pip install -e .`).
+- `MOCK_BRIDGE=1 mineclaude` — run the launcher without a MC server (mock bridge)
 - `BRIDGE_URL` (env, default `http://localhost:8081`) — native bridge HTTP
 - `BRIDGE_WS_URL` (env, default `ws://localhost:8082/events`) — native bridge events WS
-- `NO_CLAUDE=1 mineclaude` — headless mode (no Claude); queue + bridge + monitor stay up so you can drive primitives manually from the frontend Console panel
-- `MCP=1 mineclaude` — **MCP mode**: drive the bot from an external agent (Claude Code) over MCP instead of the built-in Claude loop. No brain, no `LLM_PROVIDER`. Co-hosts one shared `Runtime` behind three faces: the MCP server (streamable-HTTP, default `http://127.0.0.1:5556/mcp` — `MCP_HOST`/`MCP_PORT`), the aiohttp monitor (`MONITOR_PORT`, default 5555), and the bridge event WS (the Runtime owns the subscription here). Needs the `mcp` extra: `.venv/bin/python -m pip install -e ".[mcp]"`. 7 tools: `execute(code, timeout)` (single-flight, blocking), `interrupt()` (out-of-band slot purge), `get_state(flush)`, `screenshot(yaw/pitch/look_at)`, `get_handler(event_type)`, `set_handler(event_type, code, preempts, cooldown_s)`, `wait_for_event(types, timeout)`. `say(message)` is a primitive inside `execute`, not a tool. Connect Claude Code with `claude mcp add --transport http mineclaude http://127.0.0.1:5556/mcp`
-- `LLM_PROVIDER` (env, default `anthropic`) — selects model + endpoint from the registry in `agent/providers.py`. `anthropic` = Claude via `api.anthropic.com` (`ANTHROPIC_API_KEY`); `fireworks` = Kimi K2.6 via Fireworks' Anthropic-compatible endpoint (`FIREWORKS_API_KEY`); `openrouter` = Gemini 3.5 Flash via OpenRouter's Anthropic-compatible `/v1/messages` skin (`OPENROUTER_API_KEY`); `gpt5mini` = GPT-5.4 Mini via the same OpenRouter skin with effort-based reasoning (`OPENROUTER_API_KEY`). Same `anthropic` SDK for all four — only base_url/api_key/model/capability-flags differ. `CLAUDE_MODEL`/`FIREWORKS_MODEL`/`OPENROUTER_MODEL`/`GPT5MINI_MODEL` override the model within a provider (`gpt5mini` has its own `GPT5MINI_MODEL` knob so it doesn't share — and get clobbered by — the gemini entry's `OPENROUTER_MODEL`). All providers shape reasoning via Anthropic's `thinking: {budget_tokens}` block. Budget-based providers (Fireworks/Gemini) carry a fixed `thinking_budget_tokens`. Effort-based providers (`gpt5mini`, GPT-5/o-series) carry a `reasoning_effort` instead — the client converts it to a budget of `EFFORT_RATIOS[effort] × max_tokens` (medium=0.5), which OpenRouter buckets back to an effort level for the OpenAI model. We do NOT send a top-level `reasoning: {effort}` field — OpenRouter's `/v1/messages` skin silently drops it (verified: minimal vs high gave identical output / 0 thinking tokens). `REASONING_EFFORT` env tunes the effort (xhigh/high/medium/low/minimal) for effort-based providers
+- **MCP tools (7):** `execute(code, timeout)` (single-flight, blocking; runs Python with the primitive namespace), `interrupt()` (out-of-band slot purge), `get_state(flush)`, `screenshot(yaw/pitch/look_at)`, `get_handler(event_type)`, `set_handler(event_type, code, preempts, cooldown_s)`, `wait_for_event(types, timeout)`. `say(message)` is a primitive inside `execute`, not a tool. Connect Claude Code: `claude mcp add --transport http mineclaude http://127.0.0.1:5556/mcp`
 - `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
 ## Project Structure
@@ -29,17 +27,17 @@ Minecraft bot — Python agent that uses Claude to control a headless MC client.
 
 - Protocol-based bridge (mock/real share interface)
 - Executor injection on ActionQueue (decoupled from sandbox)
-- exec() sandbox with AST validation (no imports, no dunders)
-- Static system prompt enables Anthropic prompt caching. The `cache_control` marker is provider-gated in `ClaudeClient._system_blocks` — emitted for Anthropic, omitted for Fireworks (which auto-caches the longest prefix and rejects the marker on tool defs). The stable-prefix injection pattern below is what makes Fireworks' automatic prefix caching pay off too
-- gameState injected as synthetic tool_use/tool_result pair on EVERY Claude iteration (not just once per chat turn) — unique `gamestate_auto_<iter>` tool_use_id keeps the cache prefix stable through prior messages and only diverges at the latest injection. Prevents Claude from deciding on a 10-iteration-old snapshot
-- Plan document (`state/plan.md`) injected chat-level via the same synthetic pair mechanism
+- exec() sandbox with AST validation (no imports, no dunders) — used both by `execute` and by authored `set_handler` bodies
+- `Controller` seam: `reflexes.py` depends on a Protocol (`preempt`/`resume`/`slog`/`emit_event`/`bridge`), not on a concrete host. `Runtime` implements it
+- Single-flight slot: exactly one action drives the bridge at a time. `execute()` takes it (rejects concurrent calls as `busy`); `interrupt()` is out-of-band. This is why the MCP server + monitor Console **must** share one `Runtime` in one process
+- Two event surfaces on `Runtime`: `reflexes.recent` (rolling hazard fires → `get_state.reflexes_recent`) vs the flushable `_events` buffer (chat/death/respawn + mod world-mutations → `get_state.events` / `wait_for_event`)
 - `.env` file loaded at startup (not committed, see `.env.example`)
 
 ## Tech
 
-- Python 3.13, deps: aiohttp, anthropic, httpx, websockets
+- Python 3.13, deps: aiohttp, httpx, websockets, mcp, uvicorn
     - use the virtual environment at .venv/
-- Entry point: `mineclaude = "agent.main:main"`
+- Entry point: `mineclaude = "agent.main:main"` (the MCP launcher)
 - Monitor: aiohttp server on port 5555 (MONITOR_PORT) inside agent process
 - Frontend: React + Vite dev server on port 5173, proxies `/api` to monitor
   - `cd frontend && npm run dev` — dev server

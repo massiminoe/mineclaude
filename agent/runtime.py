@@ -1,12 +1,12 @@
-"""The headless runtime — the body the MCP server (and, transitionally, the
-Claude-loop Agent) drives.
+"""The headless runtime — the body the MCP server drives.
 
-This module will grow to own the bridge handle, primitive namespace, the
-single-flight executor, the reflex registry, and the event buffer (see
-docs/superpowers/specs/2026-06-06-mcp-runtime-extraction.md). For now it
-defines the `Controller` seam: the minimal surface a reflex handler needs from
-its host. `reflexes.py` depends on this protocol (type-only) instead of on the
-`Agent` class, so the body can be lifted out from under the brain.
+Owns the bridge handle, the primitive namespace, the single-flight executor +
+action queue, the reflex registry, the flushable event buffer, and a small
+event bus the monitor subscribes to. It also implements the `Controller` seam
+the reflex layer reaches its host through (`reflexes.py` depends on that
+protocol type-only, not on Runtime). `agent/mcp_server.py` exposes Runtime's
+MCP-facing methods (execute / get_state / screenshot / handlers / wait_for_event)
+as tools.
 """
 
 from __future__ import annotations
@@ -66,10 +66,9 @@ def _normalize_mod_event(raw: dict) -> dict[str, Any]:
 class Controller(Protocol):
     """What a reflex handler / the reflex registry needs from its host.
 
-    Both the transitional `Agent` (via thin wrappers) and the future `Runtime`
-    satisfy this structurally. `resume()` replaces the brain-specific
-    `_stage_resume`: under `Agent` it wakes the Claude loop; under `Runtime` it
-    appends a notable event to the buffer for the next `get_state`.
+    `Runtime` satisfies this structurally. `resume()` signals a reflex handler
+    finished recovering; Runtime records it as a notable event the next
+    `get_state` / `wait_for_event` surfaces.
     """
 
     bridge: BridgeClient
@@ -100,14 +99,11 @@ PreemptHook = Callable[[], Coroutine[Any, Any, None]]
 
 class Runtime:
     """The headless body: bridge + primitives + single-flight executor +
-    reflex registry + event bus. Implements Controller for the reflexes.
+    reflex registry + flushable event buffer + a small event bus. Implements
+    Controller for the reflexes, and exposes the MCP-facing surface.
 
-    Transitional (P2): the Claude-loop Agent owns a Runtime and delegates to
-    it. The Agent injects `slog` (so sub-action logging reaches its per-turn
-    session logger) and `on_resume` (so a completed reflex wakes the Claude
-    loop), and registers a preempt-hook that cancels its in-flight Claude turn.
-    P3 moves event subscription + the event buffer in here; P5 deletes the Agent
-    and these injection seams, and `resume()` becomes a buffer append.
+    `slog` is an optional structured-logging hook (e.g. a SessionLogger.emit)
+    for sub-action + reflex tracing; when None those traces are dropped.
     """
 
     def __init__(
@@ -115,11 +111,9 @@ class Runtime:
         bridge: BridgeClient,
         *,
         slog: Callable[..., None] | None = None,
-        on_resume: Callable[[str], None] | None = None,
     ) -> None:
         self.bridge = bridge
         self._slog_cb = slog
-        self._on_resume = on_resume
         self._callbacks: dict[str, list[Callable[[str, Any], Coroutine[Any, Any, None]]]] = {}
         self._preempt_hooks: list[PreemptHook] = []
 
@@ -154,7 +148,7 @@ class Runtime:
     def start(self) -> None:
         self.queue.start()
 
-    # --- event bus (monitor + brain subscribe via .on) --------------------
+    # --- event bus (the monitor subscribes via .on) -----------------------
 
     def on(self, event: str, callback: Callable[[str, Any], Coroutine[Any, Any, None]]) -> None:
         self._callbacks.setdefault(event, []).append(callback)
@@ -170,13 +164,14 @@ class Runtime:
 
     def add_preempt_hook(self, hook: PreemptHook) -> None:
         """Register a coroutine run at the front of preempt() — before the
-        queue/bridge are halted. The Agent uses this to cancel its Claude turn."""
+        queue/bridge are halted. A general extension point for cancelling
+        out-of-band work that must stop before the slot is cleared."""
         self._preempt_hooks.append(hook)
 
     async def preempt(self) -> None:
-        """Acquire/clear the action slot. Runs the preempt-hooks (e.g. the
-        brain's cancel-Claude-turn) first, then interrupts the queue — which
-        also halts Baritone + any /attack loop via the pre-interrupt hook.
+        """Acquire/clear the action slot. Runs the preempt-hooks first, then
+        interrupts the queue — which also halts Baritone + any /attack loop via
+        the pre-interrupt hook.
 
         Runs the hooks and the queue interrupt independently of each other's
         failures, and does NOT touch handler tasks, so a handler that calls
@@ -196,12 +191,9 @@ class Runtime:
         await self.preempt()
 
     def resume(self, event_type: str) -> None:
-        # Transitional: wake the Claude loop if a brain injected on_resume.
-        if self._on_resume is not None:
-            self._on_resume(event_type)
-        # Standalone: surface "a reflex finished recovering" as an event, so a
-        # get_state / wait_for_event consumer (the MCP path) can react to the
-        # recovery completing rather than to the hazard fire alone.
+        # Surface "a reflex finished recovering" as an event, so a get_state /
+        # wait_for_event consumer can react to the recovery completing rather
+        # than to the hazard fire alone.
         self._record_event("reflex_done", {"event_type": event_type})
 
     def slog(self, event: str, **data: Any) -> None:
