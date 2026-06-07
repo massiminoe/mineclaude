@@ -23,9 +23,12 @@ import org.slf4j.LoggerFactory
  *   - [`cancelBlockBreaking()`] in `finally` to release the partial state
  *     if we time out
  *
- * The HTTP worker thread loops, sleeping ~50 ms (one tick) between
- * progress nudges. We can't run the loop entirely on the tick thread
- * because that would freeze MC's render/input for the duration.
+ * The HTTP worker thread loops, nudging progress once per client tick.
+ * Pacing comes from [TickThread.submitAndWait] blocking until the next
+ * tick drains (~50 ms) — NOT from a worker-side sleep, which would stack
+ * on top of the tick-wait and slow mining to ~⅔ speed. We can't run the
+ * loop entirely on the tick thread because that would freeze MC's
+ * render/input for the duration.
  *
  * # Occlusion handling
  * MC's eye-ray can intersect a nearer block first (angle too shallow,
@@ -39,8 +42,16 @@ import org.slf4j.LoggerFactory
 object BreakRoute {
     private val log = LoggerFactory.getLogger("mineclaude-bridge.break")!!
 
-    private const val DEADLINE_MS = 15_000L
-    private const val POLL_INTERVAL_MS = 50L
+    // Obsidian is 9.4s with a diamond pickaxe at full speed; under amd64
+    // emulation the client can tick below 20 TPS, stretching wall-clock
+    // break time. 30s leaves headroom for the slowest legitimate mines.
+    private const val DEADLINE_MS = 30_000L
+    // Just a yield. The real pacing is submitAndWait blocking until the next
+    // client tick (~50ms) — see the loop in swingUntilBroken. A large sleep
+    // here STACKS on top of that tick-wait, dropping updateBlockBreakingProgress
+    // from ~20/s to ~13/s (≈⅔ vanilla mining speed) and pushing obsidian past
+    // the deadline. Keep this near-zero so the loop self-paces to the tick rate.
+    private const val POLL_INTERVAL_MS = 5L
     private const val MAX_OCCLUDER_DEPTH = 2
 
     fun register(bridge: HttpBridge) {
