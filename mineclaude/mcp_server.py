@@ -52,15 +52,24 @@ def build_mcp(
 
     @mcp.tool(
         description=(
-            "Run Python with the Minecraft primitive namespace, blocking until "
-            "it finishes. Primitives are async (await them); call say('...') to "
-            "talk; `return` a value to report a result. Single-flight: returns "
-            "status='busy' if an action is already running. Status is one of "
-            "completed / failed / cancelled / busy / timeout."
+            "Run Python with the Minecraft primitive namespace. Blocks until the "
+            "action finishes OR until the inline-wait budget elapses. Primitives "
+            "are async (await them); call say('...') to talk; `return` a value to "
+            "report a result. Single-flight: returns status='busy' if an action "
+            "is already running. `timeout` is the action's hard cap (killed at "
+            "timeout). `wait` is the inline-wait budget in seconds before this "
+            "call hands back status='running' while the action keeps going in "
+            "the background (it keeps the slot — poll get_state() for "
+            "action.result, or interrupt()); defaults to the server's "
+            "MINECLAUDE_EXECUTE_WAIT_S (50s, sized under the client timeout). "
+            "Status is one of completed / failed / cancelled / busy / timeout / "
+            "running."
         )
     )
-    async def execute(code: str, timeout: float = 300.0) -> dict[str, Any]:
-        return asdict(await runtime.execute(code, timeout=timeout))
+    async def execute(
+        code: str, timeout: float = 300.0, wait: float | None = None
+    ) -> dict[str, Any]:
+        return asdict(await runtime.execute(code, timeout=timeout, wait=wait))
 
     @mcp.tool(
         description=(

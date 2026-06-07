@@ -11,7 +11,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 - `MOCK_BRIDGE=1 mineclaude` — run the launcher without a MC server (mock bridge)
 - `BRIDGE_URL` (env, default `http://localhost:8081`) — native bridge HTTP
 - `BRIDGE_WS_URL` (env, default `ws://localhost:8082/events`) — native bridge events WS
-- **MCP tools (7):** `execute(code, timeout)` (single-flight, blocking; runs Python with the primitive namespace), `interrupt()` (out-of-band slot purge), `get_state(flush)`, `screenshot(yaw/pitch/look_at)`, `get_handler(event_type)`, `set_handler(event_type, code, preempts, cooldown_s)`, `wait_for_event(types, timeout)`. `say(message)` is a primitive inside `execute`, not a tool. Connect Claude Code: `claude mcp add --transport http mineclaude http://127.0.0.1:5556/mcp`
+- **MCP tools (7):** `execute(code, timeout, wait)` (single-flight; blocks up to the inline-wait budget `wait` (default `MINECLAUDE_EXECUTE_WAIT_S`=50s, sized under the client's request timeout) then returns `status:"running"` while the action keeps running in the background and holds the slot; `timeout` is the action's hard cap), `interrupt()` (out-of-band slot purge), `get_state(flush)`, `screenshot(yaw/pitch/look_at)`, `get_handler(event_type)`, `set_handler(event_type, code, preempts, cooldown_s)`, `wait_for_event(types, timeout)`. `say(message)` is a primitive inside `execute`, not a tool. Connect Claude Code: `claude mcp add --transport http mineclaude http://127.0.0.1:5556/mcp`
 - `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
 
 ## Project Structure

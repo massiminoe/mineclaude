@@ -149,6 +149,47 @@ async def test_execute_slot_frees_after_completion():
     assert res.result == "2"
 
 
+async def test_execute_outliving_inline_wait_returns_running_handle():
+    # A long action with a short inline-wait budget hands back a running
+    # handle (instead of erroring) while it keeps going in the background.
+    rt = _runtime()
+    rt.start()
+    res = await rt.execute("await sleep(5)\nreturn 'done'", timeout=30, wait=0.1)
+    assert res.status == "running"
+    assert res.action_id
+    # The slot stays held while it runs: a concurrent execute is rejected busy.
+    busy = await rt.execute("return 'x'", wait=0.1)
+    assert busy.status == "busy"
+    # When the background action finishes, the slot frees and the result is
+    # observable on the live snapshot.
+    await rt.queue.drain()
+    state = await rt.get_state()
+    assert state.action["state"] == "completed"
+    assert state.action["result"] == "done"
+    assert (await rt.execute("return 'next'", wait=0.1)).status == "completed"
+
+
+async def test_execute_running_handle_can_be_interrupted():
+    # interrupt() releases a slot held by a backgrounded running action.
+    rt = _runtime()
+    rt.start()
+    res = await rt.execute("await sleep(5)\nreturn 'never'", timeout=30, wait=0.1)
+    assert res.status == "running"
+    await rt.interrupt()
+    # Slot freed by preempt() even though the cancel path emits no completion.
+    assert (await rt.execute("return 'ok'", wait=0.1)).status == "completed"
+
+
+async def test_execute_inline_wait_env_override(monkeypatch):
+    monkeypatch.setenv("MINECLAUDE_EXECUTE_WAIT_S", "0.1")
+    rt = _runtime()
+    rt.start()
+    assert rt._inline_wait_s == 0.1
+    # Default wait now picks up the env value → long action returns running.
+    res = await rt.execute("await sleep(5)\nreturn 'x'", timeout=30)
+    assert res.status == "running"
+
+
 # --- get_state -------------------------------------------------------------
 
 

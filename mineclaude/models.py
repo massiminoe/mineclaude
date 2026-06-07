@@ -15,8 +15,15 @@ from typing import Any, Literal
 #   failed    — the sandbox/code raised
 #   cancelled — a reflex or interrupt() preempted the slot mid-run
 #   busy      — the single-flight slot was already held (concurrent execute)
-#   timeout   — the action exceeded its timeout
-ExecuteStatus = Literal["completed", "failed", "cancelled", "busy", "timeout"]
+#   timeout   — the action exceeded its (hard) timeout and was killed
+#   running   — the action outlived the inline-wait budget and is STILL going
+#               in the background; it holds the single-flight slot until it
+#               ends. Poll get_state() (its `action.result` fills in on
+#               completion) or interrupt() it. This lets a long action survive
+#               a short client-side request timeout instead of erroring.
+ExecuteStatus = Literal[
+    "completed", "failed", "cancelled", "busy", "timeout", "running"
+]
 
 HandlerSource = Literal["default", "authored"]
 

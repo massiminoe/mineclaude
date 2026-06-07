@@ -6,12 +6,13 @@ The tools the server exposes. `say(message)` is **not** a tool — it is a primi
 
 ## `execute`
 
-Run Python with the Minecraft primitive namespace, blocking until it finishes. Primitives are async (await them); call say('...') to talk; `return` a value to report a result. Single-flight: returns status='busy' if an action is already running. Status is one of completed / failed / cancelled / busy / timeout.
+Run Python with the Minecraft primitive namespace. Blocks until the action finishes OR until the inline-wait budget elapses. Primitives are async (await them); call say('...') to talk; `return` a value to report a result. Single-flight: returns status='busy' if an action is already running. `timeout` is the action's hard cap (killed at timeout). `wait` is the inline-wait budget in seconds before this call hands back status='running' while the action keeps going in the background (it keeps the slot — poll get_state() for action.result, or interrupt()); defaults to the server's MINECLAUDE_EXECUTE_WAIT_S (50s, sized under the client timeout). Status is one of completed / failed / cancelled / busy / timeout / running.
 
 | arg | type | required | default |
 |---|---|---|---|
 | `code` | string | True |  |
 | `timeout` | number | False | 300.0 |
+| `wait` | [{'type': 'number'}, {'type': 'null'}] | False | None |
 
 ## `get_handler`
 

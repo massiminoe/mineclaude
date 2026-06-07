@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections import deque
 from typing import Any, Callable, Coroutine, Iterable, Protocol
@@ -37,6 +38,25 @@ logger = logging.getLogger(__name__)
 # without dropping; an overflow flips events_truncated so a silent drop can't
 # masquerade as a quiet world.
 EVENT_BUFFER_MAXLEN = 200
+
+# Grace added to the inline-wait when the action's hard `timeout` is the
+# binding constraint (timeout <= inline budget): wait this much past the cap so
+# execute() observes the action's own timeout-kill and reports the true
+# terminal status, rather than racing it to a false status="running".
+_INLINE_WAIT_GRACE_S = 1.0
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float from the environment, falling back to `default` if unset
+    or unparseable (a typo'd override degrades to the default, not a crash)."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("ignoring non-float %s=%r; using default %s", name, raw, default)
+        return default
 
 # The hazard event types that react via the ReflexRegistry and surface in
 # `reflexes_recent`. Every OTHER event type (chat, death, respawn, and the
@@ -130,8 +150,22 @@ class Runtime:
         # the registry handler (if any) is a native default.
         self._authored_handlers: dict[str, str] = {}
         # Single-flight guard: execute() rejects with status="busy" while an
-        # action is already in flight. interrupt() is always out-of-band.
+        # action is already in flight. Set True the moment an action is
+        # enqueued; cleared when that action reaches a terminal state — via the
+        # action:completed hook (completed/failed/timeout) or preempt()
+        # (cancelled). NOT cleared by execute() merely returning, so a long
+        # action that outlives the inline-wait budget keeps holding the slot
+        # while it runs in the background. interrupt() is always out-of-band.
         self._executing = False
+
+        # Inline-wait budget (seconds): how long execute() blocks waiting for
+        # the action to finish before returning a status="running" handle and
+        # letting it continue in the background. Decoupled from any one client's
+        # request timeout — set MINECLAUDE_EXECUTE_WAIT_S to match (just under)
+        # whatever timeout the driving MCP client enforces. Default 50s sits
+        # safely under Claude Code's ~60s tool-call timeout; bump it if your
+        # client waits longer. A per-call `wait` arg to execute() overrides it.
+        self._inline_wait_s = _env_float("MINECLAUDE_EXECUTE_WAIT_S", 50.0)
 
         self.queue = ActionQueue()
         self.primitives = make_primitives(bridge, on_subaction=self._on_subaction)
@@ -187,6 +221,10 @@ class Runtime:
             await self.queue.interrupt()
         except Exception:
             logger.exception("queue interrupt failed during preempt")
+        # A cancelled action does not emit action:completed (the worker
+        # re-raises CancelledError past that emit), so release the slot here —
+        # otherwise an interrupted "running" action would wedge it busy.
+        self._executing = False
 
     async def interrupt(self) -> None:
         """Public name for preempt() — the out-of-band 'stop everything' verb."""
@@ -235,6 +273,11 @@ class Runtime:
         logger.info(f"Action {action.id} STARTED: {action.code[:200]}")
 
     async def _on_action_completed(self, event: str, action, *_extra) -> None:
+        # Release the single-flight slot the instant the action terminates —
+        # this, not execute() returning, is what frees the slot (execute() may
+        # have already handed back a status="running" handle). The cancelled
+        # path (interrupt) skips this emit, so preempt() clears the slot too.
+        self._executing = False
         elapsed = (action.finished_at - action.started_at) if action.started_at and action.finished_at else 0
         if action.status.value == "completed":
             logger.info(f"Action {action.id} COMPLETED ({elapsed:.1f}s): {action.result or 'no output'}")
@@ -267,12 +310,24 @@ class Runtime:
 
     # --- execute ----------------------------------------------------------
 
-    async def execute(self, code: str, timeout: float = 300.0) -> ExecuteResult:
-        """Run `code` through the single-flight slot, blocking until it ends.
+    async def execute(
+        self, code: str, timeout: float = 300.0, wait: float | None = None
+    ) -> ExecuteResult:
+        """Run `code` through the single-flight slot, blocking until it ends
+        OR until the inline-wait budget elapses — whichever comes first.
 
         Rejects with status="busy" if an action is already in flight — the slot
         is single-flight by contract; concurrency comes from an out-of-band
         watcher that calls interrupt(), not from overlapping executes.
+
+        `timeout` is the action's HARD cap: exceed it and the action is killed
+        (status="timeout"). `wait` is the INLINE-wait budget: how long this call
+        blocks before handing back a status="running" handle while the action
+        keeps going in the background (it keeps the slot until it ends; poll
+        get_state() for `action.result`, or interrupt()). `wait` defaults to
+        self._inline_wait_s (env MINECLAUDE_EXECUTE_WAIT_S). When `wait` is >=
+        `timeout` the hard cap binds first, so we wait just past it and report
+        the real terminal status instead of a spurious "running".
         """
         if self._executing:
             self.slog("execute_rejected", reason="busy", code=code)
@@ -282,23 +337,57 @@ class Runtime:
                 duration_s=0.0,
                 error="An action is already running; interrupt() it or wait.",
             )
+        # Held until the action terminates (see _on_action_completed / preempt),
+        # not merely until this call returns.
         self._executing = True
         try:
             action = await self.queue.enqueue(code, timeout=timeout)
-            self.slog("execute_start", action_id=action.id, code=code, timeout=timeout)
-            await self.queue.drain()
-            result = self._action_to_result(action)
-            self.slog(
-                "execute_done",
-                action_id=action.id,
-                status=result.status,
-                duration_s=round(result.duration_s, 3),
-                result=result.result,
-                error=result.error,
-            )
-            return result
-        finally:
+        except BaseException:
+            # Never enqueued → nothing will clear the slot for us; release it.
             self._executing = False
+            raise
+        self.slog("execute_start", action_id=action.id, code=code, timeout=timeout)
+
+        wait_s = self._inline_wait_s if wait is None else wait
+        if wait_s >= timeout:
+            # The hard cap binds first: the action will be killed at `timeout`,
+            # so wait just past it to observe and report the real terminal
+            # status (typically "timeout") instead of racing to a false
+            # "running" handle for an action that's already dead.
+            wait_s = timeout + _INLINE_WAIT_GRACE_S
+        else:
+            wait_s = max(0.0, wait_s)
+        try:
+            await asyncio.wait_for(self.queue.drain(), timeout=wait_s)
+        except asyncio.TimeoutError:
+            # Outlived the inline budget. Leave it running (slot stays held);
+            # hand back a handle the caller can poll / interrupt.
+            elapsed = time.time() - (action.started_at or action.enqueued_at)
+            self.slog(
+                "execute_running",
+                action_id=action.id,
+                waited_s=round(wait_s, 3),
+            )
+            return ExecuteResult(
+                status="running",
+                action_id=action.id,
+                duration_s=round(elapsed, 3),
+                error=(
+                    f"Still running after {wait_s:g}s inline budget. It holds the "
+                    "slot until it ends — poll get_state() (action.result fills "
+                    "in on completion) or interrupt() to abort."
+                ),
+            )
+        result = self._action_to_result(action)
+        self.slog(
+            "execute_done",
+            action_id=action.id,
+            status=result.status,
+            duration_s=round(result.duration_s, 3),
+            result=result.result,
+            error=result.error,
+        )
+        return result
 
     @staticmethod
     def _action_to_result(action: Action) -> ExecuteResult:
