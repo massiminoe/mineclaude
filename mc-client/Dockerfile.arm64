@@ -1,0 +1,108 @@
+# arm64-native headless MC client image.
+#
+# The amd64 path (mc-client/Dockerfile) builds FROM 3arthqu4ke/headlessmc:latest,
+# which is published amd64-only and so runs under Rosetta/qemu emulation on
+# Apple Silicon (~7 GB RAM, in-world). This image instead runs a NATIVE arm64
+# JVM: the only thing we still need from the HeadlessMC image is its launcher
+# JAR (pure Java, architecture-independent), which we COPY out of the amd64
+# image WITHOUT executing it. Everything else (Xvfb, Mesa software GL, ffmpeg,
+# the JDK) is native arm64. Net result measured in-world: ~1.6 GB vs ~6.9 GB.
+#
+# The one arm64-specific wrinkle is LWJGL natives: MC 1.21.5's manifest only
+# ships linux-x86_64 .so files, so we bake the official linux-arm64 LWJGL 3.3.3
+# natives and point the game at them at runtime (see entrypoint.arm64.sh).
+
+# --- Stage 1: build the mineclaude bridge mod (already multi-arch) ----------
+FROM eclipse-temurin:21-jdk AS mod-builder
+WORKDIR /build
+COPY mc-mod/gradlew mc-mod/settings.gradle.kts mc-mod/build.gradle.kts mc-mod/gradle.properties ./
+COPY mc-mod/gradle ./gradle
+RUN ./gradlew --no-daemon dependencies > /dev/null 2>&1 || true
+COPY mc-mod/src ./src
+RUN ./gradlew --no-daemon build -x test
+
+# --- HMC jar source: amd64 image used purely as a file source (never run) ---
+# COPY --from does not execute the image, so pulling the amd64 manifest here is
+# free of emulation. This pins us to the exact HMC build the amd64 path uses.
+FROM --platform=linux/amd64 3arthqu4ke/headlessmc:latest AS hmc-src
+
+# --- Stage 2: native arm64 runtime -----------------------------------------
+FROM eclipse-temurin:21-jdk
+
+# Runtime deps: screen (kept for parity/debugging), curl for health polls,
+# xvfb + mesa for software OpenGL, ffmpeg for the bridge's vision endpoints,
+# unzip for the arm64 natives extraction, python3 for RCON opping.
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
+    python3 python3-pip screen curl unzip \
+    xvfb mesa-utils libgl1-mesa-dri libgl1 ffmpeg \
+    > /dev/null 2>&1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/python3 /usr/bin/python
+
+# HeadlessMC launcher jar (architecture-independent Java) from the amd64 image.
+COPY --from=hmc-src /headlessmc/headlessmc-launcher-wrapper.jar /headlessmc/
+
+# Configure HeadlessMC for native arm64 + headless rendering. hmc.java.versions
+# points at the image's own Temurin 21 (all MC 1.21.5 needs); invert.lwjgl.flag
+# makes the `-lwjgl` launch flag DISABLE the headless stub (i.e. real Xvfb
+# rendering, which the bridge captures via ffmpeg).
+RUN mkdir -p /headlessmc/HeadlessMC && { \
+    echo "hmc.gamedir=/headlessmc/HeadlessMC/run"; \
+    echo "hmc.java.versions=/opt/java/openjdk/bin/java"; \
+    echo "hmc.offline=true"; \
+    echo "hmc.offline.username=Claude"; \
+    echo "hmc.check.xvfb=true"; \
+    echo "hmc.assets.dummy=false"; \
+    echo "hmc.invert.lwjgl.flag=true"; \
+    } >> /headlessmc/HeadlessMC/config.properties
+
+# Bake the arm64 LWJGL 3.3.3 natives (~5 MB) — used by the build bootstrap below
+# (via librarypath) to render before the natives jars are merged.
+COPY mc-client/download-arm64-natives.sh /tmp/download-arm64-natives.sh
+RUN bash /tmp/download-arm64-natives.sh /opt/arm64-natives
+
+# Pre-resolve Fabric. cd /headlessmc so HMC reads our config (gamedir/username)
+# from /headlessmc/HeadlessMC — otherwise it falls back to ./HeadlessMC defaults
+# (--gameDir /root/.minecraft, username Offline, and our mods dir is ignored).
+RUN cd /headlessmc && java -jar headlessmc-launcher-wrapper.jar --command download fabric:1.21.5
+
+# Build bootstrap: launch once to download the vanilla libraries + assets and
+# render (proving arm64 GL via librarypath), THEN merge the arm64 LWJGL .so into
+# the resolved natives-linux jars. Baking the merge here keeps the RUNTIME path
+# simple and proven: HMC extracts arm64 natives straight from the jars, no
+# per-launch overlay or librarypath tricks. Libraries + assets are baked into
+# the image (self-contained, fast + reliable startup).
+COPY mc-client/merge-arm64-natives-into-jars.sh /tmp/merge-arm64-natives-into-jars.sh
+RUN set -e; cd /headlessmc; \
+    Xvfb :99 -screen 0 854x480x24 -ac +extension GLX +render -noreset >/tmp/xvfb-build.log 2>&1 & \
+    sleep 2; \
+    DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 JAVA_TOOL_OPTIONS="-Dorg.lwjgl.librarypath=/opt/arm64-natives" \
+      java -jar headlessmc-launcher-wrapper.jar --command launch fabric:1.21.5 -lwjgl -offline \
+      >/tmp/boot-build.log 2>&1 & \
+    for i in $(seq 1 120); do grep -q "gui.png-atlas" /tmp/boot-build.log 2>/dev/null && break; sleep 3; done; \
+    grep -q "gui.png-atlas" /tmp/boot-build.log || { echo "BUILD BOOTSTRAP FAILED:"; tail -40 /tmp/boot-build.log; exit 1; }; \
+    bash /tmp/merge-arm64-natives-into-jars.sh; \
+    pkill -9 java 2>/dev/null || true; pkill -9 Xvfb 2>/dev/null || true; \
+    rm -f /tmp/.X99-lock
+
+# Runtime mod JARs (same script + versions as the amd64 path), MINUS
+# hmc-specifics: that mod installs HMC's in-game JLine command console, whose
+# JLine FFM terminal provider is compiled for Java 22 and hard-crashes on our
+# Java 21 runtime ("Failed to start JLineCommandLineReader"). The amd64 path
+# needs it for the `connect` console command; the arm64 path joins via MC's
+# native quickPlay instead, so it is pure liability here.
+COPY mc-client/download-mods.sh /tmp/download-mods.sh
+RUN MODS_DIR=/tmp/mods bash /tmp/download-mods.sh && rm -f /tmp/mods/hmc-specifics*.jar
+
+# Freshly built mineclaude bridge mod from stage 1.
+COPY --from=mod-builder /build/build/libs/ /tmp/mod-builder-libs/
+
+# mcrcon for the entrypoint's RCON gamerule setup.
+RUN pip3 install --break-system-packages mcrcon
+
+COPY mc-client/options.txt /tmp/options.txt
+COPY mc-client/entrypoint.arm64.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

@@ -1,0 +1,18 @@
+# Native arm64 override for the headless MC client.
+#
+# The base docker-compose.yml pins mc-client to `platform: linux/amd64` and
+# builds the emulated HeadlessMC image (~7 GB RAM in-world). This override swaps
+# in the native arm64 image (mc-client/Dockerfile.arm64, ~1.6 GB in-world) and
+# drops the amd64 pin. The mc-server service is untouched (one shared server).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.arm64.yml up --build
+#
+# Everything else (ports 8081/8082, RECORD_VIDEO, the recordings volume) is
+# inherited from the base file.
+services:
+  mc-client:
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: mc-client/Dockerfile.arm64

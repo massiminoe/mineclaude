@@ -5,6 +5,15 @@ services:
       EULA: "TRUE"
       VERSION: "1.21.5"
       ONLINE_MODE: "false"
+      # On a FRESH server (empty volume) itzg must resolve + download Minecraft
+      # from launchermeta.mojang.com, which returns an IPv6 (AAAA) address.
+      # Docker Desktop's IPv6 egress is non-functional, and itzg's netty-based
+      # resolver doesn't fall back to IPv4 like curl/wget do -> startup dies with
+      # "resolve-minecraft-version command failed ... Network is unreachable".
+      # Forcing the IPv4 stack sidesteps it. (A server whose jar is already
+      # cached in its volume never hits this, which is why an existing stack
+      # keeps working while a brand-new project fails.)
+      JAVA_TOOL_OPTIONS: "-Djava.net.preferIPv4Stack=true"
       # Offline mode can't produce Mojang-signed chat; with secure-profile
       # enforcement left on (the vanilla default), the server kicks human
       # players ("lost connection: Disconnected") on join or first chat
