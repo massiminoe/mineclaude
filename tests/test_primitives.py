@@ -481,3 +481,66 @@ async def test_attack_stop_cancels_in_flight_loop(bridge):
     assert resp.data["reason"] == "cancelled"
     # Golem still alive (health 100, 5/swing → ≤20 swings) → not killed.
     assert resp.data["swings"] < 20
+
+
+# --- unified use() primitive ------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_use_eats_food_in_air(bridge, prims):
+    """use(item) with no look_at is a pure in-air use: food consumes one and
+    reports the inventory delta."""
+    bridge._add_to_inventory("bread", 3)
+    result = await prims["use"]("bread")
+    assert result["used"] is True
+    assert result["dispatch"] == "item"
+    assert result["inventory_delta"] == {"bread": -1}
+    assert any(i["name"] == "bread" and i["count"] == 2 for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_use_block_dispatch_on_aim(bridge, prims):
+    """look_at landing on a known block dispatches the block branch and
+    reports the hit."""
+    # mock seeds a grass_block at (1, 64, 0)
+    bridge._add_to_inventory("torch", 5)
+    result = await prims["use"]("torch", look_at=(1.5, 64.5, 0.5))
+    assert result["dispatch"] == "block"
+    assert result["used"] is True
+    assert result["hit"]["block"] == "grass_block"
+    assert result["hit"]["x"] == 1 and result["hit"]["y"] == 64 and result["hit"]["z"] == 0
+
+
+@pytest.mark.asyncio
+async def test_use_falls_through_to_item_when_aim_misses(bridge, prims):
+    """look_at over empty space → no block → item-use fall-through (vanilla
+    doItemUse semantics). Food still eats."""
+    bridge._add_to_inventory("bread", 1)
+    result = await prims["use"]("bread", look_at=(50.0, 64.0, 50.0))
+    assert result["dispatch"] == "item"
+    assert result["used"] is True
+    assert result["inventory_delta"] == {"bread": -1}
+
+
+@pytest.mark.asyncio
+async def test_use_missing_item_raises(bridge, prims):
+    """Equipping an item we don't have is a hard error."""
+    with pytest.raises(RuntimeError, match="No diamond_sword in inventory"):
+        await prims["use"]("diamond_sword")
+
+
+@pytest.mark.asyncio
+async def test_use_empty_hand_over_air_is_noop(bridge, prims):
+    """No item, no block hit → used: False (not an exception)."""
+    result = await prims["use"](look_at=(50.0, 64.0, 50.0))
+    assert result["used"] is False
+    assert result["dispatch"] == "item"
+
+
+@pytest.mark.asyncio
+async def test_use_bridge_strips_minecraft_prefix(bridge):
+    """Bridge-level: namespaced item id is normalized."""
+    bridge._add_to_inventory("apple", 2)
+    resp = await bridge.use("minecraft:apple")
+    assert resp.status == "success"
+    assert resp.data["item"] == "apple"
+    assert resp.data["used"] is True

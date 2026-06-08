@@ -130,3 +130,51 @@ inv = await getInventory()
 log(f"Items: {len(inv)}")
 return "Status check complete"
 ```
+
+## Fluids, obsidian, and a nether portal (the unified `use`)
+
+`use(item, look_at=(x,y,z))` is the one right-click for buckets, torches, flint
+& steel, doors — it aims the eye and dispatches on the real raycast. The key is
+*where you aim*: a point on the water source fills, a point on a block face
+places against that face.
+
+```python
+# Cast obsidian: pour water onto a lava SOURCE (flowing lava -> cobblestone).
+# One pour flows across a pool and converts every source it touches.
+r = await use("bucket", look_at=(-10.0, 68.9, 62.5))   # fill from the water surface
+log(r["inventory_delta"])                               # {"water_bucket": 1, "bucket": -1}
+await use("water_bucket", look_at=(-13.0, 68.9, 62.0))  # pour at the lava pool edge
+await use("bucket", look_at=(-13.0, 68.9, 62.0))        # scoop the source back (clears flow)
+
+# Mine the obsidian (diamond pickaxe; ~7-10s each). breakBlockAt self-navigates.
+await equip("diamond_pickaxe")
+for x in range(-15, -12):
+    for z in range(62, 65):
+        await breakBlockAt(x, 68, z)
+await collectItems(10)
+```
+
+```python
+# Build + light a portal. Place bottom row -> side columns -> top row so every
+# block anchors to a neighbour. Frame plane z=59, x=-8..-5, y=69..73.
+for x in range(-8, -4):                      # bottom row on the ground
+    await placeBlock("obsidian", x, 59, y=69)
+for y in (70, 71, 72):                        # side columns
+    await placeBlock("obsidian", -8, 59, y=y)
+    await placeBlock("obsidian", -5, 59, y=y)
+for x in range(-8, -4):                       # top row
+    await placeBlock("obsidian", x, 59, y=73)
+
+# Light from the GROUND, aiming at a TOP block: the eye is well below it, so the
+# real ray hits its DOWN face -> fire lands in the interior-top cell and the
+# portal ignites while you stay outside the portal plane (no nether teleport).
+# Stand within ~4.5 blocks first or use() will try (and fail) to path upward.
+await goToPosition(-6, 60)
+await use("flint_and_steel", look_at=(-6, 73, 59))
+```
+
+```python
+# Wall torch: aim at a point on the wall face you want it on. To put a torch on
+# the NORTH face of the block at (x,y,z), aim just outside that face.
+await use("torch", look_at=(x + 0.5, y + 0.5, z - 0.49))
+```

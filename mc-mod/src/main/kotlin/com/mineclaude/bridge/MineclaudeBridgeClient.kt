@@ -68,11 +68,14 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // player before handing off to Baritone — Baritone can't path from
         // a fully submerged start (PathNode map size: 1 → instant give-up).
         SurfaceRoute.register(bridge)
-        // Generic right-click endpoints. /use_item is "right-click in air"
-        // (food, potions, bows, ender pearls) — calls interactItem directly
-        // so the crosshair target is irrelevant. /interact is "right-click
-        // an existing block" (doors, buttons, levers, fence gates) — clicks
-        // *on* the target rather than against an adjacent like /place.
+        // Unified right-click. /use {item?, look_at_*?, hold_ms?} aims at a
+        // real point and dispatches on the actual raycast (interactBlock →
+        // interactItem fall-through) — one path for buckets, torches, flint &
+        // steel, doors, eating. /use_item ("right-click in air") and /interact
+        // ("right-click this block") are thin shims over it, kept for
+        // backwards compatibility. /place stays separate (auto-anchor build
+        // convenience, not a raw right-click).
+        UseRoute.register(bridge)
         UseItemRoute.register(bridge)
         InteractRoute.register(bridge)
         // Phase 7 vision — /screenshot and /video/stream. Both shell out

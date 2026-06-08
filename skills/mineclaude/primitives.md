@@ -169,6 +169,37 @@ Auto-paths within reach. Fails on air. If the click opens a screen
 `[partial]` — use the dedicated chest/furnace/craft primitives
 for those instead.
 
+### `await use(item: 'str | None' = None, *, look_at: 'tuple[float, float, float] | None' = None, hold_ms: 'int | None' = None) -> 'dict'`
+
+Unified right-click — the one primitive behind every "use an item"
+interaction (it's what a player does pressing the use key).
+
+Forms:
+  - use("bread")                               -> eat (use in air)
+  - use("water_bucket", look_at=(x,y,z))       -> pour/place at the aim
+  - use("bucket", look_at=(wx,wy,wz))          -> fill from a water/lava source
+  - use("torch", look_at=(x+0.5,y+1,z+0.5))    -> place on the face you look at
+  - use("flint_and_steel", look_at=(x,y,z))    -> light fire on the hit face
+  - use(look_at=(x,y,z))                        -> right-click whatever's held / empty hand
+
+`look_at` aims the eye at that exact world point and dispatches on the
+REAL raycast: if the ray hits a block it tries interactBlock (door,
+torch, flint & steel, any BlockItem); otherwise it falls through to
+item-use (buckets fill/pour, food). Omit `look_at` for a pure in-air
+use. Auto-navigates within reach; equips `item` first if given.
+
+To put fire/torch INSIDE or on a specific face, aim at a point on that
+face (e.g. a top-row portal block from the ground gives a downward face
+so fire lands in the interior). Buckets: aim at the source's centre to
+fill, at the target block to pour.
+
+Returns a dict: `used` (did anything happen), `dispatch` ("block" or
+"item"), `hit` ({block,x,y,z,face}) when a block was struck, and
+`inventory_delta` (e.g. {"water_bucket": 1, "bucket": -1} after a
+fill). Raises only on hard failures (item missing, navigation failed);
+a no-op (aim missed / not usable here) returns `used: False` rather
+than raising — check it.
+
 ### `await getStats() -> 'dict'`
 
 Return {health, hunger, position:{x,y,z}, biome, time}. Position is a

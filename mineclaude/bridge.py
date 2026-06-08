@@ -80,6 +80,12 @@ class BridgeClient(Protocol):
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
     async def use_item(self, item: str, hold_ms: int | None = None) -> BridgeResponse: ...
     async def interact(self, x: int, y: int, z: int) -> BridgeResponse: ...
+    async def use(
+        self,
+        item: str | None = None,
+        look_at: tuple[float, float, float] | None = None,
+        hold_ms: int | None = None,
+    ) -> BridgeResponse: ...
     async def heightmap(
         self,
         x0: int,
@@ -291,6 +297,21 @@ class RealBridgeClient:
 
     async def interact(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.post("/interact", json={"x": x, "y": y, "z": z}))
+
+    async def use(
+        self,
+        item: str | None = None,
+        look_at: tuple[float, float, float] | None = None,
+        hold_ms: int | None = None,
+    ) -> BridgeResponse:
+        body: dict[str, Any] = {}
+        if item is not None:
+            body["item"] = item
+        if look_at is not None:
+            body["look_at_x"], body["look_at_y"], body["look_at_z"] = look_at
+        if hold_ms is not None:
+            body["hold_ms"] = hold_ms
+        return self._parse(await self._http.post("/use", json=body))
 
     async def heightmap(
         self,
@@ -885,6 +906,60 @@ class MockBridgeClient:
         return BridgeResponse(
             "error", f"Nothing to interact with at ({x}, {y}, {z}) — block is air",
         )
+
+    _USE_FOODS = {
+        "bread": 5, "cooked_beef": 8, "apple": 4, "carrot": 3,
+        "cooked_chicken": 6, "cooked_porkchop": 8, "cookie": 2,
+        "golden_apple": 4, "honey_bottle": 6, "dried_kelp": 1,
+    }
+
+    async def use(
+        self,
+        item: str | None = None,
+        look_at: tuple[float, float, float] | None = None,
+        hold_ms: int | None = None,
+    ) -> BridgeResponse:
+        """Mock of the unified right-click. Aims (look_at) → block dispatch if a
+        known block sits at that cell, else item-use; food consumes + heals."""
+        held = "empty_hand"
+        if item is not None:
+            held = item.replace("minecraft:", "")
+            if not any(e["name"] == held for e in self._inventory):
+                return BridgeResponse("error", f"No {held} in inventory")
+
+        dispatch = "item"
+        hit = None
+        if look_at is not None:
+            bx, by, bz = (math.floor(look_at[0]), math.floor(look_at[1]), math.floor(look_at[2]))
+            for b in self._nearby_blocks:
+                if b["x"] == bx and b["y"] == by and b["z"] == bz and b["name"] != "air":
+                    dispatch = "block"
+                    hit = {"block": b["name"], "x": bx, "y": by, "z": bz, "face": "up"}
+                    break
+
+        inv_delta: dict[str, int] = {}
+        accepted = True
+        if dispatch == "item":
+            if held in self._USE_FOODS:
+                self._remove_from_inventory(held, 1)
+                self._hunger = min(20, self._hunger + self._USE_FOODS[held])
+                inv_delta = {held: -1}
+            elif held == "empty_hand":
+                # nothing held + no block hit → vanilla no-op
+                accepted = False
+
+        data: dict[str, Any] = {
+            "used": accepted, "dispatch": dispatch, "item": held,
+            "hold_ms": hold_ms or 0, "method": "simulated",
+        }
+        if look_at is not None:
+            data["aimed"] = list(look_at)
+        if hit is not None:
+            data["hit"] = hit
+        if inv_delta:
+            data["inventory_delta"] = inv_delta
+        msg = f"Used {held} on {hit['block']}" if dispatch == "block" else f"Used {held}"
+        return BridgeResponse("success", msg, data)
 
     async def heightmap(
         self,
