@@ -20,11 +20,10 @@ import kotlin.math.ceil
  * resulting CraftingScreenHandler.
  *
  * For 2x2 recipes: clicks directly into the player's PlayerScreenHandler
- * crafting slots (PSH 1..4). No UI is opened — PlayerScreenHandler is
- * always the active handler when no other screen is up, and clickSlot
- * works against it. (The legacy bridge had to press the inventory key
- * because Minescript's container API only worked when a UI was showing;
- * native click-slot doesn't have that constraint.)
+ * crafting slots (PSH 1..4). PlayerScreenHandler is always the active
+ * handler when no other screen is up, and clickSlot works against it
+ * without any UI — but MenuClicker displays the InventoryScreen anyway
+ * (cosmetic, client-side only) so the craft is visible in the recording.
  *
  * Click model per ingredient (mirrors legacy `_perform_crafts_in_open_menu`):
  *   1. PICKUP button=0 on source — picks up entire stack to cursor
@@ -132,8 +131,8 @@ object CraftRoute {
 
     /**
      * Click into the 2x2 PlayerScreenHandler crafter (PSH slots 1..4).
-     * No UI to open. Cleanup pass shift-clicks any leftover grid items
-     * back to inventory before returning.
+     * Cleanup pass shift-clicks any leftover grid items back to
+     * inventory before returning.
      */
     private fun craftViaInventory(recipe: Recipes.Recipe, craftsNeeded: Int): BridgeResponse {
         val gridSlots = Recipes.patternToInventorySlots(recipe)

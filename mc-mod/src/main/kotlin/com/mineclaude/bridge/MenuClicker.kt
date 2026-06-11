@@ -1,6 +1,7 @@
 package com.mineclaude.bridge
 
 import net.minecraft.client.MinecraftClient
+import net.minecraft.client.gui.screen.ingame.InventoryScreen
 import net.minecraft.client.network.ClientPlayerEntity
 import net.minecraft.screen.PlayerScreenHandler
 import net.minecraft.screen.ScreenHandler
@@ -96,14 +97,17 @@ internal object MenuClicker {
     }
 
     /**
-     * Run [body] against the player's PlayerScreenHandler. No UI is opened
-     * — PlayerScreenHandler is always the player's `currentScreenHandler`
+     * Run [body] against the player's PlayerScreenHandler.
+     * PlayerScreenHandler is always the player's `currentScreenHandler`
      * when no other screen is up, and `interactionManager.clickSlot`
-     * works against it directly. So this is mostly a guard: refuse if
-     * some other screen is up, refuse if the cursor is non-empty, then
-     * run the body. The legacy code had to press the inventory key
-     * because the Minescript `container_*` API only worked when a UI was
-     * displaying; that constraint doesn't apply to native click-slot.
+     * works against it directly — no UI is *required*. We still display
+     * the InventoryScreen (client-side only, no server round-trip) so
+     * the 2x2 craft is visible in the recording/stream. Guards first:
+     * refuse if some other screen is up, refuse if the cursor is
+     * non-empty, then run the body. The legacy code had to press the
+     * inventory key because the Minescript `container_*` API only worked
+     * when a UI was displaying; that constraint doesn't apply to native
+     * click-slot.
      */
     fun <R> withOpenedInventory(body: (ScreenHandler) -> R): R {
         val handler = TickThread.submitAndWait(timeoutMs = 1_000) {
@@ -116,14 +120,16 @@ internal object MenuClicker {
             if (!h.cursorStack.isEmpty) {
                 error("cursor is not empty — refusing to click")
             }
+            // Cosmetic only: clickSlot doesn't need a Screen, but showing
+            // the inventory makes the 2x2 craft visible in the recording.
+            MinecraftClient.getInstance().setScreen(InventoryScreen(player))
             h
         }
         return try {
             body(handler)
         } finally {
-            // Cleanup wasn't strictly needed (no UI was opened) but a
-            // defensive close protects against bodies that opened
-            // something themselves and forgot to close.
+            // Closes the cosmetic InventoryScreen (setScreen(null)) and
+            // protects against bodies that opened something themselves.
             forceClose()
         }
     }
