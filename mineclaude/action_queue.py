@@ -246,6 +246,21 @@ class ActionQueue:
         """Return True while the queue is executing an action."""
         return self._running_action is not None
 
+    def find_action(self, action_id: str) -> Action | None:
+        """Look up an action by id among the running action + the recent ring.
+
+        Returns the live Action object — the same one the worker mutates to its
+        terminal status — or None if unknown (never enqueued) or aged out of
+        `recent` (maxlen 10). Backs Runtime.wait_for_action's level-triggered
+        completion check: an id handed back by execute() is always either still
+        running or sitting in `recent`, so those two scopes suffice."""
+        if self._running_action is not None and self._running_action.id == action_id:
+            return self._running_action
+        for a in self._recent:
+            if a.id == action_id:
+                return a
+        return None
+
     def running_action(self) -> Action | None:
         """The action currently executing, or None. The same object the worker
         mutates, so a caller can hold the reference across interrupt() and read

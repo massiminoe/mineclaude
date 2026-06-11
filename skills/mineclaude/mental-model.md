@@ -8,7 +8,11 @@ dusk with a wooden pickaxe.
 
 `get_state()` is your eyes — it carries position, health, hunger, biome, time,
 inventory, equipped items, the current action, recent reflex fires, and buffered
-events. Read it before deciding; don't act on a snapshot ten actions stale. Use
+events. `inventory_slots` is `"M/36"` — occupied of the 36 storage slots; when it
+reads `36/36` you have no empty slot, so a craft output or pickup of a *new* item
+type silently fails (the classic "+0 chest (inventory full?)"). Clear space or
+store before crafting/collecting if you're near full. Read it before deciding;
+don't act on a snapshot ten actions stale. Use
 `screenshot(...)` only when you need *visual* context (verify a build, read a
 sign, survey terrain) — the state snapshot already has the numbers. Aim the
 camera deliberately with `look_at=[x,y,z]` or `yaw`/`pitch`; after Baritone
@@ -58,8 +62,13 @@ tool — re-`equip` the pickaxe/sword after eating mid-task.
 - **Descend with a staircase**, never straight down: step down one, forward one,
   repeat. You fall into lava or strand yourself otherwise; the staircase lets you
   walk back up without spending blocks.
-- **Equip the right tool first** — pickaxe for stone/ore, axe for wood, shovel for
-  dirt/sand, sword for mobs. Bare-handed stone drops nothing and is ~6× slower.
+- **Tools:** `breakBlockAt` auto-selects a tool that can harvest the block
+  (pickaxe for stone/ore, axe for wood, shovel for dirt/sand), so you won't mine
+  bare-handed even with a torch left in hand. It grabs the BEST suitable tool
+  (highest tier → fastest), so unmanaged it'll spend your diamond pickaxe on
+  cobblestone. To be conservative, `equip` the cheaper tool yourself — a tool you
+  already hold that works is kept, never overridden. `attack` does NOT auto-equip
+  — equip a sword before fighting.
 - **Vertical (trees): bottom-up.** **3D clusters (ore/stone): highest y first** —
   a block above your target occludes the crosshair and cascades "not target"
   errors; clearing the top layer first removes the occluders.
@@ -78,8 +87,9 @@ tool — re-`equip` the pickaxe/sword after eating mid-task.
    Clearing leaves *after* walls are up breaks your own walls (you mine whatever
    the eye-ray hits). Stacked structures must go bottom-up — a layer anchors on the
    row below; skip the bottom and everything above fails "no adjacent solid block".
-4. **Side effect — placing swaps your hand to the block.** Re-`equip` your tool
-   before the next break/attack, or you fall back to bare-hands speed.
+4. **Side effect — placing swaps your hand to the block.** `breakBlockAt` re-picks
+   a mining tool on its own, so a following break is fine — but `attack` doesn't,
+   so re-`equip` your sword before fighting or you swing the block bare-handed.
 5. For build sites, `getHeightmap(x0,z0,w,h)` once and reduce in Python — never
    loop a per-cell query (that trap ate minutes of wall-time on a 20×20 sweep).
    To inspect a specific *set* of cells (footprint preflight, re-checking known

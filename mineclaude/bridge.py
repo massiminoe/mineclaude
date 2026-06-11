@@ -395,6 +395,13 @@ class MockBridgeClient:
         self._health = 20.0
         self._hunger = 20
         self._inventory: list[dict] = []
+        # What the bot is holding / wearing, by slot. Mirrors the native
+        # bridge's `equipped` block so MOCK_BRIDGE + tests see real values
+        # in get_state().equipped instead of an all-null placeholder.
+        self._equipped: dict[str, str | None] = {
+            "hand": None, "head": None, "chest": None, "legs": None, "feet": None,
+        }
+        self._held_slot = 0
         self._nearby_blocks: list[dict] = [
             {"name": "grass_block", "x": 1, "y": 64, "z": 0, "distance": 1.0},
             {"name": "dirt", "x": 0, "y": 63, "z": 0, "distance": 1.0},
@@ -417,6 +424,8 @@ class MockBridgeClient:
             "inventory": list(self._inventory),
             "biome": "plains",
             "time": 6000,
+            "held_slot": self._held_slot,
+            "equipped": dict(self._equipped),
         }
         if include_events:
             data["events"] = []
@@ -435,9 +444,38 @@ class MockBridgeClient:
 
     async def goto(self, x: float, z: float, y: float | None = None) -> BridgeResponse:
         # Mock: pretend the heightmap puts feet at y=64 unless caller pinned it.
+        # Mirror the real bridge's truth-in-return shape: report the achieved
+        # position + whether the bot actually moved, so a no-op can't read as a
+        # walk. The mock teleports exactly, so residual distance is always 0.
         resolved_y = y if y is not None else 64.0
-        self._position = {"x": x, "y": resolved_y, "z": z}
-        return BridgeResponse("success", f"Moved to {x}, {resolved_y}, {z}")
+        start = self._position.copy()
+        target = {"x": x, "y": resolved_y, "z": z}
+        traveled = (
+            (start["x"] - x) ** 2
+            + (start["y"] - resolved_y) ** 2
+            + (start["z"] - z) ** 2
+        ) ** 0.5
+        moved = traveled > 1.0
+        self._position = dict(target)
+        here = f"({x:g}, {resolved_y:g}, {z:g})"
+        message = (
+            f"Walked to {here} — 0 from target {here}"
+            if moved
+            else f"Did not move — already at {here}, 0 from target {here} (within arrival range)"
+        )
+        return BridgeResponse(
+            "success",
+            message,
+            {
+                "arrived": True,
+                "moved": moved,
+                "position": dict(self._position),
+                "target": target,
+                "start": start,
+                "distance": 0.0,
+                "traveled": round(traveled, 1),
+            },
+        )
 
     async def mine(self, block: str, count: int = 1) -> BridgeResponse:
         collected = 0
@@ -846,8 +884,14 @@ class MockBridgeClient:
         )
 
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
+        name = item.replace("minecraft:", "")
         for entry in self._inventory:
-            if entry["name"] == item:
+            if entry["name"] == name:
+                # Track held/worn so get_status reflects it. "mainhand" is an
+                # alias for "hand"; armor slot names pass through.
+                key = "hand" if slot in ("hand", "mainhand") else slot
+                if key in self._equipped:
+                    self._equipped[key] = name
                 return BridgeResponse("success", f"Equipped {item} to {slot}")
         return BridgeResponse("error", f"No {item} in inventory")
 

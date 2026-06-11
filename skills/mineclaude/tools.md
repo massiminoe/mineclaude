@@ -55,6 +55,15 @@ Install an authored reaction body for an event type. `code` is AST-validated the
 | `preempts` | boolean | False | False |
 | `cooldown_s` | number | False | 0.0 |
 
+## `wait_for_action`
+
+Block until the action `action_id` finishes, returning the same shape as execute (status completed/failed/cancelled/timeout, with result/error). This is the clean completion idiom for a backgrounded action: execute(wait=0) hands back status='running' + an action_id, then wait_for_action(action_id) blocks once with no timeout to guess. Level-triggered — returns immediately if the action already terminated (no missable race), and status='running' if still going at `timeout` (call again or interrupt()).
+
+| arg | type | required | default |
+|---|---|---|---|
+| `action_id` | string | True |  |
+| `timeout` | number | False | 300.0 |
+
 ## `wait_for_event`
 
 Block until the next event whose type is in `types` (any type if omitted) is recorded, or `timeout` seconds elapse. Returns {timed_out, event} where event is {type, data, ts} or null. Future-only — drain with get_state first, then watch for new events.

@@ -1,6 +1,8 @@
 package com.mineclaude.bridge
 
 import net.minecraft.client.MinecraftClient
+import net.minecraft.client.network.ClientPlayerEntity
+import net.minecraft.entity.EquipmentSlot
 import net.minecraft.item.ItemStack
 import net.minecraft.registry.Registries
 
@@ -83,8 +85,29 @@ object PlayerStatusRoutes {
             // Held hotbar slot (0..8). Useful for diagnosing "why is the
             // wrong tool in mainhand" — the source of truth on the client.
             "held_slot" to player.inventory.selectedSlot,
+            // What's actually held + worn, by slot. gamestate.py folds this
+            // into get_state().equipped; without it that block reads all-null
+            // even with a full armor set on. `hand` is the live mainhand item,
+            // so it also exposes "I'm mining with a torch, not a pickaxe".
+            "equipped" to equippedView(player),
         )
     }
+
+    /**
+     * The 5 slots gamestate.py expects in `equipped`: mainhand + the four
+     * armor pieces, each as a `minecraft:`-stripped item path or null when
+     * the slot is empty. Mirrors the inventory naming convention.
+     */
+    private fun equippedView(player: ClientPlayerEntity): Map<String, Any?> = mapOf(
+        "hand" to itemPathOrNull(player.mainHandStack),
+        "head" to itemPathOrNull(player.getEquippedStack(EquipmentSlot.HEAD)),
+        "chest" to itemPathOrNull(player.getEquippedStack(EquipmentSlot.CHEST)),
+        "legs" to itemPathOrNull(player.getEquippedStack(EquipmentSlot.LEGS)),
+        "feet" to itemPathOrNull(player.getEquippedStack(EquipmentSlot.FEET)),
+    )
+
+    private fun itemPathOrNull(stack: ItemStack): String? =
+        if (stack.isEmpty) null else Registries.ITEM.getId(stack.item).path
 
     private fun readInventory(inv: net.minecraft.entity.player.PlayerInventory): List<Map<String, Any>> {
         val result = mutableListOf<Map<String, Any>>()

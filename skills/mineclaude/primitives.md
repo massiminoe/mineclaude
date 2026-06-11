@@ -12,6 +12,13 @@ non-replaceable floor, closest to your current y). Pin y explicitly
 only when you mean a specific altitude (e.g. a y you read off
 gameState or a known landmark).
 
+Returns where you ACTUALLY ended up, not the target: "Walked to
+(px, py, pz) - <d> from target (tx, ty, tz)" on a real move, or
+"Did not move - already at ... (within arrival range)" when the target
+was already within ~2 blocks (a no-op). So a returned string that names
+coords near your start, or says "Did not move", means you did not
+travel there — read it instead of re-scanning position to confirm.
+
 ### `await goToPlayer(player: 'str', distance: 'int' = 3) -> 'str'`
 
 Walk to within `distance` blocks of a named player.
@@ -81,8 +88,16 @@ Capped at 4096 coords per call. For a contiguous ground sweep prefer
 ### `await breakBlockAt(x: 'int', y: 'int', z: 'int') -> 'str'`
 
 Mine/break the block at (x, y, z). Self-navigates within reach
-(Baritone, ~15s budget) — don't goToPosition first. Equip the right
-tool beforehand or you mine bare-handed (slow, no drops on stone).
+(Baritone, ~15s budget) — don't goToPosition first.
+
+Auto-selects a tool that can harvest the block before swinging, so you
+don't have to equip one first and a stray torch/block left in hand by a
+prior place/use won't make you mine bare-handed. It picks the BEST
+suitable tool (highest tier → fastest), e.g. your diamond pickaxe over
+a stone one. To be conservative and spare a premium tool, equip the
+cheaper one yourself: a tool you already hold that can harvest the block
+is KEPT, never overridden. If you own no tool that can harvest the
+block, it mines bare-handed (slow, and stone/ore drop nothing).
 
 ### `await collectItems(radius: 'float' = 6) -> 'str'`
 

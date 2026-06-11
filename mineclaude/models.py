@@ -51,6 +51,10 @@ class GameState:
 
     player: dict[str, Any]
     inventory: list[dict[str, Any]]
+    # Storage fullness as "M/N" — M occupied of N main-inventory slots (36;
+    # armor/offhand excluded). The at-a-glance read for "will a craft output /
+    # pickup be rejected": M == N means no empty slot for a new item type.
+    inventory_slots: str
     equipped: dict[str, Any]
     action: dict[str, Any]
     reflexes_recent: list[dict[str, Any]] = field(default_factory=list)

@@ -29,6 +29,7 @@ def _default_status() -> dict:
         "time": 1000,
         "inventory": [{"slot": 0, "name": "oak_log", "count": 12}],
         "equipped": {"hand": "iron_pickaxe"},
+        "held_slot": 3,
     }
 
 
@@ -205,6 +206,8 @@ async def test_get_state_shape():
     assert state.equipped == {
         "hand": "iron_pickaxe", "head": None, "chest": None, "legs": None, "feet": None,
     }
+    # held_slot (selected hotbar index) is carried into the player block.
+    assert state.player["held_slot"] == 3
     assert state.action["state"] == "idle"
     assert state.events == []
     assert state.events_truncated is False
@@ -404,6 +407,55 @@ async def test_interrupted_backgrounded_action_emits_action_done():
     assert len(done) == 1
     assert done[0]["data"]["status"] == "cancelled"
     assert done[0]["data"]["action_id"] == res.action_id
+
+
+# --- wait_for_action (level-triggered completion) --------------------------
+
+
+async def test_wait_for_action_blocks_until_backgrounded_action_done():
+    # The clean idiom: execute(wait=0) -> running handle, then wait_for_action
+    # blocks once and returns the terminal result with no timeout to guess.
+    rt = _runtime()
+    rt.start()
+    res = await rt.execute("await sleep(0.2)\nreturn 'deep'", timeout=30, wait=0.05)
+    assert res.status == "running"
+    done = await rt.wait_for_action(res.action_id, timeout=5.0)
+    assert done.status == "completed"
+    assert done.action_id == res.action_id
+    assert done.result == "deep"
+
+
+async def test_wait_for_action_returns_immediately_if_already_done():
+    # Level-triggered: an action that already terminated (and may have aged into
+    # `recent`) is reported instantly — no missable future-only race.
+    rt = _runtime()
+    rt.start()
+    res = await rt.execute("return 'fast'")
+    assert res.status == "completed"
+    done = await rt.wait_for_action(res.action_id, timeout=5.0)
+    assert done.status == "completed"
+    assert done.result == "fast"
+
+
+async def test_wait_for_action_unknown_id_is_failed():
+    rt = _runtime()
+    rt.start()
+    res = await rt.wait_for_action("deadbeef", timeout=1.0)
+    assert res.status == "failed"
+    assert "unknown action_id" in (res.error or "")
+
+
+async def test_wait_for_action_running_handle_on_timeout():
+    # Still going when the wait elapses -> status="running" (call again /
+    # interrupt), not a lie that it finished.
+    rt = _runtime()
+    rt.start()
+    res = await rt.execute("await sleep(5)\nreturn 'never'", timeout=30, wait=0.05)
+    assert res.status == "running"
+    out = await rt.wait_for_action(res.action_id, timeout=0.2)
+    assert out.status == "running"
+    assert out.action_id == res.action_id
+    await rt.interrupt()
 
 
 # --- handlers --------------------------------------------------------------

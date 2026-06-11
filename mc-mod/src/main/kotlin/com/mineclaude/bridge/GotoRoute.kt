@@ -35,6 +35,12 @@ object GotoRoute {
     private const val STUCK_POLLS = 10
     private const val DEFAULT_TIMEOUT_S = 60.0
 
+    // How far the player must actually travel for the arrival to count as a
+    // real walk vs. a no-op. A goto whose target is already within
+    // ARRIVE_THRESHOLD returns on the first poll without moving — the response
+    // flags that (`moved=false`) so an "Arrived" can't masquerade as motion.
+    private const val MOVE_EPSILON = 1.0
+
     fun register(bridge: HttpBridge) {
         bridge.addRoute("POST", "/goto") { ex -> handle(ex) }
     }
@@ -82,6 +88,9 @@ object GotoRoute {
         val savedSlot = TickThread.submitAndWait(timeoutMs = 1_000) {
             MinecraftClient.getInstance().player?.inventory?.selectedSlot ?: 0
         }
+        // Snapshot the entry position so the arrival response can report
+        // whether the bot actually relocated (vs. a target already in reach).
+        val startPos = playerPosition()
 
         val cmd = "#goto ${x.toInt()} ${y.toInt()} ${z.toInt()}"
         sendBaritoneCommand(cmd)
@@ -100,7 +109,7 @@ object GotoRoute {
 
                 if (dist <= ARRIVE_THRESHOLD) {
                     log.info("goto: arrived at ({},{},{}), dist={}", px.toInt(), py.toInt(), pz.toInt(), round1(dist))
-                    return arrivedResponse(px, py, pz, dist, x, y, z)
+                    return arrivedResponse(startPos, px, py, pz, dist, x, y, z)
                 }
 
                 val rounded = Triple(round1(px), round1(py), round1(pz))
@@ -137,17 +146,50 @@ object GotoRoute {
         }
     }
 
+    /**
+     * Build the arrival response from the ACHIEVED position, not the requested
+     * target. The old message echoed the target coords verbatim, so a no-op
+     * (target already within ARRIVE_THRESHOLD) read as a successful walk. Now
+     * the message states where the bot actually ended up, its residual distance
+     * to the target, and `moved` — true only if it travelled more than
+     * MOVE_EPSILON from where it started.
+     */
     private fun arrivedResponse(
+        start: Triple<Double, Double, Double>?,
         px: Double, py: Double, pz: Double, dist: Double,
         tx: Double, ty: Double, tz: Double,
-    ): BridgeResponse = HttpBridge.ok(
-        mapOf(
+    ): BridgeResponse {
+        val traveled = if (start != null) {
+            sqrt(
+                (px - start.first) * (px - start.first) +
+                    (py - start.second) * (py - start.second) +
+                    (pz - start.third) * (pz - start.third)
+            )
+        } else {
+            Double.NaN
+        }
+        // Unknown start (null) → assume moved rather than claim a no-op.
+        val moved = traveled.isNaN() || traveled > MOVE_EPSILON
+        val here = "(${round1(px)}, ${round1(py)}, ${round1(pz)})"
+        val target = "(${tx.toInt()}, ${ty.toInt()}, ${tz.toInt()})"
+        val message = if (moved) {
+            "Walked to $here — ${round1(dist)} from target $target"
+        } else {
+            "Did not move — already at $here, ${round1(dist)} from target $target (within arrival range)"
+        }
+        val data = mutableMapOf<String, Any>(
             "arrived" to true,
+            "moved" to moved,
             "position" to mapOf("x" to px, "y" to py, "z" to pz),
+            "target" to mapOf("x" to tx, "y" to ty, "z" to tz),
             "distance" to round1(dist),
-        ),
-        "Arrived at ${tx.toInt()}, ${ty.toInt()}, ${tz.toInt()}",
-    )
+        )
+        if (start != null) {
+            data["start"] = mapOf("x" to start.first, "y" to start.second, "z" to start.third)
+            data["traveled"] = round1(traveled)
+        }
+        return HttpBridge.ok(data, message)
+    }
 
     private fun playerPosition(): Triple<Double, Double, Double>? {
         return TickThread.submitAndWait(timeoutMs = 1_000) {

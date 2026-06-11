@@ -33,8 +33,19 @@ def prims(bridge):
 @pytest.mark.asyncio
 async def test_go_to_position(bridge, prims):
     result = await prims["goToPosition"](100, 200, y=64)
-    assert "Moved to" in result
+    # Reports the achieved position + a real move, not just "ok".
+    assert "Walked to" in result
+    assert "100" in result and "200" in result
     assert bridge._position == {"x": 100, "y": 64, "z": 200}
+
+
+@pytest.mark.asyncio
+async def test_go_to_position_no_op_is_flagged(bridge, prims):
+    # Target already where the bot stands (mock starts at 0,64,0): the response
+    # must say it did NOT move, so a no-op can't read as a successful walk.
+    result = await prims["goToPosition"](0, 0, y=64)
+    assert "Did not move" in result
+    assert bridge._position == {"x": 0, "y": 64, "z": 0}
 
 
 @pytest.mark.asyncio
@@ -49,6 +60,32 @@ async def test_get_stats(bridge, prims):
 async def test_get_inventory(bridge, prims):
     inv = await prims["getInventory"]()
     assert isinstance(inv, list)
+
+
+@pytest.mark.asyncio
+async def test_equip_tracks_equipped_state(bridge, prims):
+    """equip() updates the mock's equipped block so get_status reflects what's
+    held/worn — the contract get_state().equipped reads (was all-null before)."""
+    bridge._add_to_inventory("iron_pickaxe", 1)
+    bridge._add_to_inventory("iron_helmet", 1)
+
+    await prims["equip"]("iron_pickaxe")            # default slot = hand
+    await prims["equip"]("iron_helmet", "head")
+
+    status = (await bridge.get_status()).data
+    assert status["equipped"]["hand"] == "iron_pickaxe"
+    assert status["equipped"]["head"] == "iron_helmet"
+    assert status["equipped"]["chest"] is None
+    assert "held_slot" in status
+
+
+@pytest.mark.asyncio
+async def test_equip_mainhand_alias_maps_to_hand(bridge, prims):
+    """'mainhand' is an alias for 'hand' — both land in equipped['hand']."""
+    bridge._add_to_inventory("stone_pickaxe", 1)
+    await prims["equip"]("stone_pickaxe", "mainhand")
+    status = (await bridge.get_status()).data
+    assert status["equipped"]["hand"] == "stone_pickaxe"
 
 
 @pytest.mark.asyncio

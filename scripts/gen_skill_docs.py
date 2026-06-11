@@ -110,8 +110,9 @@ def gen_events() -> str:
         "respawn": "recorded only",
         "action_done": (
             "a backgrounded action (execute() returned status='running') ended — "
-            "carries `{action_id, status, result, error, duration_s}`; "
-            "wait_for_event(['action_done']) to await it instead of polling"
+            "carries `{action_id, status, result, error, duration_s}`. Prefer "
+            "wait_for_action(action_id) to await it (level-triggered, no missable "
+            "race); wait_for_event(['action_done']) also fires but is future-only"
         ),
     }
     for et, preempts in _DEFAULT_EVENT_POLICY.items():

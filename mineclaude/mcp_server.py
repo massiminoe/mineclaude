@@ -1,6 +1,6 @@
 """MCP server exposing the Runtime over streamable-HTTP.
 
-Seven tools map onto Runtime methods. The server is stateless + JSON-response so
+Eight tools map onto Runtime methods. The server is stateless + JSON-response so
 it co-hosts cleanly with the aiohttp monitor in a single event loop, both
 driving ONE shared Runtime instance. That sharing is mandatory, not incidental:
 the monitor Console and an MCP `execute` contend for the same single-flight
@@ -29,8 +29,11 @@ preloaded primitive namespace (movement, mining, crafting, combat, `say(...)`
 to talk) and blocks until the action finishes; `get_state` returns a structured
 snapshot; `interrupt` is out-of-band and purges the running action. `execute`
 is single-flight — for concurrency, run a watcher that polls `get_state` /
-`wait_for_event` and calls `interrupt`. Reactions to world events (chat, damage,
-lava, ...) are installed with `set_handler`."""
+`wait_for_event` and calls `interrupt`. For a long action that outlived the
+inline wait (status='running'), block on its completion with
+`wait_for_action(action_id)` rather than guessing a `wait_for_event` timeout.
+Reactions to world events (chat, damage, lava, ...) are installed with
+`set_handler`."""
 
 
 def build_mcp(
@@ -40,7 +43,7 @@ def build_mcp(
     port: int = 5556,
     name: str = "mineclaude",
 ) -> FastMCP:
-    """Build the FastMCP server with the 7 tools wired to `runtime`."""
+    """Build the FastMCP server with the 8 tools wired to `runtime`."""
     mcp = FastMCP(
         name,
         host=host,
@@ -153,6 +156,23 @@ def build_mcp(
     ) -> dict[str, Any]:
         ev = await runtime.wait_for_event(types, timeout=timeout)
         return {"timed_out": ev is None, "event": asdict(ev) if ev is not None else None}
+
+    @mcp.tool(
+        description=(
+            "Block until the action `action_id` finishes, returning the same "
+            "shape as execute (status completed/failed/cancelled/timeout, with "
+            "result/error). This is the clean completion idiom for a "
+            "backgrounded action: execute(wait=0) hands back status='running' + "
+            "an action_id, then wait_for_action(action_id) blocks once with no "
+            "timeout to guess. Level-triggered — returns immediately if the "
+            "action already terminated (no missable race), and status='running' "
+            "if still going at `timeout` (call again or interrupt())."
+        )
+    )
+    async def wait_for_action(
+        action_id: str, timeout: float = 300.0
+    ) -> dict[str, Any]:
+        return asdict(await runtime.wait_for_action(action_id, timeout=timeout))
 
     return mcp
 

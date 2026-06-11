@@ -31,12 +31,12 @@ def _make():
     return rt, build_mcp(rt)
 
 
-async def test_tools_list_is_the_seven():
+async def test_tools_list_is_the_eight():
     _rt, mcp = _make()
     names = {t.name for t in await mcp.list_tools()}
     assert names == {
         "execute", "interrupt", "get_state", "screenshot",
-        "get_handler", "set_handler", "wait_for_event",
+        "get_handler", "set_handler", "wait_for_event", "wait_for_action",
     }
 
 
@@ -97,6 +97,19 @@ async def test_wait_for_event_tool_timeout_shape():
         await mcp.call_tool("wait_for_event", {"types": ["never"], "timeout": 0.05})
     )
     assert structured == {"timed_out": True, "event": None}
+
+
+async def test_wait_for_action_tool_returns_execute_shape():
+    _rt, mcp = _make()
+    _c, run = _split(await mcp.call_tool("execute", {"code": "return 'hi'"}))
+    _c, done = _split(
+        await mcp.call_tool(
+            "wait_for_action", {"action_id": run["action_id"], "timeout": 1.0}
+        )
+    )
+    assert done["status"] == "completed"
+    assert done["result"] == "hi"
+    assert done["action_id"] == run["action_id"]
 
 
 async def test_screenshot_tool_returns_image_block():

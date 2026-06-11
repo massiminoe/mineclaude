@@ -18,7 +18,7 @@ import time
 from collections import deque
 from typing import Any, Callable, Coroutine, Iterable, Protocol
 
-from mineclaude.action_queue import Action, ActionQueue
+from mineclaude.action_queue import Action, ActionQueue, ActionStatus
 from mineclaude.bridge import BridgeClient
 from mineclaude.gamestate import build_game_state
 from mineclaude.models import Event, ExecuteResult, GameState, HandlerInfo, Screenshot
@@ -52,6 +52,19 @@ MAX_RETURNED_EVENTS = 100
 # execute() observes the action's own timeout-kill and reports the true
 # terminal status, rather than racing it to a false status="running".
 _INLINE_WAIT_GRACE_S = 1.0
+
+# wait_for_action() re-check cadence. A backgrounded action's terminal
+# `action_done` wakes the waiter instantly; this short cap bounds the latency of
+# two fallbacks: the missable race (the action terminated in the window between
+# the level-triggered state check and parking on the event) and an action that
+# emits no action_done at all (e.g. one observed while still blocking inline).
+_WAIT_ACTION_POLL_S = 0.5
+
+# Action statuses that mean "done" — wait_for_action returns the moment the
+# looked-up action reaches one of these.
+_TERMINAL_STATUSES = frozenset(
+    {ActionStatus.COMPLETED, ActionStatus.FAILED, ActionStatus.CANCELLED}
+)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -651,3 +664,60 @@ class Runtime:
             return None
         finally:
             self._event_waiters = [(t, f) for (t, f) in self._event_waiters if f is not fut]
+
+    # --- wait_for_action --------------------------------------------------
+
+    async def wait_for_action(
+        self, action_id: str, timeout: float = 300.0
+    ) -> ExecuteResult:
+        """Block until the action `action_id` terminates, returning the SAME
+        ExecuteResult shape execute() does.
+
+        Level-triggered, unlike wait_for_event(["action_done"]): it checks the
+        action's CURRENT state first and returns immediately if it has already
+        terminated — so it can't miss the completion of an action that finished
+        before a waiter parked (the future-only race that made the documented
+        execute(wait=0) -> wait_for_event idiom flaky). This is the clean
+        completion idiom for a backgrounded action: execute(wait=0) hands back a
+        status="running" handle, then wait_for_action(handle.action_id) blocks
+        once with no timeout to guess.
+
+        If the action is still running at `timeout` it returns status="running"
+        (the action keeps the slot — call again to keep waiting, or interrupt()
+        to abort). status="failed" with an 'unknown action_id' error if no such
+        action is known (never enqueued, or aged out of the recent ring)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            action = self.queue.find_action(action_id)
+            if action is None:
+                return ExecuteResult(
+                    status="failed",
+                    action_id=action_id,
+                    duration_s=0.0,
+                    error=(
+                        f"unknown action_id {action_id!r} — never enqueued or "
+                        "aged out of the recent-actions ring"
+                    ),
+                )
+            if action.status in _TERMINAL_STATUSES:
+                return self._action_to_result(action)
+            remaining = deadline - loop.time()
+            if remaining <= 0.0:
+                elapsed = time.time() - (action.started_at or action.enqueued_at)
+                return ExecuteResult(
+                    status="running",
+                    action_id=action_id,
+                    duration_s=round(elapsed, 3),
+                    error=(
+                        f"Action still running after {timeout:g}s wait — it holds "
+                        "the slot until it ends; call wait_for_action() again or "
+                        "interrupt() to abort."
+                    ),
+                )
+            # action_done wakes us the instant a backgrounded action ends; the
+            # short cap re-checks state to close the missable-race window and to
+            # catch an action that emits no action_done.
+            await self.wait_for_event(
+                ["action_done"], timeout=min(remaining, _WAIT_ACTION_POLL_S)
+            )

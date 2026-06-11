@@ -26,6 +26,6 @@ Install your own reaction body for any event type with `set_handler` (see handle
 | `death` | True | the bot died — preempts the action slot, then recorded |
 | `chat` | False | a player said something — recorded only |
 | `respawn` | False | recorded only |
-| `action_done` | False | a backgrounded action (execute() returned status='running') ended — carries `{action_id, status, result, error, duration_s}`; wait_for_event(['action_done']) to await it instead of polling |
+| `action_done` | False | a backgrounded action (execute() returned status='running') ended — carries `{action_id, status, result, error, duration_s}`. Prefer wait_for_action(action_id) to await it (level-triggered, no missable race); wait_for_event(['action_done']) also fires but is future-only |
 
 Plus `reflex_done` (synthesized when a hazard handler finishes recovering) and the mod's world-mutation events (`block_broken`, `block_placed`, `entity_attacked`) which arrive via `get_state(flush=True)` with `{type, data, ts}`.

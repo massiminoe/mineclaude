@@ -30,6 +30,16 @@ import org.slf4j.LoggerFactory
  * loop entirely on the tick thread because that would freeze MC's
  * render/input for the duration.
  *
+ * # Tool selection
+ * `interactionManager` mines with whatever is in the mainhand. Before the
+ * swing loop we run [ToolSelector.equipBestToolFor] so the block is mined
+ * with a tool that can actually harvest it (cobblestone/ore drop, faster
+ * break) instead of bare-handed when a prior place/use left a torch held.
+ * It picks the BEST suitable tool (highest tier → fastest). A tool the agent
+ * deliberately equipped — anything already suitable for the block — is left
+ * untouched, which is the hook for sparing a premium tool: equip the cheaper
+ * one yourself.
+ *
  * # Occlusion handling
  * MC's eye-ray can intersect a nearer block first (angle too shallow,
  * dirt above stone, etc.). Without auto-clearing the occluder we'd swing
@@ -160,6 +170,13 @@ object BreakRoute {
             }
             Thread.sleep(100)
         }
+
+        // Hold a tool that can actually harvest this block before swinging.
+        // `interactionManager` mines with whatever's in the mainhand, and a
+        // prior placeBlock/use leaves a torch/block held — without this the
+        // swing would be bare-handed (slow, no drops on stone/ore). A tool
+        // the agent deliberately equipped is kept (see ToolSelector policy).
+        TickThread.submitAndWait(timeoutMs = 2_000) { ToolSelector.equipBestToolFor(pos) }
 
         // Swing loop. Returns true when the block becomes air, false on
         // timeout. cancelBlockBreaking is unconditionally fired in finally

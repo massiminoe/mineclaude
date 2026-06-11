@@ -31,7 +31,7 @@ async def test_await_primitive(primitives):
         'result = await goToPosition(10, 20, y=64)\nreturn result',
         primitives,
     )
-    assert "Moved to" in result
+    assert "Walked to" in result
 
 
 @pytest.mark.asyncio

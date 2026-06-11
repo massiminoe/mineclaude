@@ -25,11 +25,14 @@ short trips, frequent check-ins. The journey is part of it.
    comes back `busy`. If an action runs longer than the inline-wait budget
    (`wait`, default ~50s), `execute` returns `status:"running"` with an
    `action_id` *while the action keeps going in the background* — it still holds
-   the slot. Don't treat that as an error: `wait_for_event(["action_done"])` to
-   block until it finishes (the event carries `{action_id, status, result,
-   error}`), or poll `get_state()` (its `action.result` fills in on
-   completion), or `interrupt()` to abort. Pass a larger `wait` for an action
-   you expect to be long but want to block on; pass `wait=0` to fire-and-watch.
+   the slot. Don't treat that as an error: **`wait_for_action(action_id)`** to
+   block until it finishes (returns the same `{status, result, error}` shape as
+   `execute`, with no timeout to guess — it's level-triggered, so it returns
+   immediately if the action already finished), or `interrupt()` to abort. Pass
+   a larger `wait` for an action you expect to be long but want to block on;
+   pass `wait=0` to fire-and-watch. (`wait_for_event(["action_done"])` also
+   fires on completion, but it's future-only — prefer `wait_for_action` so a
+   fast finish can't slip past a not-yet-parked waiter.)
 3. **React** — between actions, `wait_for_event(...)` or poll `get_state` for
    chat, death, and world events. Install standing reactions with `set_handler`.
 
@@ -39,11 +42,12 @@ execute(code="...python...")     # act (blocks)
 ev = wait_for_event(["chat"], timeout=5)   # react
 ```
 
-## Tools (7)
+## Tools (8)
 
 `execute`, `interrupt`, `get_state`, `screenshot`, `get_handler`, `set_handler`,
-`wait_for_event`. Full schemas in **[tools.md](tools.md)**. `say(message)` is a
-**primitive inside `execute`**, not a tool — talking is something the bot *does*.
+`wait_for_event`, `wait_for_action`. Full schemas in **[tools.md](tools.md)**.
+`say(message)` is a **primitive inside `execute`**, not a tool — talking is
+something the bot *does*.
 
 ## Writing `execute` code
 

@@ -42,16 +42,38 @@ def build_game_state(
         "biome": status.get("biome"),
         "dimension": status.get("dimension"),
         "time": status.get("time"),
+        # Selected hotbar index (0..8) — the "what am I actually holding" read
+        # that pairs with equipped.hand for diagnosing wrong-tool mining.
+        "held_slot": status.get("held_slot"),
     }
+    inventory = list(status.get("inventory") or [])
     return GameState(
         player=player,
-        inventory=list(status.get("inventory") or []),
+        inventory=inventory,
+        inventory_slots=_inventory_slots(inventory),
         equipped=_equipped_view(status.get("equipped")),
         action=_action_view(queue_status or {}, now),
         reflexes_recent=_reflexes_view(recent_reflexes or [], now),
         events=list(events or []),
         events_truncated=events_truncated,
     )
+
+
+# The 36 main-inventory slots (0..8 hotbar + 9..35 main). Armor (36..39) and
+# offhand (40) sit past this and don't count toward "room for a new stack".
+_STORAGE_SLOTS = 36
+
+
+def _inventory_slots(inventory: list[dict[str, Any]]) -> str:
+    """Occupied storage slots as "M/36". Counts inventory stacks whose slot is
+    in the main 36; an entry missing a slot (mock paths) counts as occupied so
+    fullness never reads emptier than it is."""
+    used = 0
+    for entry in inventory:
+        slot = entry.get("slot")
+        if slot is None or slot < _STORAGE_SLOTS:
+            used += 1
+    return f"{used}/{_STORAGE_SLOTS}"
 
 
 def _equipped_view(equipped: Any) -> dict[str, Any]:
