@@ -106,8 +106,13 @@ def gen_events() -> str:
     ]
     other_notes = {
         "chat": "a player said something — recorded only",
-        "death": "the bot died — preempts the action slot, then recorded",
-        "respawn": "recorded only",
+        "death": (
+            "the bot died — full built-in reset (cancels any in-flight reflex "
+            "handler, preempts the action slot, resets reflex cooldowns), then "
+            "recorded. Payload carries `pos` (where the items dropped), "
+            "`dimension`, and best-effort `cause`"
+        ),
+        "respawn": "recorded only — payload carries the respawn `pos`",
         "action_done": (
             "a backgrounded action (execute() returned status='running') ended — "
             "carries `{action_id, status, result, error, duration_s}`. Prefer "

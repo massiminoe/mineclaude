@@ -325,13 +325,7 @@ class ReflexRegistry:
         # its own _preempt(). Awaiting the cancel ensures the prior task
         # has actually unwound before we start the new handler — otherwise
         # the new handler's bridge calls could race the old one's.
-        prior = self._active_handler_task
-        if prior is not None and not prior.done():
-            prior.cancel()
-            try:
-                await prior
-            except (asyncio.CancelledError, Exception):
-                pass
+        await self.cancel_active()
 
         if handler.preempts:
             try:
@@ -369,6 +363,29 @@ class ReflexRegistry:
                 self.controller.resume(handler.event_type)
             except Exception:
                 logger.exception("reflex resume staging failed")
+
+    async def cancel_active(self) -> None:
+        """Cancel and await the in-flight handler task, if any.
+
+        Used by dispatch (latest-wins) and by the host's death reset — a
+        retaliation/flee handler must not keep driving the bridge after
+        the player it was reacting for is dead.
+        """
+        prior = self._active_handler_task
+        if prior is not None and not prior.done():
+            prior.cancel()
+            try:
+                await prior
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    def reset_cooldowns(self) -> None:
+        """Zero every handler's last-fire timestamp. Called on death: a
+        respawned life starts with fresh reflexes — a damage_taken cooldown
+        from the previous life must not suppress reaction right after
+        spawn, when the bot is most vulnerable."""
+        for handler in self._handlers.values():
+            handler._last_fire = 0.0
 
     async def flush(self) -> None:
         """Test helper: await any in-flight handler. No-op in production."""

@@ -312,6 +312,57 @@ async def _record(sink):
     sink.append("preempt")
 
 
+async def test_handle_event_death_cancels_in_flight_reflex_handler():
+    """A retaliation/flee handler must not keep driving the bridge after
+    death — _death_reset cancels it before the slot purge."""
+    rt = _runtime()
+    cancelled = asyncio.Event()
+
+    async def never_ending(_c, _d):
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    from mineclaude.reflexes import ReflexHandler
+    rt.reflexes.register(ReflexHandler(event_type="hostile_nearby", handle=never_ending))
+    await rt._handle_event({"type": "hostile_nearby", "data": {}})
+    await asyncio.sleep(0)  # let the handler task start
+    await rt._handle_event({"type": "death", "data": {}})
+    assert cancelled.is_set()
+
+
+async def test_handle_event_death_resets_cooldowns():
+    """Cooldowns from the previous life must not gate reflexes after respawn."""
+    rt = _runtime()
+    await rt._handle_event({"type": "hostile_nearby", "data": {"kind": "zombie"}})
+    await rt.reflexes.flush()
+    await rt._handle_event({"type": "hostile_nearby", "data": {"kind": "zombie"}})
+    await rt.reflexes.flush()
+    assert len(rt.reflexes.recent) == 1  # second fire gated by the 3s cooldown
+
+    await rt._handle_event({"type": "death", "data": {}})
+    await rt._handle_event({"type": "hostile_nearby", "data": {"kind": "zombie"}})
+    await rt.reflexes.flush()
+    assert len(rt.reflexes.recent) == 2  # cooldown was reset by death
+
+
+async def test_authored_death_handler_runs_after_builtin_reset():
+    """set_handler("death", ...) layers on top of the built-in reset — both
+    the preempt and the authored body run."""
+    bridge = _FakeBridge()
+    rt = _runtime(bridge)
+    fired = []
+    rt.add_preempt_hook(lambda: _record(fired))
+    rt.set_handler("death", "await say('I died')")
+    await rt._handle_event({"type": "death", "data": {}})
+    await rt.reflexes.flush()
+    assert fired == ["preempt"]  # built-in reset still ran
+    assert bridge.chat_messages == ["I died"]
+    assert [e.type for e in rt._events] == ["death"]  # still buffered
+
+
 async def test_handle_event_hazard_dispatched_not_buffered():
     rt = _runtime()  # register_default_handlers ran in __init__
     await rt._handle_event({"type": "hostile_nearby", "data": {"kind": "creeper", "distance": 6}})

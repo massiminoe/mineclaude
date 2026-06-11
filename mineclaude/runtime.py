@@ -85,8 +85,9 @@ def _env_float(name: str, default: float) -> float:
 HAZARD_EVENT_TYPES = frozenset(REFLEX_EVENT_TYPES)
 
 # Built-in reaction policy for the non-hazard event types, reported by
-# get_handler when no handler has been authored over the top. death preempts
-# the slot (record + stop); chat / respawn are record-only.
+# get_handler when no handler has been authored over the top. death runs the
+# full built-in reset (_death_reset: cancel in-flight reflex handler, preempt
+# the slot, reset reflex cooldowns); chat / respawn are record-only.
 _DEFAULT_EVENT_POLICY = {
     "death": True,
     "chat": False,
@@ -586,8 +587,8 @@ class Runtime:
     async def _handle_event(self, event: dict) -> None:
         """Canonical event router. Hazard types react via the ReflexRegistry
         (surfaced in reflexes_recent); every other type is recorded into the
-        flushable buffer. death additionally preempts the slot; an authored
-        handler for any type also dispatches."""
+        flushable buffer. death additionally runs the full built-in reset;
+        an authored handler for any type also dispatches."""
         event_type = event.get("type")
         if event_type is None:
             return
@@ -596,9 +597,29 @@ class Runtime:
         if event_type not in HAZARD_EVENT_TYPES:
             self._record_event(event_type, data)
         if event_type == "death":
-            await self.preempt()
+            await self._death_reset()
         if event_type in self.reflexes.known_types():
             await self.reflexes.dispatch(event_type, data)
+
+    async def _death_reset(self) -> None:
+        """The built-in death reaction: a complete reset of in-flight work.
+
+        Lives here (not as a registry handler) so it is guaranteed — an
+        authored set_handler("death", ...) dispatches AFTER this and layers
+        reaction on top, it never replaces the reset. Order matters:
+
+        1. Cancel the in-flight reflex handler first, so a retaliation /
+           flee reaction can't race the slot purge and keep driving the
+           bridge into the respawn.
+        2. preempt(): hooks, queue purge, Baritone #stop + /attack/stop,
+           slot release, action_done(cancelled) for a backgrounded action.
+        3. Reset reflex cooldowns — the respawned life starts with fresh
+           reflexes (a 30s damage_taken cooldown from the previous life
+           must not suppress reaction right after spawn).
+        """
+        await self.reflexes.cancel_active()
+        await self.preempt()
+        self.reflexes.reset_cooldowns()
 
     def _record_event(self, event_type: str, data: dict) -> Event:
         """Append to the flushable buffer (flagging truncation on overflow) and

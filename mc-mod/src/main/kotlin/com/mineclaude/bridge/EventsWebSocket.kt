@@ -30,6 +30,11 @@ class EventsWebSocket(host: String, port: Int) : WebSocketServer(InetSocketAddre
         // Drop the connection on idle so a half-closed agent doesn't sit
         // forever on the server's client set.
         connectionLostTimeout = 60
+        // The arm64 entrypoint's two-phase launch SIGKILLs a phase-1 game
+        // that already bound this port and accepted a connection; without
+        // SO_REUSEADDR the lingering TIME_WAIT socket makes phase 2's bind
+        // fail (Address already in use) and events go dark for the run.
+        isReuseAddr = true
     }
 
     override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {

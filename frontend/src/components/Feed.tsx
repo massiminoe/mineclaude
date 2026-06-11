@@ -1,23 +1,20 @@
 import { useState, useRef, useEffect } from "react";
-import type { ConversationMessage } from "../types";
-import { ChatOverlay } from "./ChatOverlay";
 
-const BRIDGE_URL = "http://localhost:8081";
-const STREAM_URL = `${BRIDGE_URL}/video/stream?fps=10&quality=50`;
+const FALLBACK_STREAM_URL = "http://localhost:8081/video/stream?fps=10&quality=50";
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 10000;
 
 interface Props {
-  conversation: ConversationMessage[];
+  videoUrl: string | null;
   connected: boolean;
 }
 
-export function VideoPane({ conversation, connected }: Props) {
+export function Feed({ videoUrl, connected }: Props) {
+  const streamUrl = videoUrl ?? FALLBACK_STREAM_URL;
   const [streamStatus, setStreamStatus] = useState<
     "loading" | "connected" | "error"
   >("loading");
-  const [streamSrc, setStreamSrc] = useState(STREAM_URL);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [streamSrc, setStreamSrc] = useState(streamUrl);
   const imgRef = useRef<HTMLImageElement>(null);
   const retryTimer = useRef<number>(0);
   const retryDelay = useRef(RETRY_BASE_MS);
@@ -37,7 +34,7 @@ export function VideoPane({ conversation, connected }: Props) {
       retryTimer.current = window.setTimeout(() => {
         retryTimer.current = 0;
         setStreamStatus("loading");
-        setStreamSrc(`${STREAM_URL}&_=${Date.now()}`);
+        setStreamSrc(`${streamUrl}&_=${Date.now()}`);
         retryDelay.current = Math.min(retryDelay.current * 2, RETRY_MAX_MS);
       }, retryDelay.current);
     };
@@ -53,13 +50,15 @@ export function VideoPane({ conversation, connected }: Props) {
         retryTimer.current = 0;
       }
     };
-  }, []);
+  }, [streamUrl]);
 
   // The MJPEG stream lives on a separate channel from the monitor WS, so an
   // <img> hooked to a multipart response will silently freeze on its last
   // frame when the underlying TCP connection dies — the browser only fires
   // `error` on the *initial* fetch failure, not mid-stream. Force a reload
-  // whenever the monitor WS recovers from a disconnect.
+  // whenever the monitor WS recovers from a disconnect. The setState here is
+  // deliberate: the effect synchronizes with that external stream lifecycle.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (connected && !wasConnected.current) {
       if (retryTimer.current) {
@@ -68,35 +67,31 @@ export function VideoPane({ conversation, connected }: Props) {
       }
       retryDelay.current = RETRY_BASE_MS;
       setStreamStatus("loading");
-      setStreamSrc(`${STREAM_URL}&_=${Date.now()}`);
+      setStreamSrc(`${streamUrl}&_=${Date.now()}`);
     }
     wasConnected.current = connected;
-  }, [connected]);
+  }, [connected, streamUrl]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   return (
-    <div className="video-pane">
+    <div className="feed">
       {streamStatus !== "connected" && (
-        <div className="video-placeholder">
-          <div className="video-placeholder-icon">{"\u25B7"}</div>
-          <div className="video-placeholder-label">
-            {streamStatus === "loading" ? "connecting..." : "video feed"}
-          </div>
+        <div className="feed-placeholder">
+          {streamStatus === "loading" ? "acquiring signal" : "no signal"}
         </div>
       )}
       <img
         ref={imgRef}
-        className="video-stream"
+        className="feed-stream"
         src={streamSrc}
         alt="Minecraft POV"
         style={{ display: streamStatus === "connected" ? "block" : "none" }}
       />
-      {chatOpen ? (
-        <ChatOverlay messages={conversation} onClose={() => setChatOpen(false)} />
-      ) : (
-        <button className="chat-toggle-tab" onClick={() => setChatOpen(true)}>
-          {"\u25B2"} Chat
-        </button>
-      )}
+      <div className="feed-tick tl" />
+      <div className="feed-tick tr" />
+      <div className="feed-tick bl" />
+      <div className="feed-tick br" />
+      <div className="feed-cap">cam 01 / mjpeg 10fps</div>
     </div>
   );
 }

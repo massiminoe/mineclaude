@@ -18,7 +18,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 
 - `mineclaude/` — Python package: `bridge`, `sandbox`, `primitives`, `action_queue`, `reflexes`, `runtime` (headless Runtime + Controller seam), `gamestate` (structured snapshot), `models` (typed return shapes), `mcp_server` (FastMCP, 7 tools), `monitor`, `session_log`, `main` (MCP launcher). The brain (Claude loop + LLM providers) was deleted — MCP is the only interface.
 - `skills/mineclaude/` — the Claude Code skill: how to drive the bot. `SKILL.md` + hand-written `mental-model`/`snippets`/`handlers` + generated `primitives`/`events`/`tools` (run `scripts/gen_skill_docs.py` to regenerate the latter from code)
-- `frontend/` — React + TypeScript + Vite monitor UI (still has brain panels; pending removal)
+- `frontend/` — React + TypeScript + Vite monitor UI ("flight deck"): single read-only screen — MJPEG feed, action queue + reflex rail, position/vitals/inventory footer. No console, no sessions browser, no routing
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
 - `mc-client/` — Dockerfile + entrypoint for the headless MC client container that runs the bridge mod
 - `mc-mod/` — Kotlin Fabric mod (`mineclaude-bridge`). Owns every bridge endpoint the agent + frontend hit. Built in stage 1 of `mc-client/Dockerfile`. HTTP on 8081 (JDK HttpServer), events WS on 8082 (Java-WebSocket). The Phase 0–8 migration history lives in `docs/superpowers/specs/2026-04-*-native-mod-*`
@@ -30,7 +30,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 - Executor injection on ActionQueue (decoupled from sandbox)
 - exec() sandbox with AST validation (no imports, no dunders) — used both by `execute` and by authored `set_handler` bodies
 - `Controller` seam: `reflexes.py` depends on a Protocol (`preempt`/`resume`/`slog`/`emit_event`/`bridge`), not on a concrete host. `Runtime` implements it
-- Single-flight slot: exactly one action drives the bridge at a time. `execute()` takes it (rejects concurrent calls as `busy`); `interrupt()` is out-of-band. This is why the MCP server + monitor Console **must** share one `Runtime` in one process
+- Single-flight slot: exactly one action drives the bridge at a time. `execute()` takes it (rejects concurrent calls as `busy`); `interrupt()` is out-of-band. This is why the MCP server + monitor **must** share one `Runtime` in one process (the monitor observes the same queue the MCP server drives)
 - Two event surfaces on `Runtime`: `reflexes.recent` (rolling hazard fires → `get_state.reflexes_recent`) vs the flushable `_events` buffer (chat/death/respawn + mod world-mutations → `get_state.events` / `wait_for_event`)
 - `.env` file loaded at startup (not committed, see `.env.example`)
 
@@ -105,7 +105,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 - `state/sessions/<ts>-<id>.jsonl` — `SessionLogger` replay log (`mineclaude/session_log.py`), rendered by `python scripts/session_report.py --latest`. The launcher wires `Runtime(bridge, slog=SessionLogger(...).emit)`, so each `mineclaude` run writes one (set `SESSION_LOG=0` to opt out). The log carries the run timeline: `execute_start`/`execute_done` (the code + outcome), inbound `event`s (chat/death/respawn/hazards), `handler_set`, and per-step `subaction`s. Cross-reference with `docker compose logs mc-client` (authoritative mutation log) + the `state/video/*.mp4` recording for bridge-side detail.
 - Bridge-side logs go through SLF4J to MC's standard log — `docker compose logs mc-client` for the live stream, or filter for `mineclaude-bridge` loggers. The legacy mutation-log JSONL is gone with Phase 8; if you need before/after world snapshots, the agent's session log captures pre/post `/status` around each tool call
 
-For hands-on primitive debugging, run `NO_CLAUDE=1 mineclaude` and use the **Console** panel in the monitor frontend. You type the same code Claude would put in `newAction` (e.g. `await goToPosition(0, 64, 0)`), it enqueues on the same action queue, and the resulting trace renders in the Action Queue panel with full subaction breakdown. Useful for reproducing "Claude did X and something weird happened" without Claude in the loop.
+For hands-on primitive debugging, call the `execute` MCP tool directly (e.g. via `claude mcp` or any MCP client) with the snippet to reproduce (e.g. `await goToPosition(0, 64, 0)`) — it enqueues on the same single-flight queue, and the monitor's Actions rail renders the trace with subaction breakdown. The frontend Console panel was removed with the brain teardown; the monitor is read-only now.
 
 E2E tests live in `tests/e2e/` and are opt-in: `pytest --run-e2e`.
 

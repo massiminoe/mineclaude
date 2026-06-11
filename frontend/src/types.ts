@@ -1,18 +1,3 @@
-export interface ContentBlock {
-  type: "text" | "tool_use" | "tool_result";
-  text?: string;
-  id?: string;
-  name?: string;
-  input?: Record<string, unknown>;
-  tool_use_id?: string;
-  content?: string;
-}
-
-export interface ConversationMessage {
-  role: "user" | "assistant";
-  content: string | ContentBlock[];
-}
-
 export interface SubActionItem {
   id: string;
   name: string;
@@ -42,33 +27,25 @@ export interface QueueState {
   recent: ActionItem[];
 }
 
+export interface InventoryItem {
+  name: string;
+  count: number;
+  slot: number;
+}
+
 export interface GameState {
   position: { x: number; y: number; z: number };
   health: number;
   hunger: number;
   biome: string;
+  dimension?: string;
   time: number;
-  inventory: { name: string; count: number; slot: number }[];
-}
-
-export interface WSMessage {
-  type: string;
-  data: Record<string, unknown>;
-  ts: number;
+  held_slot?: number;
+  inventory: InventoryItem[];
 }
 
 export interface ReflexEvent {
   type: string;
   data: Record<string, unknown>;
   ts: number;
-}
-
-export interface UsageTotals {
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_input_tokens: number;
-  cache_read_input_tokens: number;
-  cost_usd: number;
-  calls: number;
-  by_model?: Record<string, Omit<UsageTotals, "by_model">>;
 }

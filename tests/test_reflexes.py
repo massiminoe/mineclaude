@@ -214,6 +214,46 @@ async def test_dispatch_handler_exception_does_not_propagate():
     assert len(reg.recent) == 2
 
 
+async def test_cancel_active_cancels_in_flight_handler():
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    cancelled = asyncio.Event()
+
+    async def never_ending(_a, _d):
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    reg.register(ReflexHandler(event_type="damage_taken", handle=never_ending))
+    await reg.dispatch("damage_taken", {})
+    await asyncio.sleep(0)  # let the handler task start
+    await reg.cancel_active()
+    assert cancelled.is_set()
+    task = reg._active_handler_task
+    assert task is not None and task.done()
+
+
+async def test_cancel_active_noop_when_idle():
+    reg = ReflexRegistry(FakeAgent())
+    await reg.cancel_active()  # nothing in flight — must not raise
+
+
+async def test_reset_cooldowns_allows_immediate_refire():
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    reg.register(ReflexHandler(event_type="entered_lava", handle=stub_handler, cooldown_s=30.0))
+
+    await reg.dispatch("entered_lava", {})
+    await reg.dispatch("entered_lava", {})  # within cooldown — gated
+    assert len(reg.recent) == 1
+
+    reg.reset_cooldowns()
+    await reg.dispatch("entered_lava", {})  # fresh life — fires again
+    assert len(reg.recent) == 2
+
+
 async def test_recent_buffer_capped():
     agent = FakeAgent()
     reg = ReflexRegistry(agent)

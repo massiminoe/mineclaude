@@ -170,7 +170,17 @@ object EventBus {
                 // 1. Death / respawn
                 if (dead && !wasDead) {
                     wasDead = true
-                    pushEvent("death", mapOf("message" to "Player died"))
+                    // Capture where + why before anything resets: pos is the
+                    // item-drop location the agent needs for recovery; cause
+                    // is the damage-source msgId ("lava", "fall", "mob", ...)
+                    // — best-effort, the source can already be cleared.
+                    val deathData = mutableMapOf<String, Any>(
+                        "message" to "Player died",
+                        "pos" to mapOf("x" to player.x, "y" to player.y, "z" to player.z),
+                    )
+                    client.world?.registryKey?.value?.toString()?.let { deathData["dimension"] = it }
+                    runCatching { player.recentDamageSource?.name }.getOrNull()?.let { deathData["cause"] = it }
+                    pushEvent("death", deathData)
                     // Reset transient state across death so we don't false-fire
                     // on respawn (player.air resets, isInLava clears, etc.).
                     lastHealth = -1f
@@ -187,7 +197,10 @@ object EventBus {
                 }
                 if (!dead && wasDead) {
                     wasDead = false
-                    pushEvent("respawn", mapOf("message" to "Player respawned"))
+                    pushEvent("respawn", mapOf(
+                        "message" to "Player respawned",
+                        "pos" to mapOf("x" to player.x, "y" to player.y, "z" to player.z),
+                    ))
                     // Don't fall through — lastHealth is -1, let next tick
                     // initialize cleanly.
                     lastHealth = currentHealth
