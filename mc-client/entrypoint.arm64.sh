@@ -168,6 +168,10 @@ try:
     with MCRcon('$MC_SERVER', 'mineclaude') as mcr:
         print(mcr.command('gamerule doImmediateRespawn true'))
         print(mcr.command('gamerule keepInventory true'))
+        # Let the lone bot skip the night without a creative human watcher
+        # having to sleep too (creative players count toward the total; only
+        # spectators are ignored). 1% => any single sleeper meets the threshold.
+        print(mcr.command('gamerule playersSleepingPercentage 1'))
 except Exception as e:
     print(f'RCON failed: {e}')
 "
