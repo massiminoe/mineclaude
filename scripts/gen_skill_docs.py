@@ -113,6 +113,14 @@ def gen_events() -> str:
             "`dimension`, and best-effort `cause`"
         ),
         "respawn": "recorded only — payload carries the respawn `pos`",
+        "advancement": (
+            "the bot earned an advancement (achievement) — recorded only. "
+            "Payload carries `{id, title, frame, description, parent?}`. Only "
+            "the real (display-bearing) tree fires — recipe-unlock advancements "
+            "are filtered out. The receipt timestamp is the eval signal; GET "
+            "/advancements gives the earned + in-progress snapshot, POST "
+            "/advancements/reset revokes all for a fresh trial"
+        ),
         "action_done": (
             "a backgrounded action (execute() returned status='running') ended — "
             "carries `{action_id, status, result, error, duration_s}`. Prefer "

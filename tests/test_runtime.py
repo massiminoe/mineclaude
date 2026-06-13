@@ -299,6 +299,25 @@ async def test_handle_event_chat_is_recorded_not_dispatched():
     assert len(rt.reflexes.recent) == 0
 
 
+async def test_handle_event_advancement_recorded_and_waitable():
+    """An `advancement` grant (mod's AdvancementTracker → events WS) is a
+    non-hazard: recorded to the flushable buffer, surfaced via get_state, and
+    resolves a wait_for_event waiter — the eval-timing observability path."""
+    rt = _runtime()
+    waiter = asyncio.create_task(rt.wait_for_event(["advancement"], timeout=1.0))
+    await asyncio.sleep(0)  # let the waiter park
+    data = {"id": "minecraft:story/mine_stone", "title": "Stone Age", "frame": "task"}
+    await rt._handle_event({"type": "advancement", "data": data})
+    ev = await waiter
+    assert ev.type == "advancement"
+    assert ev.data == data
+    # Recorded to the flushable buffer, not the hazard/reflex path.
+    assert [e.type for e in rt._events] == ["advancement"]
+    assert len(rt.reflexes.recent) == 0
+    state = await rt.get_state()
+    assert any(e["type"] == "advancement" for e in state.events)
+
+
 async def test_handle_event_death_preempts_and_records():
     rt = _runtime()
     fired = []

@@ -119,8 +119,15 @@ object EventBus {
     fun register() {
         registerChat()
         registerTickStateMachines()
-        log.info("EventBus: hooked chat / death / lava / drowning / damage / tool / hostile")
+        log.info("EventBus: hooked chat / death / lava / drowning / damage / tool / hostile / advancement")
     }
+
+    /**
+     * Public passthrough so sibling trackers (e.g. [AdvancementTracker], which
+     * owns its own state but rides the same WS) can publish on the shared event
+     * envelope without duplicating the connected-client gate.
+     */
+    fun emit(type: String, data: Map<String, Any> = emptyMap()) = pushEvent(type, data)
 
     private fun registerChat() {
         // CHAT fires for player-authored chat (signed or profileless).
@@ -169,6 +176,10 @@ object EventBus {
                     // state alone; we'll re-evaluate on next tick.
                     return@EndTick
                 }
+
+                // 0. Advancement listener — lazy attach + seeding-window close.
+                // Owns its own state; emits `advancement` events on real grants.
+                AdvancementTracker.tick(client)
 
                 val currentHealth = player.health
                 val dead = currentHealth <= 0f || player.isDead

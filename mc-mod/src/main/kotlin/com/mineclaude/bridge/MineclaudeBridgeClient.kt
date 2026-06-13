@@ -22,6 +22,10 @@ class MineclaudeBridgeClient : ClientModInitializer {
         PlayerStatusRoutes.register(bridge)
         NearbyRoutes.register(bridge)
         ProbeRoute.register(bridge)
+        // Advancement (achievement) snapshot. The live signal is the
+        // `advancement` event stream (AdvancementTracker, attached by EventBus);
+        // this route is the ground-truth / resume read for the timing eval.
+        AdvancementRoute.register(bridge)
         // Phase 2 simple writes. /chat ships routed; /equip and /discard
         // ship implemented but unrouted (legacy still owns them) until
         // Phase 2b adds the inventory-move helper.

@@ -92,6 +92,9 @@ _DEFAULT_EVENT_POLICY = {
     "death": True,
     "chat": False,
     "respawn": False,
+    # The bot earned an advancement (achievement). Record-only — surfaced for
+    # observability + eval timing; the mod's AdvancementTracker emits it.
+    "advancement": False,
     # Synthesized when a backgrounded action (one execute() handed back as a
     # status="running" handle) terminates. Never preempts — it's a completion
     # signal for wait_for_event(["action_done"]).

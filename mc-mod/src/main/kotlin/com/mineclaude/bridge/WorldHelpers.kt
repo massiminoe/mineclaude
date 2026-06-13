@@ -67,6 +67,48 @@ internal object WorldHelpers {
         return eyeToBlockDistance(player, pos) <= reach
     }
 
+    /** A point on a block's surface to click, the face it lies on, and the eye distance to it. */
+    data class FaceHit(val pos: Vec3d, val face: Direction, val dist: Double)
+
+    /**
+     * The point on the 1×1×1 cell at [pos] closest to the player's eye, the
+     * outward face it sits on, and the eye→point distance.
+     *
+     * Why nearest-point, not centre: the server's block-interaction range
+     * (`player_block_interaction_range`, default [BLOCK_REACH]) is measured to
+     * the *closest* point of the block, and a right-click's hit position only
+     * needs to land on the block's surface. Centre-based math overestimates
+     * the distance by up to a half-diagonal (~0.87) and guesses the face by
+     * dominant axis — both degrade on a steep angle, the exact case where a
+     * just-traversed door sits off to one side. Clamping the eye to the cell
+     * gives the true nearest surface point (best reach + a server-friendly,
+     * sight-line-faithful hit) in one shot.
+     */
+    fun nearestFaceHit(player: ClientPlayerEntity, pos: BlockPos): FaceHit {
+        val ex = player.x
+        val ey = player.y + EYE_HEIGHT
+        val ez = player.z
+        val minX = pos.x.toDouble(); val maxX = minX + 1.0
+        val minY = pos.y.toDouble(); val maxY = minY + 1.0
+        val minZ = pos.z.toDouble(); val maxZ = minZ + 1.0
+        val cx = ex.coerceIn(minX, maxX)
+        val cy = ey.coerceIn(minY, maxY)
+        val cz = ez.coerceIn(minZ, maxZ)
+        val dist = sqrt((cx - ex).let { it * it } + (cy - ey).let { it * it } + (cz - ez).let { it * it })
+        // Pick the face on the axis where the eye is *most* outside the cell
+        // (largest positive overshoot beyond a boundary). When the eye is
+        // inside the cell on every axis (standing in the cell) all overshoots
+        // are ≤0 and we fall back to the dominant-axis facing side.
+        val faces = listOf(
+            (minX - ex) to Direction.WEST, (ex - maxX) to Direction.EAST,
+            (minY - ey) to Direction.DOWN, (ey - maxY) to Direction.UP,
+            (minZ - ez) to Direction.NORTH, (ez - maxZ) to Direction.SOUTH,
+        )
+        val best = faces.maxByOrNull { it.first }!!
+        val face = if (best.first > 0.0) best.second else playerFacingSide(player, pos)
+        return FaceHit(Vec3d(cx, cy, cz), face, dist)
+    }
+
     /** Eye-to-block-centre distance. Same math as [isBlockWithinReach]. */
     fun eyeToBlockDistance(player: ClientPlayerEntity, pos: BlockPos): Double {
         val ex = player.x
