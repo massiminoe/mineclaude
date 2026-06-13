@@ -111,6 +111,22 @@ await placeBlock("birch_door", door[0], door[1], y=gy)
 return "Shell sealed — door in"
 ```
 
+## Skip the night with a bed
+
+```python
+# A bed is two blocks; either half works. findBlocks returns both — take the
+# nearest. sleepInBed confirms you actually slept and waits for morning; it
+# fails loudly in daytime or with monsters too close, and reports night_skipped.
+beds = await findBlocks("white_bed", 16, 2)   # whatever colour you crafted
+if not beds:
+    return "No bed nearby — craft one (3 wool + 3 planks) and place it first"
+b = beds[0]
+r = await sleepInBed(b["x"], b["y"], b["z"])
+if not r["night_skipped"]:
+    return f"Didn't skip the night ({r['message']}) — clear hostiles and retry"
+return f"Slept through to morning (time={r['time']})"
+```
+
 ## Smelt a batch
 
 ```python

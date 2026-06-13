@@ -34,7 +34,9 @@ not having out there?" Tools wear out, hunger ticks, drops pile up, mobs spawn i
 shadows. One more pickaxe or stack of food is cheap; climbing 100 blocks back for
 what you forgot isn't. A diamond run isn't *go mine* — it's *provision, then mine,
 then return*. Budget durability: an iron pickaxe at remaining≈120 won't survive a
-full diamond trip.
+full diamond trip. And wear what armor you have — `equip(piece, "head"|"chest"|
+"legs"|"feet")` before any fight or deep run turns a lethal hit into a survivable
+one (the bot's first death was a no-armor zombie kill).
 
 ## Take small steps
 
@@ -47,8 +49,15 @@ so players can follow ("got 4 iron, heading deeper") — not every step.
 ## Day / night
 
 `get_state().player["time"]` is the raw tick. Hostiles spawn at night (tick
-13000–23000 within each 24000-tick day). Plan shelter and combat readiness around
-the phase. At dusk, either be fortified or be somewhere you can fight.
+13000–23000 within each 24000-tick day). At dusk you have two answers: fortify
+(or be somewhere you can fight), or **skip the night** — if you have a bed,
+`sleepInBed(x, y, z)` fast-forwards to morning and resets your spawn point. It
+confirms you actually fell asleep (daytime / monsters-too-close / obstructed fail
+loudly with the reason) and returns `night_skipped`. A lone sleeper is enough to
+skip the night on this server, so a returned `night_skipped: false` means you were
+interrupted mid-sleep (took damage) rather than "nobody else slept". Beds are
+cheap insurance: 3 wool + 3 planks, and one carried to a mining camp saves the
+dusk scramble.
 
 ## Hunger
 
@@ -100,8 +109,12 @@ tool — re-`equip` the pickaxe/sword after eating mid-task.
 ## Combat
 
 `attack(entity_id)` loops swings to a kill and auto-paths into melee — one call
-per kill, not per swing. Get the id from `getNearbyEntities`/`findEntities`. Equip
-a sword first. The reflex layer already retaliates / flees on `damage_taken`
+per kill, not per swing. Get the id from `getNearbyEntities`/`findEntities`. When
+you filter, match on `type` (the lowercase id — `sheep`, `zombie`), never `name`
+(the display-cased label — `Sheep`); hand-filtering `getNearbyEntities()` on
+`name == "sheep"` silently misses every mob. `findEntities` is case-insensitive,
+so prefer it. Equip a sword first. The reflex layer already retaliates / flees on
+`damage_taken`
 (see events.md) — don't redo what it did, but verify it worked via `get_state`.
 
 ## When something goes wrong
