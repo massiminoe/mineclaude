@@ -48,6 +48,14 @@ object SleepRoute {
     /** Default cap on the wait-for-morning loop. Capped well under the client's 90s HTTP timeout. */
     private const val DEFAULT_WAKE_WAIT_MS = 20_000L
     private const val WAKE_POLL_MS = 250L
+    /**
+     * Grace window to let the clock settle after waking. On a night-skip the
+     * server wakes sleepers a tick or two *before* it advances time to morning,
+     * so sampling `timeOfDay` the instant `isSleeping` flips races the time
+     * update and reads a still-night value. Poll for the morning time to land
+     * before deciding `night_skipped`.
+     */
+    private const val WAKE_SETTLE_MS = 2_000L
     /** Vanilla monster-proximity check radius for "you may not rest now". */
     private const val MONSTER_RADIUS = 8.0
     /** First tick of the morning (time-of-day wraps at 24000). */
@@ -128,15 +136,18 @@ object SleepRoute {
                     "Another player may be awake, or the playersSleepingPercentage gamerule isn't met.",
             )
         }
+        // The night-skip time-set lands a tick or two after the wake, so poll
+        // the clock for a short grace window until it settles into morning
+        // before deciding. If it never reaches morning, it was a real
+        // interruption (sleep at confirm time means it was night, not day).
+        val skipped = pollUntil(WAKE_SETTLE_MS, CONFIRM_POLL_MS) { isMorning() }
         val time = timeOfDay()
-        // timeOfDay is an unbounded day counter; the sky cycle is time % 24000.
-        val dayTime = if (time >= 0) time % 24000 else time
-        val skipped = dayTime in 0 until MORNING_END
         log.info("sleep: woke (time={}, night_skipped={})", time, skipped)
         return HttpBridge.ok(
             mapOf("slept" to true, "night_skipped" to skipped, "time" to time),
             if (skipped) "Slept through the night — it's morning now (time=$time)"
-            else "Woke from the bed before morning (time=$time) — likely interrupted (damage / mob).",
+            else "Woke from the bed before morning (time=$time) — sleep was interrupted " +
+                "(damage, a nearby mob, or a manual wake) and the night did not skip.",
         )
     }
 
@@ -169,6 +180,18 @@ object SleepRoute {
 
     private fun timeOfDay(): Long =
         TickThread.submitAndWait(1_000) { MinecraftClient.getInstance().world?.timeOfDay ?: -1L }
+
+    /**
+     * Is the sky clock in the morning band? `timeOfDay` is an unbounded day
+     * counter; the sky cycle is `time % 24000`, and `[0, MORNING_END)` is the
+     * post-wake morning. Reads world directly — meant to be called *inside* a
+     * tick-thread predicate (e.g. [pollUntil]).
+     */
+    private fun isMorning(): Boolean {
+        val time = MinecraftClient.getInstance().world?.timeOfDay ?: return false
+        val dayTime = if (time >= 0) time % 24000 else time
+        return dayTime in 0 until MORNING_END
+    }
 
     /**
      * Poll [predicate] on the tick thread every [pollMs] until it's true or
