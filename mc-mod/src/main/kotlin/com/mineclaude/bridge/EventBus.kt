@@ -200,6 +200,7 @@ object EventBus {
                     lastHeldRemaining = Int.MAX_VALUE
                     nearbyHostiles = emptySet()
                     hostileScanCounter = 0
+                    DoorTrail.reset()
                     return@EndTick
                 }
                 if (!dead && wasDead) {
@@ -349,6 +350,10 @@ object EventBus {
                         nearbyHostiles = current
                     }
                 }
+
+                // 7. Door-trail — close doors Baritone auto-opened along the
+                // bot's path once it has stepped clear of them.
+                DoorTrail.tick(client, player)
 
                 // Health tracking lives at the tail — damage detection
                 // above used the prior tick's value.

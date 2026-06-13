@@ -94,6 +94,7 @@ object GotoRoute {
 
         val cmd = "#goto ${x.toInt()} ${y.toInt()} ${z.toInt()}"
         sendBaritoneCommand(cmd)
+        DoorTrail.arm()
         log.info("goto: sent '{}', waiting for arrival (timeout={}s)", cmd, timeoutS)
 
         val deadlineMs = System.currentTimeMillis() + (timeoutS * 1000.0).toLong()
@@ -140,6 +141,9 @@ object GotoRoute {
             try { sendBaritoneCommand("#stop") } catch (t: Throwable) {
                 log.warn("goto: failed to send #stop on exit: {}", t.message)
             }
+            // Stop attributing new door-opens to this walk. Doors already
+            // tracked still get closed by the tick reflex as the bot clears them.
+            DoorTrail.disarm()
             // Restore the held slot Baritone may have swapped to a throwaway
             // block / auto-tool while pathing. Same leak as Navigation.kt.
             restoreSelectedSlot(savedSlot)

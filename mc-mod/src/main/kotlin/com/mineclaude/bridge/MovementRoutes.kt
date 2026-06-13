@@ -30,12 +30,14 @@ object MovementRoutes {
     private fun handleStop(): BridgeResponse {
         val cmd = "#stop"
         sendBaritoneCommand(cmd)
+        DoorTrail.disarm()
         return HttpBridge.ok(mapOf("command" to cmd), "Stopped")
     }
 
     private fun handleExplore(): BridgeResponse {
         val cmd = "#explore"
         sendBaritoneCommand(cmd)
+        DoorTrail.arm()
         return HttpBridge.ok(mapOf("command" to cmd), "Exploring")
     }
 
@@ -51,6 +53,7 @@ object MovementRoutes {
         // `#follow player` doesn't take a distance arg on the chat surface.
         val cmd = "#follow player $player"
         sendBaritoneCommand(cmd)
+        DoorTrail.arm()
         return HttpBridge.ok(mapOf("command" to cmd), "Following $player")
     }
 
@@ -68,6 +71,7 @@ object MovementRoutes {
         val count = (body["count"] as? Number)?.toInt() ?: 0
         val cmd = if (count > 0) "#mine $count $block" else "#mine $block"
         sendBaritoneCommand(cmd)
+        DoorTrail.arm()
         val message = if (count > 0) "Mining $count $block" else "Mining $block"
         return HttpBridge.ok(mapOf("command" to cmd), message)
     }
