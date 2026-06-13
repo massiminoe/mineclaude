@@ -62,6 +62,12 @@ object DoorTrail {
     // pause Baritone makes to open a door doesn't read as "idle".
     private const val ACTIVE_GRACE_SCANS = 6  // ~0.6s at SCAN_INTERVAL_TICKS
 
+    // Tolerate a couple of consecutive out-of-reach scans before giving up on
+    // a door (rather than the bot pathing back). Smooths over momentary
+    // overshoot on a fast diagonal exit, where one scan can read just out of
+    // reach and the next is back in range.
+    private const val MAX_OUT_OF_REACH_SCANS = 3
+
     // Doors that can't be opened/closed by hand (need redstone).
     private val SKIP_DOOR_IDS = setOf("iron_door")
 
@@ -69,7 +75,7 @@ object DoorTrail {
 
     // Tick-thread-only state (touched solely from [tick]).
     private val doorStates = HashMap<BlockPos, Boolean>()  // last-seen open state, in-range doors
-    private val tracked = HashSet<BlockPos>()              // doors we still owe a close
+    private val tracked = HashMap<BlockPos, Int>()         // door we owe a close → consecutive out-of-reach scans
     private var lastPos: Vec3d? = null
     private var idleScans = ACTIVE_GRACE_SCANS
     private var tickCounter = 0
@@ -126,7 +132,8 @@ object DoorTrail {
                     seen[p] = open
                     // closed→open while we're driving Baritone and the bot is
                     // moving ⇒ Baritone opened it to walk through. Track it.
-                    if (armed && active && doorStates[p] == false && open && tracked.add(p)) {
+                    if (armed && active && doorStates[p] == false && open && p !in tracked) {
+                        tracked[p] = 0
                         log.info("doortrail: tracking {} at {} (bot opened it)", id, p)
                     }
                 }
@@ -142,7 +149,8 @@ object DoorTrail {
         val mgr = client.interactionManager ?: return
         val it = tracked.iterator()
         while (it.hasNext()) {
-            val p = it.next()
+            val entry = it.next()
+            val p = entry.key
             val state = world.getBlockState(p)
             if (state.block !is DoorBlock || !state.get(Properties.OPEN)) {
                 it.remove(); continue                 // broken, or already shut
@@ -154,25 +162,32 @@ object DoorTrail {
             if (WorldHelpers.playerOccupiesCell(player, p) ||
                 WorldHelpers.playerOccupiesCell(player, p.up())
             ) continue
-            if (WorldHelpers.eyeToBlockDistance(player, p) > WorldHelpers.BLOCK_REACH) {
-                it.remove(); continue                 // out of reach — missed it, don't path back
+            // Reach + hit aim at the door's nearest surface point (not its
+            // centre): on a steep-angle exit the near face is well within
+            // range even when the centre isn't, and the hit lands cleanly on
+            // the panel the bot is actually beside.
+            val fh = WorldHelpers.nearestFaceHit(player, p)
+            if (fh.dist > WorldHelpers.BLOCK_REACH) {
+                // Out of reach this scan — give it a few scans to come back
+                // before abandoning (vs. pathing the bot back to the door).
+                if ((entry.value + 1) >= MAX_OUT_OF_REACH_SCANS) it.remove() else entry.setValue(entry.value + 1)
+                continue
             }
-            closeDoor(player, mgr, p)
+            closeDoor(player, mgr, p, fh)
             it.remove()
         }
     }
 
     /** Toggle the (open) door at [pos] shut via a synthetic click — no view rotation. */
-    private fun closeDoor(player: ClientPlayerEntity, mgr: ClientPlayerInteractionManager, pos: BlockPos) {
-        val face = WorldHelpers.playerFacingSide(player, pos)
-        val hitPos = Vec3d(
-            pos.x + 0.5 + face.offsetX * 0.5,
-            pos.y + 0.5 + face.offsetY * 0.5,
-            pos.z + 0.5 + face.offsetZ * 0.5,
-        )
-        val hit = BlockHitResult(hitPos, face, pos, /*insideBlock=*/ false)
+    private fun closeDoor(
+        player: ClientPlayerEntity,
+        mgr: ClientPlayerInteractionManager,
+        pos: BlockPos,
+        fh: WorldHelpers.FaceHit,
+    ) {
+        val hit = BlockHitResult(fh.pos, fh.face, pos, /*insideBlock=*/ false)
         val result = mgr.interactBlock(player, Hand.MAIN_HAND, hit)
         if (result.isAccepted) player.swingHand(Hand.MAIN_HAND)
-        log.info("doortrail: closed door at {} (accepted={})", pos, result.isAccepted)
+        log.info("doortrail: closed door at {} (accepted={}, dist={})", pos, result.isAccepted, "%.2f".format(fh.dist))
     }
 }
