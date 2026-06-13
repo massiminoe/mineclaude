@@ -80,6 +80,7 @@ class BridgeClient(Protocol):
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
     async def use_item(self, item: str, hold_ms: int | None = None) -> BridgeResponse: ...
     async def interact(self, x: int, y: int, z: int) -> BridgeResponse: ...
+    async def sleep_in_bed(self, x: int, y: int, z: int, wait_s: float | None = None) -> BridgeResponse: ...
     async def use(
         self,
         item: str | None = None,
@@ -297,6 +298,12 @@ class RealBridgeClient:
 
     async def interact(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.post("/interact", json={"x": x, "y": y, "z": z}))
+
+    async def sleep_in_bed(self, x: int, y: int, z: int, wait_s: float | None = None) -> BridgeResponse:
+        body: dict[str, Any] = {"x": x, "y": y, "z": z}
+        if wait_s is not None:
+            body["wait_s"] = wait_s
+        return self._parse(await self._http.post("/sleep", json=body))
 
     async def use(
         self,
@@ -950,6 +957,19 @@ class MockBridgeClient:
         return BridgeResponse(
             "error", f"Nothing to interact with at ({x}, {y}, {z}) — block is air",
         )
+
+    async def sleep_in_bed(self, x: int, y: int, z: int, wait_s: float | None = None) -> BridgeResponse:
+        for b in self._nearby_blocks:
+            if b["x"] == x and b["y"] == y and b["z"] == z:
+                if not str(b["name"]).endswith("_bed"):
+                    return BridgeResponse(
+                        "error", f"Block at ({x}, {y}, {z}) is {b['name']}, not a bed",
+                    )
+                return BridgeResponse(
+                    "success", f"Slept through the night — it's morning now (simulated)",
+                    {"slept": True, "night_skipped": True, "time": 0},
+                )
+        return BridgeResponse("error", f"No bed at ({x}, {y}, {z})")
 
     _USE_FOODS = {
         "bread": 5, "cooked_beef": 8, "apple": 4, "carrot": 3,

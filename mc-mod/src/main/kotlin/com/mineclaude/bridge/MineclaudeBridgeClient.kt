@@ -78,6 +78,10 @@ class MineclaudeBridgeClient : ClientModInitializer {
         UseRoute.register(bridge)
         UseItemRoute.register(bridge)
         InteractRoute.register(bridge)
+        // Bed sleep — dedicated lifecycle route (click → confirm isSleeping →
+        // wait for morning → leave bed). Can't be /interact: the bed click's
+        // accept flag is an unreliable client prediction.
+        SleepRoute.register(bridge)
         // Phase 7 vision — /screenshot and /video/stream. Both shell out
         // to ffmpeg x11grab from `:99` — the same approach as the legacy
         // bridge, because NativeImage.writeTo() produces 0-byte PNGs on

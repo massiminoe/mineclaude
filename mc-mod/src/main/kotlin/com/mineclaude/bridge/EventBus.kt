@@ -97,6 +97,12 @@ object EventBus {
     @Volatile private var lastHeldSlot: Int = -1
     @Volatile private var lastHeldItem: Item? = null
     @Volatile private var lastHeldWasDamageable: Boolean = false
+    // Last observed durability of the held damageable stack. We only treat an
+    // in-place vanish as a break if the stack was on its last point(s) — a
+    // programmatic inventory move (e.g. equip armor sitting in the held slot)
+    // also empties the slot without a switch, but it keeps the item's
+    // durability, so a near-zero gate cleanly separates the two.
+    @Volatile private var lastHeldRemaining: Int = Int.MAX_VALUE
 
     // Hostile-proximity edge state. We track the set of hostile entity IDs
     // currently within HOSTILE_RADIUS so `hostile_nearby` fires once when a
@@ -191,6 +197,7 @@ object EventBus {
                     wasDrowning = false
                     lastHeldItem = null
                     lastHeldWasDamageable = false
+                    lastHeldRemaining = Int.MAX_VALUE
                     nearbyHostiles = emptySet()
                     hostileScanCounter = 0
                     return@EndTick
@@ -277,11 +284,14 @@ object EventBus {
                 val heldItem: Item? = if (heldStack.isEmpty) null else heldStack.item
                 val heldDamageable = heldItem != null && heldStack.isDamageable
                 if (lastHeldItem != null && lastHeldWasDamageable && heldSlot == lastHeldSlot) {
-                    if (heldStack.isEmpty) {
-                        // Stack vanished without a slot switch — the only
-                        // vanilla path that does this is durability hitting
-                        // the cap (or the player dropping; tracked but rare
-                        // mid-action). Single fire per break.
+                    // Stack vanished from the held slot without a hotbar switch.
+                    // Two paths produce this: durability hitting the cap (a real
+                    // break) and a programmatic move out of the held slot (e.g.
+                    // equipping armor that lived there). Only the break consumes
+                    // the item's last durability point, so gate on the stack
+                    // having been on its last point(s) — a moved item keeps its
+                    // remaining durability, so it won't trip this. Single fire.
+                    if (heldStack.isEmpty && lastHeldRemaining <= 1) {
                         val brokenItem = lastHeldItem
                         if (brokenItem != null) {
                             val name = Registries.ITEM.getId(brokenItem).path
@@ -292,6 +302,7 @@ object EventBus {
                 lastHeldSlot = heldSlot
                 lastHeldItem = heldItem
                 lastHeldWasDamageable = heldDamageable
+                lastHeldRemaining = if (heldDamageable) heldStack.maxDamage - heldStack.damage else Int.MAX_VALUE
 
                 // 6. Hostile proximity — edge-triggered when a hostile mob
                 // (SpawnGroup.MONSTER) crosses into HOSTILE_RADIUS. The scan

@@ -184,6 +184,24 @@ Auto-paths within reach. Fails on air. If the click opens a screen
 `[partial]` — use the dedicated chest/furnace/craft primitives
 for those instead.
 
+To sleep in a bed use sleepInBed() instead — a raw interact() can't
+tell whether you actually fell asleep or skipped the night.
+
+### `await sleepInBed(x: 'int', y: 'int', z: 'int', wait_s: 'float | None' = None) -> 'dict'`
+
+Sleep in the bed at (x, y, z) — the right way to skip a night.
+
+Confirms you actually fell asleep (a daytime / monsters-nearby /
+obstructed bed fails loudly with the reason), then blocks until you
+wake. Returns {slept, night_skipped, time}: `night_skipped` is True
+only when you wake into morning. If the night doesn't pass within
+`wait_s` (default 20s) — another player awake, or the server's
+playersSleepingPercentage gamerule not met — it leaves the bed and
+returns night_skipped=False rather than hanging.
+
+Auto-paths within reach. Raises on a hard failure (not a bed, couldn't
+reach it, couldn't fall asleep).
+
 ### `await use(item: 'str | None' = None, *, look_at: 'tuple[float, float, float] | None' = None, hold_ms: 'int | None' = None) -> 'dict'`
 
 Unified right-click — the one primitive behind every "use an item"
@@ -244,7 +262,9 @@ Find several block types in one scan (max range 64). Returns {type: [blocks]}.
 
 ### `await findEntities(entity_type: 'str', range_: 'int' = 32) -> 'list[dict]'`
 
-Find entities matching a type/name within `range_`.
+Find entities matching a type/name within `range_`. Case-insensitive
+and `minecraft:`-prefix tolerant: "Sheep", "sheep", and "minecraft:sheep"
+all match the sheep whose type is "sheep"/name is "Sheep".
 
 ### `await say(message: 'str') -> 'None'`
 

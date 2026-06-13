@@ -43,13 +43,28 @@ import org.slf4j.LoggerFactory
  * and the next break swung bare-handed. The fix at the time was a
  * `closeHandledScreen()` + 80ms wait inside /equip. With /craft and
  * /smelt now native, no endpoint leaves a stale ScreenHandler open
- * across bridges, so the barrier is dead code and was removed.
+ * across bridges, so the unconditional barrier is dead code and was removed.
+ *
+ * A residual race survives for armor specifically: a fresh piece equipped
+ * immediately after /craft can still hit a brief server-side resync of the
+ * player screen handler, dropping the first clickSlot (looks like a wrong-
+ * type reject). [handleArmor] handles it locally with a bounded retry on the
+ * reject path rather than re-imposing a blanket barrier on every equip.
  */
 object EquipRoute {
     private val log = LoggerFactory.getLogger("mineclaude-bridge.equip")!!
 
     /** ms to wait before the post-equip verify. Must exceed two MC ticks (~100ms). */
     private const val POST_EQUIP_SETTLE_MS = 120L
+
+    /**
+     * Armor placement retries for the post-craft screen-handler resync race.
+     * One retry after a settle clears the observed window where a fresh
+     * crafted piece's first equip is dropped server-side; a usual (no-race)
+     * equip still succeeds on the first attempt with no added wait.
+     */
+    private const val ARMOR_EQUIP_ATTEMPTS = 2
+    private const val ARMOR_EQUIP_RETRY_SETTLE_MS = 400L
 
     fun register(bridge: HttpBridge) {
         bridge.addRoute("POST", "/equip") { ex -> handle(ex) }
@@ -199,22 +214,41 @@ object EquipRoute {
             )
         }
 
-        val tickResult = TickThread.submitAndWait(timeoutMs = 2_000) {
-            val player = MinecraftClient.getInstance().player ?: return@submitAndWait "no player"
-            val screenErr = InventoryHelpers.ensurePlayerScreenOpen(player)
-            if (screenErr != null) return@submitAndWait screenErr
-            val found = InventoryHelpers.findItem(player, item)
-                ?: return@submitAndWait "No $item in inventory"
+        // Right after /craft the server is briefly still resyncing the player
+        // screen handler (the craft route just opened + closed one). A
+        // clickSlot landing in that window gets dropped server-side: the
+        // PICKUP applies client-side so our cursor fills, but the place-at-
+        // armor-slot is rejected, leaving the cursor still full — which is
+        // byte-for-byte indistinguishable from a genuine wrong-type reject.
+        // Agents learned to work around it with `sleep(1-2); retry`; fold that
+        // in here. Retry only the reject path (a real wrong-type item just
+        // exhausts the attempts); bail immediately on hard errors that a
+        // settle can't fix (no player / item genuinely absent).
+        var tickResult = ""
+        for (attempt in 0 until ARMOR_EQUIP_ATTEMPTS) {
+            if (attempt > 0) Thread.sleep(ARMOR_EQUIP_RETRY_SETTLE_MS)
+            tickResult = TickThread.submitAndWait(timeoutMs = 2_000) {
+                val player = MinecraftClient.getInstance().player ?: return@submitAndWait "no player"
+                val screenErr = InventoryHelpers.ensurePlayerScreenOpen(player)
+                if (screenErr != null) return@submitAndWait screenErr
+                val found = InventoryHelpers.findItem(player, item)
+                    ?: return@submitAndWait "No $item in inventory"
 
-            InventoryHelpers.click(player, found.pshSlot, 0, SlotActionType.PICKUP)
-            InventoryHelpers.click(player, armorPsh, 0, SlotActionType.PICKUP)
-
-            val handler = player.currentScreenHandler
-            if (!handler.cursorStack.isEmpty) {
                 InventoryHelpers.click(player, found.pshSlot, 0, SlotActionType.PICKUP)
-                return@submitAndWait "armor equip rejected: $item is not valid for $armorSlot"
+                InventoryHelpers.click(player, armorPsh, 0, SlotActionType.PICKUP)
+
+                val handler = player.currentScreenHandler
+                if (!handler.cursorStack.isEmpty) {
+                    InventoryHelpers.click(player, found.pshSlot, 0, SlotActionType.PICKUP)
+                    return@submitAndWait "armor equip rejected: $item is not valid for $armorSlot"
+                }
+                ""
             }
-            ""
+            if (tickResult.isEmpty()) break                      // placed
+            if (!tickResult.startsWith("armor equip rejected")) break  // hard error — don't retry
+            if (attempt < ARMOR_EQUIP_ATTEMPTS - 1) {
+                log.info("equip: armor placement rejected (attempt {}/{}), retrying after settle", attempt + 1, ARMOR_EQUIP_ATTEMPTS)
+            }
         }
         if (tickResult.isNotEmpty()) {
             return HttpBridge.err(tickResult)

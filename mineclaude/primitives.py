@@ -325,8 +325,32 @@ def make_primitives(
         (chest/furnace/crafting table) the bridge closes it and returns
         `[partial]` — use the dedicated chest/furnace/craft primitives
         for those instead.
+
+        To sleep in a bed use sleepInBed() instead — a raw interact() can't
+        tell whether you actually fell asleep or skipped the night.
         """
         return _check(await bridge.interact(x, y, z))
+
+    async def sleepInBed(x: int, y: int, z: int, wait_s: float | None = None) -> dict:
+        """Sleep in the bed at (x, y, z) — the right way to skip a night.
+
+        Confirms you actually fell asleep (a daytime / monsters-nearby /
+        obstructed bed fails loudly with the reason), then blocks until you
+        wake. Returns {slept, night_skipped, time}: `night_skipped` is True
+        only when you wake into morning. If the night doesn't pass within
+        `wait_s` (default 20s) — another player awake, or the server's
+        playersSleepingPercentage gamerule not met — it leaves the bed and
+        returns night_skipped=False rather than hanging.
+
+        Auto-paths within reach. Raises on a hard failure (not a bed, couldn't
+        reach it, couldn't fall asleep).
+        """
+        resp = await bridge.sleep_in_bed(x, y, z, wait_s=wait_s)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
 
     async def use(
         item: str | None = None,
@@ -411,10 +435,17 @@ def make_primitives(
         return result
 
     async def findEntities(entity_type: str, range_: int = 32) -> list[dict]:
-        """Find entities matching a type/name within `range_`."""
+        """Find entities matching a type/name within `range_`. Case-insensitive
+        and `minecraft:`-prefix tolerant: "Sheep", "sheep", and "minecraft:sheep"
+        all match the sheep whose type is "sheep"/name is "Sheep"."""
         resp = await bridge.get_nearby_entities(range_)
         entities = resp.data.get("entities", [])
-        return [e for e in entities if e["type"] == entity_type or e["name"] == entity_type]
+        needle = entity_type.removeprefix("minecraft:").casefold()
+        return [
+            e for e in entities
+            if str(e.get("type", "")).removeprefix("minecraft:").casefold() == needle
+            or str(e.get("name", "")).casefold() == needle
+        ]
 
     async def say(message: str) -> None:
         """Send a chat message in-game. Splits long text at the 240-char limit,
@@ -464,6 +495,7 @@ def make_primitives(
         "discard": discard,
         "useItem": useItem,
         "interact": interact,
+        "sleepInBed": sleepInBed,
         "use": use,
         "getStats": getStats,
         "getInventory": getInventory,
