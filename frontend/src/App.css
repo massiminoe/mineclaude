@@ -6,6 +6,7 @@
   --faint: #41464b;
   --amber: #d9a23f;
   --red: #de6e5e;
+  --rail-width: 372px;
   font-size: 13px;
 }
 
@@ -125,7 +126,7 @@ header {
 
 main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 372px;
+  grid-template-columns: minmax(0, 1fr) var(--rail-width);
   min-height: 0;
 }
 
@@ -534,50 +535,248 @@ footer {
   opacity: 0.4;
 }
 
-.finv {
+/* ── shared item icon ── */
+
+.item-icon {
+  image-rendering: pixelated;
+  display: block;
+}
+
+.item-icon-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--hairline);
+  background: #0a0c0d;
+}
+
+/* ── footer hotbar (always-on, click to expand) ── */
+
+.hotbar {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
   padding: 0 24px;
+  /* Reserve the rail width so the hotbar's right edge (and divider) line up
+     with the video pane's right edge above it, instead of running under the
+     actions/reflexes rail. */
+  margin-right: var(--rail-width);
   min-width: 0;
+  background: none;
+  border: none;
   border-right: 1px solid var(--hairline);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
-.finv-items {
+.hotbar:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.hotbar:not(:disabled):hover .hotbar-meta .n {
+  color: var(--amber);
+}
+
+.hotbar-cells {
+  display: flex;
+  gap: 4px;
+}
+
+.hbc {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline);
+  background: #0a0c0d;
+}
+
+.hbc.empty {
+  opacity: 0.4;
+}
+
+.hbc.held {
+  border-color: var(--amber);
+  box-shadow: inset 0 0 0 1px var(--amber);
+}
+
+.hbc .ct {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-size: 10px;
+  color: var(--text);
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+}
+
+.hotbar-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+
+.hotbar-meta .lbl {
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.hotbar-meta .n {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+/* ── inventory modal ── */
+
+.inv-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 5, 6, 0.78);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.inv-modal {
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  padding: 22px 26px 26px;
+}
+
+.inv-modal-hd {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.inv-modal-hd .ttl {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.inv-modal-hd .cnt {
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.inv-modal-hd .x {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--faint);
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.inv-modal-hd .x:hover {
+  color: var(--red);
+}
+
+.inv-body {
   display: flex;
   gap: 22px;
-  overflow: hidden;
-  font-size: 11.5px;
-  white-space: nowrap;
 }
 
-.finv-empty {
-  color: var(--faint);
-  font-size: 10px;
-  letter-spacing: 0.14em;
+.col-lbl {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.15em;
   text-transform: uppercase;
-}
-
-.item {
   color: var(--dim);
-  flex-shrink: 0;
+  margin-bottom: 8px;
 }
 
-.item b {
-  color: var(--text);
-  font-weight: 400;
+.armorcol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.item.held b {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--faint);
+.armorgap {
+  height: 12px;
 }
 
-.item .ct {
+.aslot {
+  width: 58px;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--hairline);
+  background: #08090a;
+}
+
+.aslot.filled {
+  border-style: solid;
+}
+
+.aslot .glyph {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--faint);
-  font-size: 10px;
-  margin-left: 4px;
+}
+
+.gridcol {
+  display: flex;
+  flex-direction: column;
+}
+
+.hotbar-lbl {
+  margin-top: 14px;
+}
+
+.invgrid {
+  display: grid;
+  grid-template-columns: repeat(9, 58px);
+  gap: 6px;
+}
+
+.invc {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline);
+  background: #08090a;
+}
+
+.invc.empty {
+  opacity: 0.35;
+}
+
+.invc.held {
+  border-color: var(--amber);
+  box-shadow: inset 0 0 0 1px var(--amber);
+}
+
+.invc .ct {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 11px;
+  color: var(--text);
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
 }

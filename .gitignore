@@ -17,6 +17,7 @@ frontend/dist/
 # Superpowers brainstorm
 .superpowers/
 docs/
+.playwright-mcp/
 
 # Git worktrees
 .worktrees/

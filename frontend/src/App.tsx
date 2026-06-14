@@ -3,7 +3,11 @@ import { useSocket } from "./hooks/useSocket";
 import { Feed } from "./components/Feed";
 import { Actions } from "./components/Actions";
 import { Reflexes } from "./components/Reflexes";
-import type { GameState } from "./types";
+import { InventoryModal } from "./components/InventoryModal";
+import { ItemIcon } from "./components/ItemIcon";
+import { useItemIcons } from "./icons";
+import { usedMainSlots } from "./types";
+import type { GameState, InventoryItem } from "./types";
 import "./App.css";
 
 function tickToClock(tick: number): string {
@@ -11,10 +15,6 @@ function tickToClock(tick: number): string {
   const hours = Math.floor(dayTick / 1000);
   const minutes = Math.floor(((dayTick % 1000) / 1000) * 60);
   return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
-}
-
-function itemLabel(name: string): string {
-  return name.replace(/^minecraft:/, "");
 }
 
 function Meter({ value, max }: { value: number; max: number }) {
@@ -54,8 +54,38 @@ function Header({ game, connected }: { game: GameState | null; connected: boolea
   );
 }
 
-function Footer({ game }: { game: GameState | null }) {
+function Hotbar({ game, onExpand }: { game: GameState | null; onExpand: () => void }) {
+  const lookup = useItemIcons();
   const inv = game?.inventory ?? [];
+  const bySlot = new Map<number, InventoryItem>();
+  for (const it of inv) bySlot.set(it.slot, it);
+  const held = game?.held_slot ?? -1;
+  return (
+    <button className="hotbar" onClick={onExpand} title="Open inventory" disabled={!game}>
+      <div className="hotbar-cells">
+        {Array.from({ length: 9 }, (_, k) => {
+          const item = bySlot.get(k);
+          return (
+            <span
+              key={k}
+              className={`hbc${k === held ? " held" : ""}${item ? "" : " empty"}`}
+              title={item ? `${item.name}${item.count > 1 ? ` ×${item.count}` : ""}` : undefined}
+            >
+              {item && <ItemIcon name={item.name} size={36} lookup={lookup} />}
+              {item && item.count > 1 && <span className="ct">{item.count}</span>}
+            </span>
+          );
+        })}
+      </div>
+      <span className="hotbar-meta">
+        <span className="lbl">Inventory</span>
+        <span className="n">{usedMainSlots(inv)}/36 ⤢</span>
+      </span>
+    </button>
+  );
+}
+
+function Footer({ game, onExpand }: { game: GameState | null; onExpand: () => void }) {
   return (
     <footer>
       <div className="fcell">
@@ -88,27 +118,14 @@ function Footer({ game }: { game: GameState | null }) {
           </div>
         </div>
       </div>
-      <div className="finv">
-        <span className="lbl">Inventory · {inv.length}/36</span>
-        <div className="finv-items">
-          {inv.length === 0 && <span className="finv-empty">empty</span>}
-          {inv.map((item) => (
-            <span
-              key={item.slot}
-              className={`item${game?.held_slot === item.slot ? " held" : ""}`}
-            >
-              <b>{itemLabel(item.name)}</b>
-              {item.count > 1 && <span className="ct">×{item.count}</span>}
-            </span>
-          ))}
-        </div>
-      </div>
+      <Hotbar game={game} onExpand={onExpand} />
     </footer>
   );
 }
 
 export default function App() {
   const { queue, gameState, reflexes, videoUrl, connected } = useSocket();
+  const [invOpen, setInvOpen] = useState(false);
 
   // Shared 1 Hz clock for running-action elapsed time and reflex ages.
   const [now, setNow] = useState(() => Date.now() / 1000);
@@ -127,7 +144,10 @@ export default function App() {
           <Reflexes reflexes={reflexes} now={now} />
         </aside>
       </main>
-      <Footer game={gameState} />
+      <Footer game={gameState} onExpand={() => setInvOpen(true)} />
+      {invOpen && gameState && (
+        <InventoryModal game={gameState} onClose={() => setInvOpen(false)} />
+      )}
     </div>
   );
 }
