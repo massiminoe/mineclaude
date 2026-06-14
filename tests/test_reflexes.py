@@ -308,16 +308,16 @@ async def test_register_default_handlers_recovery_handlers_resume():
     assert reg._handlers["hostile_nearby"].resumes_on_complete is False
 
 
-async def test_hostile_nearby_is_informational_only():
-    """hostile_nearby rides the reflex plumbing purely for awareness: the
-    dispatcher records it into `recent`, but the handler is a no-op that
-    never preempts the current action and never resumes/wakes Claude."""
+async def test_hostile_nearby_non_creeper_is_informational_only():
+    """For a non-creeper mob, hostile_nearby rides the reflex plumbing purely
+    for awareness: the dispatcher records it into `recent`, but the handler
+    returns without preempting the current action or resuming/waking Claude."""
     agent = FakeAgent()
     reg = ReflexRegistry(agent)
     register_default_handlers(reg)
 
     data = {
-        "kind": "creeper",
+        "kind": "zombie",
         "entity_id": 42,
         "distance": 6.3,
         "pos": {"x": 12.0, "y": 64.0, "z": 7.0},
@@ -329,6 +329,52 @@ async def test_hostile_nearby_is_informational_only():
     assert reg.recent[0]["type"] == "hostile_nearby"
     assert reg.recent[0]["data"] == data
     assert agent.preempt_calls == 0
+    assert agent.resume_calls == []
+    assert agent.bridge.goto_calls == []
+
+
+async def test_hostile_nearby_creeper_preempts_and_retreats():
+    """A creeper crossing into range is the one hostile that triggers an
+    unprompted reaction: preempt the current action and walk directly away
+    from the creeper to a safe distance, then signal recovery via resume."""
+    bridge = _FakeBridge(status={"position": {"x": 10.0, "y": 64.0, "z": 5.0}, "health": 18.0})
+    agent = FakeAgent(bridge)
+    reg = ReflexRegistry(agent)
+    register_default_handlers(reg)
+
+    # Creeper due -x of the player (player x=10, creeper x=4) → we retreat +x.
+    data = {
+        "kind": "creeper",
+        "entity_id": 7,
+        "distance": 6.0,
+        "pos": {"x": 4.0, "y": 64.0, "z": 5.0},
+    }
+    await reg.dispatch("hostile_nearby", data)
+    await reg.flush()
+
+    assert agent.preempt_calls == 1
+    assert len(bridge.goto_calls) == 1
+    fx, fy, fz = bridge.goto_calls[0]
+    assert fx > 10.0  # fled in +x, away from the creeper
+    assert fz == 5.0
+    assert fy == 64.0
+    assert agent.resume_calls == ["hostile_nearby"]
+    # The fire is still recorded for situational awareness.
+    assert reg.recent[0]["type"] == "hostile_nearby"
+
+
+async def test_hostile_nearby_creeper_without_pos_is_record_only():
+    """A creeper event missing its position gives no direction to flee, so the
+    handler records-only rather than preempting blindly."""
+    agent = FakeAgent()
+    reg = ReflexRegistry(agent)
+    register_default_handlers(reg)
+
+    await reg.dispatch("hostile_nearby", {"kind": "creeper", "entity_id": 7, "distance": 6.0})
+    await reg.flush()
+
+    assert agent.preempt_calls == 0
+    assert agent.bridge.goto_calls == []
     assert agent.resume_calls == []
 
 
@@ -374,9 +420,10 @@ async def test_damage_taken_player_attacker_is_record_only():
     assert agent.bridge.attack_calls == []
 
 
-async def test_damage_taken_phantom_attacker_is_record_only():
-    """Phantoms swoop out of melee reach — excluded via NO_RETALIATE_KINDS so
-    the ground-based /attack loop doesn't thrash. Record-only even at high HP."""
+async def test_damage_taken_phantom_attacker_retaliates():
+    """Phantoms are no longer carved out of NO_RETALIATE_KINDS: above LOW_HP a
+    phantom hit retaliates by id like any other hostile (the looping /attack
+    tracks the moving target via Baritone)."""
     agent = FakeAgent(_FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}}))
     await damage_taken_handler(agent, {
         "source": "mob_attack",
@@ -385,14 +432,14 @@ async def test_damage_taken_phantom_attacker_is_record_only():
         "hp_before": 18.0,
         "amount": 3.0,
     })
-    assert agent.preempt_calls == 0
+    assert agent.preempt_calls == 1
+    assert agent.bridge.attack_calls == ["99"]
     assert agent.bridge.goto_calls == []
-    assert agent.bridge.attack_calls == []
 
 
-async def test_damage_taken_phantom_low_hp_does_not_flee():
-    """The exclusion is checked before the HP branch, so even a low-HP phantom
-    hit is record-only — no flee goto."""
+async def test_damage_taken_phantom_low_hp_flees():
+    """Below LOW_HP a phantom hit flees opposite the attacker, same as any
+    other hostile — no special-casing now that phantoms aren't excluded."""
     agent = FakeAgent(_FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}}))
     await damage_taken_handler(agent, {
         "source": "mob_attack",
@@ -400,11 +447,15 @@ async def test_damage_taken_phantom_low_hp_does_not_flee():
         "attacker_id": 99,
         "hp_before": 6.0,
         "amount": 2.0,
-        "attacker_pos": {"x": 8.0, "y": 64.0, "z": 5.0},
+        "attacker_pos": {"x": 8.0, "y": 64.0, "z": 5.0},  # 2 west → flee +x
     })
-    assert agent.preempt_calls == 0
-    assert agent.bridge.goto_calls == []
+    assert agent.preempt_calls == 1
     assert agent.bridge.attack_calls == []
+    assert len(agent.bridge.goto_calls) == 1
+    fx, fy, fz = agent.bridge.goto_calls[0]
+    assert fy == 64.0
+    assert fz == pytest.approx(5.0)
+    assert fx == pytest.approx(20.0)
 
 
 async def test_damage_taken_high_hp_attacks_back():

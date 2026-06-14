@@ -13,11 +13,11 @@ Install your own reaction body for any event type with `set_handler` (see handle
 
 | event | preempts | cooldown_s | resumes | default reaction |
 |---|---|---|---|---|
-| `damage_taken` | False | 1.5 | True | hostile mob → retaliate (HP>6) or flee (HP≤6); fall/fire/player/phantom → record-only |
+| `damage_taken` | False | 1.5 | True | hostile mob → retaliate (HP>6) or flee (HP≤6); fall/fire/player → record-only |
 | `entered_lava` | True | 5 | True | walk to nearest shore |
 | `started_drowning` | True | 10 | True | surface, then walk to shore |
 | `tool_broke` | True | 1 | True | record-only (you decide whether to re-equip) |
-| `hostile_nearby` | False | 3 | False | awareness only — never preempts, never wakes you |
+| `hostile_nearby` | False | 3 | False | creeper → preempt + retreat to safety; any other mob → awareness only (never preempts/wakes you) |
 
 ## Other events (recorded to the flushable buffer)
 

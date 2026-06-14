@@ -119,8 +119,12 @@ you filter, match on `type` (the lowercase id — `sheep`, `zombie`), never `nam
 (the display-cased label — `Sheep`); hand-filtering `getNearbyEntities()` on
 `name == "sheep"` silently misses every mob. `findEntities` is case-insensitive,
 so prefer it. Equip a sword first. The reflex layer already retaliates / flees on
-`damage_taken`
-(see events.md) — don't redo what it did, but verify it worked via `get_state`.
+`damage_taken`, and auto-retreats from a creeper that wanders within ~6 blocks
+(it preempts whatever you're doing and walks you clear before the fuse can
+light — a `cancelled` action plus a `hostile_nearby` reflex entry is that, not
+your error). It does NOT auto-fight creepers — charging one into melee is how
+you get blown up; after the retreat, you decide whether to shoot it, kite it, or
+move on. (See events.md.) Don't redo what the reflex did — verify via `get_state`.
 
 `attack` carries its own shield: if a shield is in your offhand (it auto-equips
 one when that hand is free), the loop raises the guard between swings and drops

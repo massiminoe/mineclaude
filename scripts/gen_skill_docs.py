@@ -83,11 +83,11 @@ def gen_events() -> str:
         "|---|---|---|---|---|",
     ]
     notes = {
-        "damage_taken": "hostile mob → retaliate (HP>6) or flee (HP≤6); fall/fire/player/phantom → record-only",
+        "damage_taken": "hostile mob → retaliate (HP>6) or flee (HP≤6); fall/fire/player → record-only",
         "entered_lava": "walk to nearest shore",
         "started_drowning": "surface, then walk to shore",
         "tool_broke": "record-only (you decide whether to re-equip)",
-        "hostile_nearby": "awareness only — never preempts, never wakes you",
+        "hostile_nearby": "creeper → preempt + retreat to safety; any other mob → awareness only (never preempts/wakes you)",
     }
     for et in REFLEX_EVENT_TYPES:
         h = reg.get(et)

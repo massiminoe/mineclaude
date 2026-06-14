@@ -73,15 +73,27 @@ LOW_HP_THRESHOLD = 6.0
 # How far to walk away from an attacker when fleeing.
 FLEE_DISTANCE = 10.0
 
+# Creeper proximity reaction. A creeper crossing into HOSTILE_RADIUS (~6 blocks,
+# mod-side) is the one hostile worth an unprompted retreat: its blast is often
+# lethal and craters terrain, and the fuse only lights within ~3 blocks, so
+# distance hard-counters it. We retreat a touch farther than the damage-flee to
+# clear the blast radius (~7) with margin.
+CREEPER_FLEE_DISTANCE = 12.0
+
+# Budget for the creeper retreat goto. A blocked or re-approaching path mustn't
+# hang the reflex — on expiry timed_op halts Baritone and the handler returns.
+CREEPER_FLEE_TIMEOUT_S = 8.0
+
 # Attacker entity kinds the damage reflex does NOT react to (no flee / no
 # retaliate). The event is still recorded for the next gameState — we only
 # suppress the automatic response.
 #   * player  — leave PvP to Claude; auto-retaliating against another player
 #               is rarely what we want.
-#   * phantom — flies in swooping arcs out of melee reach, so a ground-based
-#               /attack loop just thrashes without landing hits.
 # Everything else with an attacker entity (hostile mobs, and provoked
-# neutrals) still triggers the reflex.
+# neutrals) triggers the reflex — including phantoms: the looping /attack now
+# tracks a moving target via Baritone, and phantoms are disabled at the server
+# (gamerule doInsomnia false) anyway, so the old "don't chase swooping mobs"
+# carve-out is gone.
 NO_RETALIATE_KINDS = frozenset({"player"})
 
 # Global time budget for the auto-retaliation reaction (equip + attack). The
@@ -418,10 +430,9 @@ async def damage_taken_handler(controller: "Controller", data: dict) -> None:
     No attacker (fall, fire, suffocation): record only — caller has nothing
     productive to do, and most of these are over by the time we see them.
 
-    Player or phantom attacker (NO_RETALIATE_KINDS): record only — we leave
-    PvP to Claude and don't chase swooping phantoms with a ground melee loop.
+    Player attacker (NO_RETALIATE_KINDS): record only — we leave PvP to Claude.
 
-    Other entity attacker (hostile mobs, provoked neutrals):
+    Other entity attacker (hostile mobs, provoked neutrals, phantoms):
       * post-hit HP ≤ LOW_HP_THRESHOLD → flee 10 blocks opposite the attacker
       * otherwise → equip the best weapon we have, then attack the
         attacker by entity id (the bridge loops swings until kill)
@@ -523,6 +534,77 @@ async def damage_taken_handler(controller: "Controller", data: dict) -> None:
             pass
 
 
+async def hostile_nearby_handler(controller: "Controller", data: dict) -> None:
+    """React to a hostile crossing into proximity (HOSTILE_RADIUS ~6 blocks).
+
+    Creeper — the one hostile worth an automatic, unprompted reaction. Its
+    explosion is frequently lethal and craters terrain, and the fuse only
+    lights within ~3 blocks, so distance is a hard counter. We preempt the
+    current action and retreat directly away to CREEPER_FLEE_DISTANCE, buying
+    space before the fuse can start. The cancelled action (the agent's
+    `execute` returns) plus the reflex entry let Claude re-plan — shoot it,
+    kite-kill it, or carry on once it wanders off. We deliberately do NOT try
+    to *kill* it here: charging a creeper into melee is exactly what gets you
+    blown up, and that judgment belongs to the agent, not a survival reflex.
+
+    Every other hostile — record-only. The dispatcher already logged the fire
+    into `recent` for the next gameState; being merely near a zombie isn't an
+    emergency, and damage_taken owns the response to actually getting hit. We
+    preempt only on the creeper path (handler registered preempts=False), so a
+    wandering mob never interrupts the agent.
+    """
+    kind = (data.get("kind") or "").removeprefix("minecraft:")
+    if kind != "creeper":
+        return  # awareness only — no preempt, no action
+
+    cpos = data.get("pos") or {}
+    cx = cpos.get("x")
+    cz = cpos.get("z")
+    if cx is None or cz is None:
+        return  # no position → no direction to retreat
+
+    await controller.preempt()
+
+    with deadline(CREEPER_FLEE_TIMEOUT_S):
+        try:
+            status = (await controller.bridge.get_status()).data
+        except Exception:
+            logger.exception("creeper retreat status fetch failed")
+            return
+        pos = status.get("position") or {}
+        px = pos.get("x")
+        py = pos.get("y")
+        pz = pos.get("z")
+        if px is None or py is None or pz is None:
+            return
+        dx = px - cx
+        dz = pz - cz
+        mag = math.sqrt(dx * dx + dz * dz)
+        if mag < 0.1:
+            # Standing on top of the creeper — direction is undefined; pick an
+            # arbitrary axis so we still step off it rather than freeze in place.
+            dx, dz, mag = 1.0, 0.0, 1.0
+        fx = px + (dx / mag) * CREEPER_FLEE_DISTANCE
+        fz = pz + (dz / mag) * CREEPER_FLEE_DISTANCE
+        try:
+            await timed_op(
+                controller.bridge.goto(fx, py, fz),
+                controller.bridge.stop,
+            )
+        except Exception:
+            logger.exception("creeper retreat goto failed")
+            return
+
+    # Signal recovery completion (mirrors damage_taken) so a
+    # wait_for_event(["reflex_done"]) consumer sees the retreat finished. We
+    # resume manually rather than via resumes_on_complete so the record-only
+    # paths above stay silent — only an actual creeper retreat emits.
+    try:
+        controller.resume("hostile_nearby")
+    except Exception:
+        logger.exception("creeper retreat resume failed")
+
+
 async def _escape_to_shore(controller: "Controller") -> None:
     """Find the nearest standable land tile and ask Baritone to walk there.
 
@@ -609,12 +691,15 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
         so resume fires once the bot is actually on shore.
       * tool_broke: preempt only — handler is a stub. Resume fires
         immediately so Claude can decide whether to re-equip and continue.
-      * hostile_nearby: informational only. No preempt, no resume — the
-        dispatcher records the fire into `recent` before running the
-        (no-op) handler, so it surfaces in the next gameState the agent
-        reads without ever waking or interrupting Claude on its own. A
-        short cooldown coalesces a swarm entering range together so the
-        burst doesn't flush the rest of the recent buffer.
+      * hostile_nearby: mostly informational. preempts=False and
+        resumes_on_complete=False so the *default* path (any non-creeper mob)
+        is pure awareness — the dispatcher records the fire into `recent` and
+        the handler returns without waking or interrupting Claude. The
+        exception is a creeper: the handler conditionally preempts and retreats
+        (and emits its own resume), because a creeper at ~6 blocks is a genuine
+        emergency that distance hard-counters. A short cooldown coalesces a
+        swarm entering range together so the burst doesn't flush the rest of
+        the recent buffer.
     """
     registry.register(ReflexHandler(
         event_type="damage_taken",
@@ -646,14 +731,15 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
     ))
     registry.register(ReflexHandler(
         event_type="hostile_nearby",
-        handle=stub_handler,
-        # Pure awareness signal: never preempt the current action and never
-        # resume/wake Claude. The dispatcher appends every fire to `recent`
-        # before invoking the handler, so a no-op handler is enough to make
-        # "a creeper wandered into range" show up in the next gameState the
-        # agent naturally reads. cooldown coalesces a night-time swarm so a
-        # dozen mobs entering at once don't evict everything else from the
-        # 10-slot recent buffer.
+        handle=hostile_nearby_handler,
+        # Awareness signal for most mobs, with a creeper exception. preempts is
+        # False so the dispatcher never interrupts the agent on its own — the
+        # handler preempts itself only for a creeper (and emits its own resume
+        # on that path). For every other mob the handler returns immediately,
+        # and the fire still shows up in the next gameState via `recent`.
+        # cooldown coalesces a night-time swarm so a dozen mobs entering at once
+        # don't evict everything else from the 10-slot recent buffer (and don't
+        # trigger a flee per mob — one retreat per window is enough).
         preempts=False,
         cooldown_s=3.0,
         resumes_on_complete=False,

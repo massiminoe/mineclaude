@@ -172,6 +172,11 @@ try:
         # having to sleep too (creative players count toward the total; only
         # spectators are ignored). 1% => any single sleeper meets the threshold.
         print(mcr.command('gamerule playersSleepingPercentage 1'))
+        # No phantoms: they only spawn from insomnia (a player awake 3+ days),
+        # they fly out of a ground-based /attack loop's reach (Baritone can't
+        # path to air → out_of_reach thrash), and a long-running bot never
+        # sleeps on schedule, so they'd pile up. Disable the spawn at the source.
+        print(mcr.command('gamerule doInsomnia false'))
 except Exception as e:
     print(f'RCON failed: {e}')
 "
