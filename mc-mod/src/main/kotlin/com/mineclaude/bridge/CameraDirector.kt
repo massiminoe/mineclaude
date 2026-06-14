@@ -6,6 +6,7 @@ import net.minecraft.client.network.ClientPlayerEntity
 import net.minecraft.entity.Entity
 import net.minecraft.entity.ItemEntity
 import net.minecraft.entity.LivingEntity
+import net.minecraft.entity.mob.EndermanEntity
 import net.minecraft.util.math.Box
 import net.minecraft.util.math.MathHelper
 import org.slf4j.LoggerFactory
@@ -146,6 +147,9 @@ object CameraDirector {
      * [net.minecraft.world.World.getOtherEntities]; the whitelist keeps it to
      * mobs / animals / other players ([LivingEntity]) and dropped items
      * ([ItemEntity]), so XP orbs, arrows and the like are ignored.
+     *
+     * Endermen are excluded: making eye contact with one is exactly what
+     * aggravates it, so the cosmetic idle pan must never look at them.
      */
     private fun nearestInteresting(player: ClientPlayerEntity): Entity? {
         val world = MinecraftClient.getInstance().world ?: return null
@@ -157,6 +161,7 @@ object CameraDirector {
         var bestSq = Double.MAX_VALUE
         for (entity in world.getOtherEntities(player, box)) {
             if (entity !is LivingEntity && entity !is ItemEntity) continue
+            if (entity is EndermanEntity) continue  // eye contact aggros them
             val sq = player.squaredDistanceTo(entity)
             if (sq < bestSq) {
                 bestSq = sq
