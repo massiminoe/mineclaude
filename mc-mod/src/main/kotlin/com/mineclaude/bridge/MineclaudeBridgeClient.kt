@@ -86,6 +86,10 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // wait for morning → leave bed). Can't be /interact: the bed click's
         // accept flag is an unreliable client prediction.
         SleepRoute.register(bridge)
+        // Active shield blocking — raise a shield (offhand) and hold the
+        // block pose for a window, then lower it. Owns the use-key hold +
+        // isBlocking confirmation; a held shield is inert without it.
+        ShieldRoute.register(bridge)
         // Phase 7 vision — /screenshot and /video/stream. Both shell out
         // to ffmpeg x11grab from `:99` — the same approach as the legacy
         // bridge, because NativeImage.writeTo() produces 0-byte PNGs on

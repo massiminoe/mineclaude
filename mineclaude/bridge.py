@@ -81,6 +81,12 @@ class BridgeClient(Protocol):
     async def use_item(self, item: str, hold_ms: int | None = None) -> BridgeResponse: ...
     async def interact(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def sleep_in_bed(self, x: int, y: int, z: int, wait_s: float | None = None) -> BridgeResponse: ...
+    async def block(
+        self,
+        duration_s: float = 2.0,
+        look_at: tuple[float, float, float] | None = None,
+        item: str = "shield",
+    ) -> BridgeResponse: ...
     async def use(
         self,
         item: str | None = None,
@@ -319,6 +325,17 @@ class RealBridgeClient:
         if hold_ms is not None:
             body["hold_ms"] = hold_ms
         return self._parse(await self._http.post("/use", json=body))
+
+    async def block(
+        self,
+        duration_s: float = 2.0,
+        look_at: tuple[float, float, float] | None = None,
+        item: str = "shield",
+    ) -> BridgeResponse:
+        body: dict[str, Any] = {"duration_s": duration_s, "item": item}
+        if look_at is not None:
+            body["look_at_x"], body["look_at_y"], body["look_at_z"] = look_at
+        return self._parse(await self._http.post("/block", json=body))
 
     async def heightmap(
         self,
@@ -1024,6 +1041,22 @@ class MockBridgeClient:
             data["inventory_delta"] = inv_delta
         msg = f"Used {held} on {hit['block']}" if dispatch == "block" else f"Used {held}"
         return BridgeResponse("success", msg, data)
+
+    async def block(
+        self,
+        duration_s: float = 2.0,
+        look_at: tuple[float, float, float] | None = None,
+        item: str = "shield",
+    ) -> BridgeResponse:
+        """Mock: require the shield in inventory, then "block" for the window."""
+        item = item.replace("minecraft:", "")
+        if not any(e["name"] == item for e in self._inventory):
+            return BridgeResponse("error", f"can't block — No {item} in inventory")
+        held_ms = int(max(0.0, duration_s) * 1000)
+        return BridgeResponse(
+            "success", f"Blocked with {item} for {held_ms}ms",
+            {"blocking": True, "held_ms": held_ms, "item": item, "method": "simulated"},
+        )
 
     async def heightmap(
         self,

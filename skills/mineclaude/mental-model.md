@@ -122,6 +122,13 @@ so prefer it. Equip a sword first. The reflex layer already retaliates / flees o
 `damage_taken`
 (see events.md) — don't redo what it did, but verify it worked via `get_state`.
 
+For defense, `block(duration_s, look_at=(x,y,z))` raises a shield and actively
+blocks for that window (auto-equips the shield to the offhand). A shield just
+sitting in the offhand does nothing — `block` is what mitigates the hit. It only
+protects the direction you face, so pass `look_at` pointed at the threat. You
+can't `block` and `attack` at once — block to tank a skeleton's volley or a
+creeper's approach, then `attack` in the gap. Check the returned `blocking`.
+
 ## When something goes wrong
 
 If `get_state` shows a `cancelled` action and a recent reflex, the reflex

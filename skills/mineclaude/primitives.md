@@ -112,6 +112,24 @@ while it swings on the full-damage cadence the moment it's in reach,
 ~30s cap. Get ids from getNearbyEntities / findEntities. One call per
 kill, not per swing. Equip a sword first.
 
+### `await block(duration_s: 'float' = 2.0, *, look_at: 'tuple[float, float, float] | None' = None, item: 'str' = 'shield') -> 'dict'`
+
+Raise a shield and actively block for `duration_s` seconds, then
+lower it. A shield in the offhand is inert on its own — this is what
+actually mitigates the hit.
+
+Auto-equips the shield to the offhand if it isn't already there.
+Blocking only protects the direction you FACE, so pass `look_at=(x,y,z)`
+(e.g. an attacker's position) to point at the threat first. Blocking and
+attacking are mutually exclusive — you can't `block` and `attack` at the
+same time; block to tank a volley, then attack in the gap.
+
+Time-boxed: it holds the block for the whole window (so the shield
+absorbs hits during it) and confirms the pose engaged. Returns a dict:
+`blocking` (was the block pose actually confirmed) and `held_ms`. Raises
+only if there's no shield to equip; a held-but-never-engaged block
+returns `blocking: False` rather than raising — check it.
+
 ### `await craft(item: 'str', count: 'int' = 1) -> 'str'`
 
 Craft `count` of the OUTPUT item (not iterations/inputs); returns the

@@ -143,14 +143,35 @@ object EquipRoute {
     }
 
     private fun handleOffhand(item: String): BridgeResponse {
+        val err = ensureOffhand(item)
+        return if (err != null) HttpBridge.err(err)
+        else HttpBridge.ok(mapOf("equipped" to true, "method" to "real"), "Equipped $item to offhand")
+    }
+
+    /**
+     * Guarantee [item] is in the offhand after this returns null. Locate →
+     * stage to hotbar if needed → select → swap-hands → settle → verify.
+     * Returns an error message on failure. Reused by [ShieldRoute] so a
+     * `block()` can self-equip a shield before raising it. Idempotent: a
+     * shield already in the offhand short-circuits with no swap.
+     */
+    fun ensureOffhand(item: String): String? {
         val target = item.removePrefix("minecraft:")
+
+        val alreadyOffhand = TickThread.submitAndWait(timeoutMs = 1_000) {
+            val player = MinecraftClient.getInstance().player ?: return@submitAndWait false
+            val off = player.offHandStack
+            !off.isEmpty && Registries.ITEM.getId(off.item).path == target
+        }
+        if (alreadyOffhand) return null
+
         val located = TickThread.submitAndWait(timeoutMs = 1_000) { locate(item) }
-            ?: return HttpBridge.err("No $item in inventory")
+            ?: return "No $item in inventory"
         val hotbarSlot: Int = if (located.inHotbar) {
             located.piSlot
         } else {
             TickThread.submitAndWait(timeoutMs = 2_000) { stageIntoHotbar(item) }
-                ?: return HttpBridge.err("$item is in inventory but couldn't be moved to the hotbar")
+                ?: return "$item is in inventory but couldn't be moved to the hotbar"
         }
         TickThread.submitAndWait(timeoutMs = 1_000) {
             val player = MinecraftClient.getInstance().player ?: return@submitAndWait Unit
@@ -173,14 +194,9 @@ object EquipRoute {
         }
         if (!verified) {
             log.warn("equip: post-swap offhand does not hold {} (asked for slot {})", item, hotbarSlot)
-            return HttpBridge.err(
-                "equip did not take effect — offhand is not $item after swap-hands."
-            )
+            return "equip did not take effect — offhand is not $item after swap-hands."
         }
-        return HttpBridge.ok(
-            mapOf("equipped" to true, "method" to "real"),
-            "Equipped $item to offhand",
-        )
+        return null
     }
 
     /**

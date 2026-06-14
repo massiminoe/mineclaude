@@ -396,6 +396,34 @@ def make_primitives(
         data["message"] = resp.message
         return data
 
+    async def block(
+        duration_s: float = 2.0,
+        *,
+        look_at: tuple[float, float, float] | None = None,
+        item: str = "shield",
+    ) -> dict:
+        """Raise a shield and actively block for `duration_s` seconds, then
+        lower it. A shield in the offhand is inert on its own — this is what
+        actually mitigates the hit.
+
+        Auto-equips the shield to the offhand if it isn't already there.
+        Blocking only protects the direction you FACE, so pass `look_at=(x,y,z)`
+        (e.g. an attacker's position) to point at the threat first. Blocking and
+        attacking are mutually exclusive — you can't `block` and `attack` at the
+        same time; block to tank a volley, then attack in the gap.
+
+        Time-boxed: it holds the block for the whole window (so the shield
+        absorbs hits during it) and confirms the pose engaged. Returns a dict:
+        `blocking` (was the block pose actually confirmed) and `held_ms`. Raises
+        only if there's no shield to equip; a held-but-never-engaged block
+        returns `blocking: False` rather than raising — check it."""
+        resp = await bridge.block(duration_s, look_at=look_at, item=item)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
     async def getStats() -> dict:
         """Return {health, hunger, position:{x,y,z}, biome, time}. Position is a
         NESTED dict — use stats['position']['x']."""
@@ -486,6 +514,7 @@ def make_primitives(
         "breakBlockAt": breakBlockAt,
         "collectItems": collectItems,
         "attack": attack,
+        "block": block,
         "craft": craft,
         "furnaceLoad": furnaceLoad,
         "furnaceInspect": furnaceInspect,
