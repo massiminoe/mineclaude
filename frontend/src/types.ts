@@ -66,8 +66,14 @@ export interface GameState {
   equipped?: Equipped;
 }
 
-export interface ReflexEvent {
+// A point on the Events timeline. Both hazard reflex fires (damage_taken,
+// hostile_nearby, …) and curated world events (chat, death, respawn,
+// advancement) share this shape; the Events rail merges the two streams.
+export interface TimelineEvent {
   type: string;
   data: Record<string, unknown>;
   ts: number;
 }
+
+/** @deprecated alias kept for callers — use TimelineEvent. */
+export type ReflexEvent = TimelineEvent;

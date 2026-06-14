@@ -4,13 +4,15 @@ import type {
   GameState,
   ActionItem,
   SubActionItem,
-  ReflexEvent,
+  TimelineEvent,
 } from "../types";
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 15000;
 // Cap the in-memory reflex log; matches the agent's RECENT_MAXLEN.
 const REFLEX_LOG_MAX = 10;
+// Cap the in-memory world-event log; matches the monitor's EVENT_LOG_MAX.
+const EVENT_LOG_MAX = 30;
 
 export function useSocket() {
   const [queue, setQueue] = useState<QueueState>({
@@ -19,7 +21,8 @@ export function useSocket() {
     recent: [],
   });
   const [gameState, setGameState] = useState<GameState | null>(null);
-  const [reflexes, setReflexes] = useState<ReflexEvent[]>([]);
+  const [reflexes, setReflexes] = useState<TimelineEvent[]>([]);
+  const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -36,6 +39,7 @@ export function useSocket() {
         if (data.queue) setQueue(data.queue);
         if (data.game) setGameState(data.game);
         if (Array.isArray(data.reflexes)) setReflexes(data.reflexes);
+        if (Array.isArray(data.events)) setEvents(data.events);
         if (typeof data.video_url === "string") setVideoUrl(data.video_url);
       })
       .catch(() => {
@@ -131,11 +135,22 @@ export function useSocket() {
           // contains it and the WS push would otherwise add a second copy.
           // `ts` is set once at dispatch time and is identical on both paths.
           setReflexes((prev) => {
-            const incoming = data as unknown as ReflexEvent;
+            const incoming = data as unknown as TimelineEvent;
             if (prev.some((r) => r.ts === incoming.ts && r.type === incoming.type)) {
               return prev;
             }
             return [incoming, ...prev].slice(0, REFLEX_LOG_MAX);
+          });
+          break;
+        case "event:recorded":
+          // Curated world events (chat/death/respawn/advancement). Same
+          // ts+type dedupe as reflexes against the reconnect snapshot.
+          setEvents((prev) => {
+            const incoming = data as unknown as TimelineEvent;
+            if (prev.some((e) => e.ts === incoming.ts && e.type === incoming.type)) {
+              return prev;
+            }
+            return [incoming, ...prev].slice(0, EVENT_LOG_MAX);
           });
           break;
       }
@@ -204,5 +219,5 @@ export function useSocket() {
     };
   }, [connect]);
 
-  return { queue, gameState, reflexes, videoUrl, connected };
+  return { queue, gameState, reflexes, events, videoUrl, connected };
 }

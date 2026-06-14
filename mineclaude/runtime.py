@@ -101,6 +101,12 @@ _DEFAULT_EVENT_POLICY = {
     "action_done": False,
 }
 
+# Non-hazard event types surfaced on the monitor's Events rail (alongside the
+# hazard reflex fires, which broadcast via `reflex:fired`). Curated: the
+# user-facing world events, NOT the internal completion signals (action_done,
+# reflex_done) that also pass through `_record_event`.
+MONITOR_EVENT_TYPES = frozenset({"chat", "death", "respawn", "advancement"})
+
 
 def _normalize_mod_event(raw: dict) -> dict[str, Any]:
     """Reshape a mod EventLog entry (block_broken/placed, entity_attacked) into
@@ -598,7 +604,14 @@ class Runtime:
         data = event.get("data") or {}
         self.slog("event", type=event_type, data=data)
         if event_type not in HAZARD_EVENT_TYPES:
-            self._record_event(event_type, data)
+            ev = self._record_event(event_type, data)
+            # Push the curated world events to the monitor's Events rail. The
+            # hazard reflexes get there via reflexes.dispatch -> reflex:fired.
+            if event_type in MONITOR_EVENT_TYPES:
+                await self._emit(
+                    "event:recorded",
+                    {"type": ev.type, "data": ev.data, "ts": ev.ts},
+                )
         if event_type == "death":
             await self._death_reset()
         if event_type in self.reflexes.known_types():

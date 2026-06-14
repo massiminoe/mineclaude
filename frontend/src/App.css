@@ -6,6 +6,10 @@
   --faint: #41464b;
   --amber: #d9a23f;
   --red: #de6e5e;
+  /* muted accents for the non-hazard event categories on the Events rail */
+  --chat: #6fa8c7;
+  --grant: #9d8ec9;
+  --life: #7fb08a;
   --rail-width: 372px;
   font-size: 13px;
 }
@@ -35,9 +39,33 @@ body {
   height: 100vh;
   display: grid;
   grid-template-rows: 44px 1fr 84px;
-  /* minmax(0,…) so wide content (stream frames, long code) can't inflate
-     the implicit column track past the viewport */
-  grid-template-columns: minmax(0, 1fr);
+  /* Two explicit columns: content (feed + footer) and the full-height rail.
+     minmax(0,…) so wide content (stream frames, long code) can't inflate the
+     content track past the viewport. */
+  grid-template-columns: minmax(0, 1fr) var(--rail-width);
+}
+
+/* header spans both columns; feed + footer occupy the left column; the rail
+   spans the two content rows so it runs unbroken to the bottom edge. */
+.app > header {
+  grid-column: 1 / -1;
+}
+
+.app > main {
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.app > footer {
+  grid-row: 3;
+  grid-column: 1;
+}
+
+.app > aside {
+  grid-row: 2 / 4;
+  grid-column: 2;
 }
 
 .lbl {
@@ -126,7 +154,7 @@ header {
 
 main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--rail-width);
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -135,7 +163,6 @@ main {
 .feed {
   position: relative;
   background: #000;
-  border-right: 1px solid var(--hairline);
   overflow: hidden;
 }
 
@@ -210,13 +237,18 @@ main {
 
 aside {
   display: grid;
-  grid-template-rows: 1fr auto;
+  /* 60% Actions / 40% Events. minmax(0,…) lets each track scroll internally
+     instead of growing to fit its content. */
+  grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
   /* clamp the implicit column track — otherwise it sizes to the max-content
      of nowrap action lines and the whole rail blows out sideways */
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  /* the full-height divider between content and rail (replaces the feed's
+     old border-right, so the line runs unbroken past the footer) */
+  border-left: 1px solid var(--hairline);
 }
 
 .rail-section {
@@ -229,19 +261,23 @@ aside {
   border-top: 1px solid var(--hairline);
 }
 
-.rail-reflexes {
-  max-height: 200px;
-}
-
 .sec-hd {
   display: flex;
   align-items: baseline;
+  gap: 10px;
   padding: 14px 20px 10px;
   flex-shrink: 0;
 }
 
 .sec-hd .lbl {
   color: var(--dim);
+}
+
+.sec-count {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--faint);
 }
 
 .rail-scroll {
@@ -432,39 +468,78 @@ aside {
   color: var(--red);
 }
 
-/* reflexes */
+/* events — merged reflex + world-event timeline (variant B: left accent
+   spine, uppercase category tag, detail right-aligned) */
 
-.rail-reflexes .rail-scroll {
+.rail-events .rail-scroll {
   padding-bottom: 10px;
 }
 
-.rfx {
+.evt {
   display: flex;
   gap: 12px;
   align-items: baseline;
-  padding: 6px 20px;
+  padding: 7px 20px 7px 18px;
   font-size: 11px;
+  border-left: 2px solid transparent;
 }
 
-.rfx-t {
+.evt-t {
   color: var(--faint);
   font-size: 10px;
   min-width: 42px;
+  flex-shrink: 0;
 }
 
-.rfx-ty {
-  color: var(--text);
-}
-
-.rfx-fault .rfx-ty {
-  color: var(--red);
-}
-
-.rfx-d {
+.evt-ty {
   color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.evt-d {
+  margin-left: auto;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: right;
+}
+
+.evt-who {
+  color: var(--chat);
+  margin-right: 7px;
+}
+
+/* category accents — spine colour + tinted detail for the harm cases */
+.evt-hazard {
+  border-left-color: var(--amber);
+}
+
+.evt-fault {
+  border-left-color: var(--red);
+}
+
+.evt-fault .evt-d {
+  color: var(--red);
+}
+
+.evt-chat {
+  border-left-color: var(--chat);
+}
+
+.evt-grant {
+  border-left-color: var(--grant);
+}
+
+.evt-grant .evt-d {
+  color: var(--grant);
+}
+
+.evt-life {
+  border-left-color: var(--life);
 }
 
 /* ── footer ── */
@@ -578,13 +653,9 @@ footer {
   justify-content: center;
   gap: 18px;
   padding: 0 24px;
-  /* Reserve the rail width so the hotbar group is centred under the video pane
-     (whose right edge is the rail boundary), not under the full footer width. */
-  margin-right: var(--rail-width);
   min-width: 0;
   background: none;
   border: none;
-  border-right: 1px solid var(--hairline);
   font: inherit;
   color: inherit;
   cursor: pointer;

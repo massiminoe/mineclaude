@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useSocket } from "./hooks/useSocket";
 import { Feed } from "./components/Feed";
 import { Actions } from "./components/Actions";
-import { Reflexes } from "./components/Reflexes";
+import { Events } from "./components/Events";
 import { InventoryModal } from "./components/InventoryModal";
 import { ItemIcon, DurabilityBar } from "./components/ItemIcon";
 import { useItemIcons } from "./icons";
@@ -125,7 +125,7 @@ function Footer({ game, onExpand }: { game: GameState | null; onExpand: () => vo
 }
 
 export default function App() {
-  const { queue, gameState, reflexes, videoUrl, connected } = useSocket();
+  const { queue, gameState, reflexes, events, videoUrl, connected } = useSocket();
   const [invOpen, setInvOpen] = useState(false);
 
   // Shared 1 Hz clock for running-action elapsed time and reflex ages.
@@ -140,12 +140,14 @@ export default function App() {
       <Header game={gameState} connected={connected} />
       <main>
         <Feed videoUrl={videoUrl} connected={connected} />
-        <aside>
-          <Actions queue={queue} now={now} />
-          <Reflexes reflexes={reflexes} now={now} />
-        </aside>
       </main>
       <Footer game={gameState} onExpand={() => setInvOpen(true)} />
+      {/* Full-height right rail — spans the main + footer rows so the sidebar
+          runs unbroken from under the header to the bottom of the viewport. */}
+      <aside>
+        <Actions queue={queue} now={now} />
+        <Events reflexes={reflexes} events={events} now={now} />
+      </aside>
       {invOpen && gameState && (
         <InventoryModal game={gameState} onClose={() => setInvOpen(false)} />
       )}

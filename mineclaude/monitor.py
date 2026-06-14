@@ -11,7 +11,12 @@ from typing import Any
 
 from aiohttp import web
 
+from .runtime import MONITOR_EVENT_TYPES
+
 logger = logging.getLogger(__name__)
+
+# How many recent world events the snapshot serves; matches the frontend cap.
+EVENT_LOG_MAX = 30
 
 
 class MonitorServer:
@@ -42,6 +47,7 @@ class MonitorServer:
         # conversation/plan/memory/usage were brain bus events — the Runtime
         # never emits them. Only reflex + queue/subaction events remain.
         self.agent.on("reflex:fired", self._on_reflex_fired)
+        self.agent.on("event:recorded", self._on_event_recorded)
         self.agent.queue.on("action:enqueued", self._on_action_event)
         self.agent.queue.on("action:started", self._on_action_event)
         self.agent.queue.on("action:completed", self._on_action_event)
@@ -64,10 +70,20 @@ class MonitorServer:
         # Reflex log: most-recent first to match the WS push semantics in
         # the frontend (which prepends incoming events).
         reflexes = list(reversed(list(self.agent.reflexes.recent)))
+        # Curated world events (chat/death/respawn/advancement) from the
+        # flushable buffer — same {type, data, ts} shape as reflexes, also
+        # most-recent first. The frontend merges the two into one timeline.
+        events = [
+            {"type": e.type, "data": e.data, "ts": e.ts}
+            for e in self.agent._events
+            if e.type in MONITOR_EVENT_TYPES
+        ]
+        events = list(reversed(events))[:EVENT_LOG_MAX]
         return web.json_response({
             "queue": self.agent.queue.status(),
             "game": game,
             "reflexes": reflexes,
+            "events": events,
             "video_url": f"{video_base}/video/stream?fps=10&quality=50" if video_base else None,
         })
 
@@ -123,6 +139,12 @@ class MonitorServer:
     async def _on_reflex_fired(self, event: str, entry: Any) -> None:
         # entry is the dict pushed onto reflexes.recent: {type, data, ts}.
         await self._broadcast("reflex:fired", entry if isinstance(entry, dict) else {})
+
+    async def _on_event_recorded(self, event: str, entry: Any) -> None:
+        # entry is a curated world event {type, data, ts}: chat/death/respawn/
+        # advancement. Hazard reflexes arrive via _on_reflex_fired instead; the
+        # frontend merges both into one Events timeline.
+        await self._broadcast("event:recorded", entry if isinstance(entry, dict) else {})
 
     async def _on_action_event(self, event: str, action: Any, *_extra: Any) -> None:
         await self._broadcast(event.replace(":", "_"), {
