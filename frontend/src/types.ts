@@ -38,7 +38,6 @@ export interface GameState {
   health: number;
   hunger: number;
   biome: string;
-  dimension?: string;
   time: number;
   held_slot?: number;
   inventory: InventoryItem[];

@@ -135,7 +135,6 @@ export function Actions({ queue, now }: Props) {
     <section className="rail-section rail-actions">
       <div className="sec-hd">
         <span className="lbl">Actions</span>
-        <span className="lbl-r">single-flight</span>
       </div>
       <div className="rail-scroll">
         {rows.length === 0 && <div className="rail-empty">no actions yet</div>}

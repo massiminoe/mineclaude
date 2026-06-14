@@ -45,7 +45,6 @@ export function Reflexes({ reflexes, now }: Props) {
     <section className="rail-section rail-reflexes">
       <div className="sec-hd">
         <span className="lbl">Reflexes</span>
-        <span className="lbl-r">hazards</span>
       </div>
       <div className="rail-scroll">
         {reflexes.length === 0 && <div className="rail-empty">no hazards</div>}

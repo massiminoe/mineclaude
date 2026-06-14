@@ -45,10 +45,6 @@ function Header({ game, connected }: { game: GameState | null; connected: boolea
           <span className="lbl">Biome</span>
           <span className="val">{game?.biome ?? "—"}</span>
         </div>
-        <div className="field">
-          <span className="lbl">Dimension</span>
-          <span className="val">{game?.dimension?.replace(/^minecraft:/, "") ?? "—"}</span>
-        </div>
       </div>
       <div className={`live${connected ? "" : " offline"}`}>
         <i />
@@ -58,7 +54,7 @@ function Header({ game, connected }: { game: GameState | null; connected: boolea
   );
 }
 
-function Footer({ game, connected }: { game: GameState | null; connected: boolean }) {
+function Footer({ game }: { game: GameState | null }) {
   const inv = game?.inventory ?? [];
   return (
     <footer>
@@ -107,10 +103,6 @@ function Footer({ game, connected }: { game: GameState | null; connected: boolea
           ))}
         </div>
       </div>
-      <div className="fmeta">
-        <span className="lbl">Bridge</span>
-        <span className="val">{connected && game ? "nominal" : "no link"}</span>
-      </div>
     </footer>
   );
 }
@@ -135,7 +127,7 @@ export default function App() {
           <Reflexes reflexes={reflexes} now={now} />
         </aside>
       </main>
-      <Footer game={gameState} connected={connected} />
+      <Footer game={gameState} />
     </div>
   );
 }
