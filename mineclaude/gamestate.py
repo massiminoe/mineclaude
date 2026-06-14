@@ -40,7 +40,6 @@ def build_game_state(
         "health": status.get("health"),
         "hunger": status.get("hunger"),
         "biome": status.get("biome"),
-        "dimension": status.get("dimension"),
         "time": status.get("time"),
         # Selected hotbar index (0..8) — the "what am I actually holding" read
         # that pairs with equipped.hand for diagnosing wrong-tool mining.

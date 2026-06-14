@@ -25,7 +25,6 @@ def _default_status() -> dict:
         "health": 18.0,
         "hunger": 17,
         "biome": "plains",
-        "dimension": "overworld",
         "time": 1000,
         "inventory": [{"slot": 0, "name": "oak_log", "count": 12}],
         "equipped": {"hand": "iron_pickaxe"},
@@ -200,7 +199,6 @@ async def test_get_state_shape():
     assert isinstance(state, GameState)
     assert state.player["pos"] == [1.0, 64.0, 2.0]
     assert state.player["health"] == 18.0
-    assert state.player["dimension"] == "overworld"
     assert state.inventory == [{"slot": 0, "name": "oak_log", "count": 12}]
     # equipped is normalized to the fixed 5-slot shape.
     assert state.equipped == {

@@ -108,8 +108,13 @@ tool — re-`equip` the pickaxe/sword after eating mid-task.
 
 ## Combat
 
-`attack(entity_id)` loops swings to a kill and auto-paths into melee — one call
-per kill, not per swing. Get the id from `getNearbyEntities`/`findEntities`. When
+`attack(entity_id)` fights to a kill — one call per kill, not per swing. It
+runs a pathfinder + combat module concurrently: Baritone continuously paths
+after the moving target (terrain-smart — it jumps, rounds corners, climbs)
+while a fast loop swings the instant the mob is in reach. You don't sequence a
+`goToPosition` before it — the approach is built in, and if the target is faster
+than you or walled off it gives up with `out_of_reach` rather than hanging. Get
+the id from `getNearbyEntities`/`findEntities`. When
 you filter, match on `type` (the lowercase id — `sheep`, `zombie`), never `name`
 (the display-cased label — `Sheep`); hand-filtering `getNearbyEntities()` on
 `name == "sheep"` silently misses every mob. `findEntities` is case-insensitive,

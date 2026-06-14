@@ -106,9 +106,11 @@ breaking blocks or killing mobs; bump radius to ~10 after a mining run.
 
 ### `await attack(entity_id: 'int | str') -> 'str'`
 
-Fight the entity with this numeric id to the death — loops swings,
-auto-paths into melee, ~30s cap. Get ids from getNearbyEntities /
-findEntities. One call per kill, not per swing. Equip a sword first.
+Fight the entity with this numeric id to the death — Baritone
+pathfinds after the moving target (terrain-smart: jumps, gaps, walls)
+while it swings on the full-damage cadence the moment it's in reach,
+~30s cap. Get ids from getNearbyEntities / findEntities. One call per
+kill, not per swing. Equip a sword first.
 
 ### `await craft(item: 'str', count: 'int' = 1) -> 'str'`
 
