@@ -404,7 +404,13 @@ def make_primitives(
 
     async def discard(slot: int, count: int = 1) -> str:
         """Drop `count` items from PI slot (0..8 hotbar, 9..35 main inventory).
-        Find the slot via getInventory(). Armor/offhand aren't discardable."""
+        Find the slot via getInventory(). Armor/offhand aren't discardable.
+
+        Drops land on the ground right next to you, and the bot auto-collects
+        nearby item entities — so a naive discard tends to get re-picked-up
+        (and a following collectItems WILL re-grab it). To actually shed items,
+        walk well away (>~8 blocks) before any collectItems. To free space
+        without losing loot, prefer chestStore over discard."""
         return _check(await bridge.discard(slot, count))
 
     async def unequip(slot: str = "offhand") -> dict:

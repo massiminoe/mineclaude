@@ -18,7 +18,10 @@ short trips, frequent check-ins. The journey is part of it.
 
 1. **Observe** — `get_state()` returns a structured snapshot (player, inventory,
    equipped, current action, recent reflex fires, buffered events). Call it
-   before deciding; it's cheap. `screenshot(...)` when you need to *see*.
+   before deciding; it's cheap. **`screenshot(...)` liberally** — the numbers in
+   `get_state` don't tell you what's actually in front of you. Look before you
+   navigate, mine, build, or fight, and look again afterward to confirm it
+   worked. A glance is cheaper than acting blind on a stale mental picture.
 2. **Act** — `execute(code=...)` runs Python with the primitive namespace and
    **blocks** until the action finishes, returning `{status, result, error, ...}`.
    One action at a time (single-flight): a second `execute` while one is running

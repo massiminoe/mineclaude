@@ -6,17 +6,23 @@ dusk with a wooden pickaxe.
 
 ## Observe before you commit
 
-`get_state()` is your eyes — it carries position, health, hunger, biome, time,
+`get_state()` is your numbers — it carries position, health, hunger, biome, time,
 inventory, equipped items, the current action, recent reflex fires, and buffered
-events. `inventory_slots` is `"M/36"` — occupied of the 36 storage slots; when it
-reads `36/36` you have no empty slot, so a craft output or pickup of a *new* item
-type silently fails (the classic "+0 chest (inventory full?)"). Clear space or
-store before crafting/collecting if you're near full. Read it before deciding;
-don't act on a snapshot ten actions stale. Use
-`screenshot(...)` only when you need *visual* context (verify a build, read a
-sign, survey terrain) — the state snapshot already has the numbers. Aim the
-camera deliberately with `look_at=[x,y,z]` or `yaw`/`pitch`; after Baritone
-navigation the bot faces an arbitrary direction.
+events. Read it before deciding; don't act on a snapshot ten actions stale.
+
+But the numbers are only half your eyes. **`screenshot(...)` is the other half,
+and you should reach for it far more often than feels necessary.** The state
+snapshot tells you *what* you have and *where* you are; it cannot tell you that a
+tree is behind a wall, that the ore vein continues left, that your wall has a
+gap, that the cow you're chasing wandered off a cliff, or that it's visibly dusk.
+Look **before** you commit to navigating, mining, building, or fighting — and
+look **again afterward** to confirm the world actually changed the way you
+intended. A bot that acts on numbers alone builds a confident, wrong mental
+picture and walks it straight into a wall. When in doubt, take the screenshot;
+it's cheap and it's the only thing that catches the gap between what you think
+the world is and what it is. Aim the camera deliberately with `look_at=[x,y,z]`
+or `yaw`/`pitch`; after Baritone navigation the bot faces an arbitrary direction,
+so a screenshot without aiming often shows you nothing useful.
 
 ## One action at a time
 
@@ -65,6 +71,30 @@ When hunger < 18 and you have food, eat (`useItem(food)`) before continuing long
 work — at 6 you stop sprinting, at 0 you take damage. Cooked meats and bread are
 high-saturation. Note the side effect: equipping food swaps your hand off your
 tool — re-`equip` the pickaxe/sword after eating mid-task.
+
+## Inventory and dropping items
+
+`inventory_slots` in `get_state` is `"M/36"` — occupied of the 36 storage slots.
+When it reads `36/36` you have **no empty slot**, and a craft output or a pickup
+of a *new* item type silently fails (the classic "+0 chest (inventory full?)" —
+the action reports success but nothing landed). Watch the count as it climbs:
+once you're near full, stop and deal with it *before* the next craft or
+`collectItems`, not after a silent loss. The fix is to **store** the surplus in a
+chest, not to throw it away — `chestStore` keeps it; you've usually mined for
+that loot, so dumping it is the last resort.
+
+When you *do* need to shed items, know that **`discard` drops them on the ground
+right next to you, and the bot auto-picks-up nearby item entities** — so a naive
+discard followed by any movement (or just standing there) tends to suck the same
+items straight back in, and a `collectItems` will definitely re-grab them. So:
+
+- To free space, prefer `chestStore` (keeps the items) over `discard` (loses
+  them) whenever a chest is reachable.
+- If you genuinely want junk *gone* (cobblestone glut, rotten flesh), `discard`
+  then **walk well away** (>~8 blocks) before the next `collectItems`, or the
+  pickup radius will undo it. Don't `collectItems` in the spot you just dumped.
+- Dropping an item to hand it to a player has the same trap — drop it *at their
+  feet*, then move off, so you don't re-collect your own gift.
 
 ## Mining discipline
 

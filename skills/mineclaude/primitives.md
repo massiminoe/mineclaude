@@ -262,6 +262,12 @@ inventory is full — check it. Raises only if not connected / bad slot.
 Drop `count` items from PI slot (0..8 hotbar, 9..35 main inventory).
 Find the slot via getInventory(). Armor/offhand aren't discardable.
 
+Drops land on the ground right next to you, and the bot auto-collects
+nearby item entities — so a naive discard tends to get re-picked-up
+(and a following collectItems WILL re-grab it). To actually shed items,
+walk well away (>~8 blocks) before any collectItems. To free space
+without losing loot, prefer chestStore over discard.
+
 ### `await useItem(item: 'str') -> 'str'`
 
 Right-click in air with `item` held — eat food, drink potion,
