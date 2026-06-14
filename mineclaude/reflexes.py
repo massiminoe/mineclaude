@@ -82,7 +82,7 @@ FLEE_DISTANCE = 10.0
 #               /attack loop just thrashes without landing hits.
 # Everything else with an attacker entity (hostile mobs, and provoked
 # neutrals) still triggers the reflex.
-NO_RETALIATE_KINDS = frozenset({"player", "phantom"})
+NO_RETALIATE_KINDS = frozenset({"player"})
 
 # Global time budget for the auto-retaliation reaction (equip + attack). The
 # mod's /attack loop caps itself at 30s, but a mob that flees out of melee
@@ -433,7 +433,7 @@ async def damage_taken_handler(controller: "Controller", data: dict) -> None:
     if not attacker_kind:
         return  # environmental (fall, fire, drowning) — record-only
     if attacker_kind in NO_RETALIATE_KINDS:
-        return  # players + phantoms — record-only, no flee/retaliate
+        return  # players — record-only, no flee/retaliate
 
     attacker_id = data.get("attacker_id")
     attacker_pos = data.get("attacker_pos") or {}
