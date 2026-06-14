@@ -617,7 +617,7 @@ class Runtime:
         2. preempt(): hooks, queue purge, Baritone #stop + /attack/stop,
            slot release, action_done(cancelled) for a backgrounded action.
         3. Reset reflex cooldowns — the respawned life starts with fresh
-           reflexes (a 30s damage_taken cooldown from the previous life
+           reflexes (a damage_taken cooldown from the previous life
            must not suppress reaction right after spawn).
         """
         await self.reflexes.cancel_active()

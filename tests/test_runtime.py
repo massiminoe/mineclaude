@@ -542,7 +542,7 @@ async def test_get_handler_reads_registry_default():
     info = rt.get_handler("damage_taken")
     assert info.source == "default"
     assert info.code is None
-    assert info.cooldown_s == 30.0  # the registered default's policy
+    assert info.cooldown_s == 1.5  # the registered default's policy
 
 
 async def test_set_handler_installs_authored_body():

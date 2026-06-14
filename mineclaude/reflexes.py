@@ -620,7 +620,7 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
         event_type="damage_taken",
         handle=damage_taken_handler,
         preempts=False,
-        cooldown_s=30.0,
+        cooldown_s=1.5,
         resumes_on_complete=True,
     ))
     registry.register(ReflexHandler(
