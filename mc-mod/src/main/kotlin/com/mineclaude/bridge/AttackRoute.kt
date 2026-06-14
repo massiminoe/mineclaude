@@ -50,6 +50,14 @@ import kotlin.math.floor
  * pathing, which would gut melee damage. We re-hold the agent's weapon slot
  * immediately before each swing and restore it in the outer `finally`.
  *
+ * Shield (block-strike rhythm): if a shield is in the offhand (auto-equipped
+ * from inventory when the offhand is free — a non-shield offhand like a totem
+ * is respected and disables this), the in-reach phase raises the guard in the
+ * dead time between swings and drops it to strike. We're stationary in melee
+ * (Baritone halted), so blocking costs no movement; the shield is lowered
+ * before we resume pathing so it never throttles the chase. Blocking and
+ * swinging stay mutually exclusive — we lower, then hit.
+ *
  * Looping (rather than one-shot) keeps a single high-level "kill this thing"
  * call cheap from the agent's perspective: one HTTP request per fight, not
  * one per swing. The reflex layer relies on this — the damage_taken
@@ -204,24 +212,31 @@ object AttackRoute {
             MinecraftClient.getInstance().player?.inventory?.selectedSlot ?: 0
         }
 
+        // Shield: get one into the offhand (if we can) so the in-reach phase
+        // can raise it between swings — the block-strike rhythm. canBlock=false
+        // (no shield / occupied offhand) ⇒ the loop fights exactly as before.
+        val canBlock = prepareShield()
+        var shieldUp = false
+        var blockRaises = 0
+
         try {
             while (true) {
-                if (session.cancelled.get()) return summary("cancelled", swings, entityId)
+                if (session.cancelled.get()) return summary("cancelled", swings, entityId, shielded = canBlock, blocks = blockRaises)
                 val nowMs = System.currentTimeMillis()
-                if (nowMs >= deadline) return summary("timeout", swings, entityId)
+                if (nowMs >= deadline) return summary("timeout", swings, entityId, shielded = canBlock, blocks = blockRaises)
 
                 // submitAndWait throws on tick-thread timeout; the dispatcher
                 // returns a 500 and the outer finally clears the slot + stops
                 // Baritone + restores the held weapon.
                 when (val t = TickThread.submitAndWait(timeoutMs = 2_000) { resolveTargetOnTick(entityId) }) {
-                    is Target.NoPlayer -> return summary("error", swings, entityId, detail = "no player")
+                    is Target.NoPlayer -> return summary("error", swings, entityId, detail = "no player", shielded = canBlock, blocks = blockRaises)
                     is Target.NotFound -> {
-                        return if (everEngaged) summary("despawned", swings, entityId)
-                        else summary("not_found", swings, entityId)
+                        return if (everEngaged) summary("despawned", swings, entityId, shielded = canBlock, blocks = blockRaises)
+                        else summary("not_found", swings, entityId, shielded = canBlock, blocks = blockRaises)
                     }
                     is Target.Dead -> {
                         everEngaged = true
-                        return summary("killed", swings, entityId)
+                        return summary("killed", swings, entityId, shielded = canBlock, blocks = blockRaises)
                     }
                     is Target.Alive -> {
                         everEngaged = true
@@ -233,14 +248,26 @@ object AttackRoute {
                         when {
                             t.dist <= MELEE_REACH -> {
                                 // In reach: halt Baritone so it doesn't shove
-                                // past the mob, then swing on the cadence.
+                                // past the mob, then run the block-strike rhythm
+                                // — guard up between swings, drop to swing.
                                 if (pathing) { stopBaritone(); pathing = false }
                                 lastImproveMs = nowMs  // engaged ⇒ progressing
                                 if (nowMs - lastSwingMs >= SWING_INTERVAL_MS) {
+                                    // Time to strike: drop the shield (can't
+                                    // block and swing at once) and hit.
                                     val swung = TickThread.submitAndWait(timeoutMs = 2_000) {
+                                        if (shieldUp) lowerShieldOnTick()
                                         swingOnTick(entityId, weaponSlot)
                                     }
+                                    shieldUp = false
                                     if (swung) { swings += 1; lastSwingMs = nowMs }
+                                } else if (canBlock && !shieldUp) {
+                                    // Gap between swings: raise the guard facing
+                                    // the mob (a block only covers the way you face).
+                                    val raised = TickThread.submitAndWait(timeoutMs = 2_000) {
+                                        raiseShieldOnTick(entityId)
+                                    }
+                                    if (raised) { shieldUp = true; blockRaises += 1 }
                                 }
                             }
                             t.dist <= RESUME_REACH && !pathing -> {
@@ -248,6 +275,14 @@ object AttackRoute {
                                 // thrash Baritone for a mob hovering at reach.
                             }
                             else -> {
+                                // Leaving melee to chase: lower the shield first
+                                // — blocking throttles movement to ~20% and kills
+                                // sprint, so a raised guard here would crawl the
+                                // chase (worse than no shield).
+                                if (shieldUp) {
+                                    TickThread.submitAndWait(timeoutMs = 1_000) { lowerShieldOnTick(); Unit }
+                                    shieldUp = false
+                                }
                                 // Out of reach: keep Baritone tracking the live
                                 // target position (refresh on drift / staleness).
                                 val gx = floor(t.x).toInt()
@@ -269,6 +304,7 @@ object AttackRoute {
                                         "out_of_reach", swings, entityId,
                                         detail = "no progress for ${STUCK_MS / 1000}s — " +
                                             "target faster than us or unreachable (walled off / treed up)",
+                                        shielded = canBlock, blocks = blockRaises,
                                     )
                                 }
                             }
@@ -277,7 +313,7 @@ object AttackRoute {
                         try {
                             Thread.sleep(TICK_POLL_MS)
                         } catch (_: InterruptedException) {
-                            if (session.cancelled.get()) return summary("cancelled", swings, entityId)
+                            if (session.cancelled.get()) return summary("cancelled", swings, entityId, shielded = canBlock, blocks = blockRaises)
                             // Spurious interrupt: re-loop and re-check.
                         }
                     }
@@ -288,6 +324,9 @@ object AttackRoute {
             // back the weapon slot Baritone may have swapped away mid-path.
             if (pathing) stopBaritone()
             restoreSlot(weaponSlot)
+            // Always drop the guard so a kill/cancel/timeout can't leave the
+            // shield raised forever (idempotent if it's already down).
+            if (canBlock) lowerShield()
         }
     }
 
@@ -335,6 +374,61 @@ object AttackRoute {
         mgr.attackEntity(player, target)
         player.swingHand(Hand.MAIN_HAND)
         return true
+    }
+
+    /**
+     * Get a shield into the offhand for the block-strike rhythm, returning
+     * whether the loop can block. Auto-equips a shield from inventory when the
+     * offhand is free (idempotent if one's already there), but respects a
+     * deliberately-occupied offhand: a non-shield item (e.g. a totem) is left
+     * alone and just disables blocking rather than getting bumped mid-fight.
+     * Runs on the worker thread — [EquipRoute.ensureOffhand] does its own
+     * tick-thread submissions, so it must NOT be called from inside one.
+     */
+    private fun prepareShield(): Boolean {
+        val occupied = TickThread.submitAndWait(timeoutMs = 1_000) {
+            val player = MinecraftClient.getInstance().player ?: return@submitAndWait false
+            val off = player.offHandStack
+            !off.isEmpty && Registries.ITEM.getId(off.item).path != "shield"
+        }
+        if (occupied) return false
+        return EquipRoute.ensureOffhand("shield") == null
+    }
+
+    /**
+     * Raise the offhand shield, facing the target so the block actually covers
+     * the threat (a shield only protects the way you look). `interactItem(
+     * OFF_HAND)` starts the use; pinning the use key keeps the client tick loop
+     * from dropping it the next tick. Tick-thread only.
+     */
+    private fun raiseShieldOnTick(entityId: String): Boolean {
+        val mc = MinecraftClient.getInstance()
+        val player = mc.player ?: return false
+        val world = mc.world ?: return false
+        val mgr = mc.interactionManager ?: return false
+        matchEntity(world.entities, entityId)?.let { target ->
+            val centre = target.boundingBox.center
+            WorldHelpers.lookAtPosition(player, centre.x, centre.y, centre.z)
+        }
+        mgr.interactItem(player, Hand.OFF_HAND)
+        mc.options.useKey.setPressed(true)
+        return true
+    }
+
+    /** Lower the shield: release the use key + stop the item use. Tick-thread only. */
+    private fun lowerShieldOnTick() {
+        val mc = MinecraftClient.getInstance()
+        mc.options.useKey.setPressed(false)
+        mc.player?.let { mc.interactionManager?.stopUsingItem(it) }
+    }
+
+    /** Defensive lower used on loop exit — submits its own tick task, never throws out. */
+    private fun lowerShield() {
+        try {
+            TickThread.submitAndWait(timeoutMs = 1_000) { lowerShieldOnTick(); Unit }
+        } catch (t: Throwable) {
+            log.warn("attack: failed to lower shield: {}", t.message)
+        }
     }
 
     /** Send a Baritone `#…` chat command (intercepted client-side before send). */
@@ -390,11 +484,15 @@ object AttackRoute {
         swings: Int,
         entityId: String,
         detail: String? = null,
+        shielded: Boolean = false,
+        blocks: Int = 0,
     ): BridgeResponse {
         val data = mapOf(
             "attacked" to (swings > 0),
             "swings" to swings,
             "reason" to reason,
+            "shielded" to shielded,
+            "blocks" to blocks,
             "method" to "real",
         )
         val msg = when (reason) {

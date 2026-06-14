@@ -110,7 +110,9 @@ Fight the entity with this numeric id to the death — Baritone
 pathfinds after the moving target (terrain-smart: jumps, gaps, walls)
 while it swings on the full-damage cadence the moment it's in reach,
 ~30s cap. Get ids from getNearbyEntities / findEntities. One call per
-kill, not per swing. Equip a sword first.
+kill, not per swing. Equip a sword first. If a shield is in (or can be
+auto-equipped to) the offhand, it raises the guard between swings on its
+own — keep one in your inventory for a free in-melee block.
 
 ### `await block(duration_s: 'float' = 2.0, *, look_at: 'tuple[float, float, float] | None' = None, item: 'str' = 'shield') -> 'dict'`
 

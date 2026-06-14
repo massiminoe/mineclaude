@@ -34,9 +34,13 @@ import org.slf4j.LoggerFactory
  * the block pose was ever confirmed during the hold (headless input can be
  * finicky), so a caller can tell a real block from a no-op.
  *
- * Note: blocking and swinging are mutually exclusive — you can't `/attack`
- * while blocking. This is a defensive primitive the agent composes around a
- * fight, not something the attack loop runs concurrently.
+ * Note: a single block and a single swing are mutually exclusive (you lower
+ * to hit). This `/block` is the *standalone* defensive window the agent
+ * composes around a fight. The `/attack` loop also raises an offhand shield on
+ * its own in the gaps between swings (see [AttackRoute]), so for an in-melee
+ * guard you usually don't need a separate `/block` — reach for this when you
+ * want to tank *without* swinging (a creeper's approach, a skeleton volley) or
+ * hold a guard outside an attack entirely.
  */
 object ShieldRoute {
     private val log = LoggerFactory.getLogger("mineclaude-bridge.block")!!

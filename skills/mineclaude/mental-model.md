@@ -122,12 +122,20 @@ so prefer it. Equip a sword first. The reflex layer already retaliates / flees o
 `damage_taken`
 (see events.md) — don't redo what it did, but verify it worked via `get_state`.
 
-For defense, `block(duration_s, look_at=(x,y,z))` raises a shield and actively
-blocks for that window (auto-equips the shield to the offhand). A shield just
-sitting in the offhand does nothing — `block` is what mitigates the hit. It only
-protects the direction you face, so pass `look_at` pointed at the threat. You
-can't `block` and `attack` at once — block to tank a skeleton's volley or a
-creeper's approach, then `attack` in the gap. Check the returned `blocking`.
+`attack` carries its own shield: if a shield is in your offhand (it auto-equips
+one when that hand is free), the loop raises the guard between swings and drops
+it to strike — so an in-melee block comes for free, you don't orchestrate it.
+Keep a shield in the inventory and the bot fights with a guard up; put something
+else in the offhand on purpose (a totem) and it's left alone.
+
+For defense *outside* the swing rhythm, `block(duration_s, look_at=(x,y,z))`
+raises a shield and holds it for that window without attacking (auto-equips the
+shield to the offhand). A shield just sitting in the offhand does nothing —
+`block` is what mitigates the hit when you're not swinging. It only protects the
+direction you face, so pass `look_at` pointed at the threat. You can't `block`
+and `attack` at once — use `block` to tank a skeleton's volley or a creeper's
+approach (where you *don't* want to charge in), then `attack`. Check the
+returned `blocking`.
 
 ## When something goes wrong
 
