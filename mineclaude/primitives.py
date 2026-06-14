@@ -516,9 +516,11 @@ def make_primitives(
 
         Auto-equips the shield to the offhand if it isn't already there.
         Blocking only protects the direction you FACE, so pass `look_at=(x,y,z)`
-        (e.g. an attacker's position) to point at the threat first. Blocking and
-        attacking are mutually exclusive — you can't `block` and `attack` at the
-        same time; block to tank a volley, then attack in the gap.
+        (e.g. an attacker's position) to point at the threat first. You can't
+        `block` and `attack` at the same time — and you usually don't need to:
+        `attack` already raises an offhand shield on its own between swings. Use
+        `block` for the cases where you want to tank WITHOUT swinging — a
+        skeleton's volley, a creeper's approach — then attack once it's safe.
 
         Time-boxed: it holds the block for the whole window (so the shield
         absorbs hits during it) and confirms the pose engaged. Returns a dict:
