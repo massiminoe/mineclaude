@@ -44,6 +44,14 @@ class MineclaudeBridgeClient : ClientModInitializer {
         CraftRoute.register(bridge)
         FurnaceRoute.register(bridge)
         ChestRoute.register(bridge)
+        // Forging-style stations — same open/insert/extract substrate as the
+        // furnace (StationMenu), keyed off the ScreenHandler each block opens.
+        // Anvil + smithing auto-compute an output slot (place inputs, take
+        // result); enchanting mutates the item in place via clickButton and is
+        // XP- + bookshelf-gated. See StationMenu.kt.
+        AnvilRoute.register(bridge)
+        SmithingRoute.register(bridge)
+        EnchantRoute.register(bridge)
         // Phase 5 movement — Baritone-driven /goto, /mine, /follow, /stop,
         // /explore, /collect. Same chat-string substrate as the legacy
         // bridge (#goto / #mine / #follow / #stop / #explore through

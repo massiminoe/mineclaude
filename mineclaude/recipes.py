@@ -552,6 +552,35 @@ RECIPES: dict[str, Recipe] = {
         needs_table=True,
     ),
 
+    # --- Interaction stations (anvil / smithing / enchanting) ---
+    "anvil": Recipe(
+        output="anvil", output_count=1,
+        pattern=["III", " i ", "iii"],
+        key={"I": "iron_block", "i": "iron_ingot"},
+        needs_table=True,
+    ),
+    "smithing_table": Recipe(
+        output="smithing_table", output_count=1,
+        pattern=["ii", "##", "##"],
+        key={"i": "iron_ingot", "#": "any_planks"},
+        needs_table=True,
+    ),
+    "enchanting_table": Recipe(
+        output="enchanting_table", output_count=1,
+        pattern=[" B ", "DOD", "OOO"],
+        key={"B": "book", "D": "diamond", "O": "obsidian"},
+        needs_table=True,
+    ),
+    # Netherite ingot: shapeless 4 netherite_scrap + 4 gold_ingot, laid out
+    # shaped. netherite_scrap smelts from ancient_debris; the
+    # netherite_upgrade_smithing_template is loot-only (not craftable).
+    "netherite_ingot": Recipe(
+        output="netherite_ingot", output_count=1,
+        pattern=["GSG", "S S", "GSG"],
+        key={"G": "gold_ingot", "S": "netherite_scrap"},
+        needs_table=True,
+    ),
+
     # --- Transport ---
     "oak_boat": Recipe(
         output="oak_boat", output_count=1,
@@ -849,6 +878,8 @@ SMELTING_RECIPES: dict[str, SmeltingRecipe] = {
     "nether_brick": SmeltingRecipe(output="nether_brick", input="netherrack"),
     # --- Charcoal ---
     "charcoal": SmeltingRecipe(output="charcoal", input="oak_log"),  # any _log variant
+    # --- Netherite (blast/normal furnace) ---
+    "netherite_scrap": SmeltingRecipe(output="netherite_scrap", input="ancient_debris"),
     # --- Food ---
     "cooked_beef": SmeltingRecipe(output="cooked_beef", input="beef"),
     "cooked_porkchop": SmeltingRecipe(output="cooked_porkchop", input="porkchop"),

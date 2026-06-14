@@ -294,6 +294,96 @@ def make_primitives(
             raise RuntimeError(resp.message)
         return resp.data
 
+    async def useAnvil(
+        left: str,
+        right: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        """Combine two items on a nearby anvil and take the result. `left` is the
+        base (the tool/armor/item kept), `right` is what's applied to it:
+
+          - useAnvil("iron_pickaxe", "iron_ingot")       -> repair with material
+          - useAnvil("diamond_sword", "diamond_sword")   -> merge two damaged tools
+          - useAnvil("diamond_sword", "enchanted_book")  -> apply a book's enchant
+
+        Places one of each input. Auto-walks to the anvil (place one first; craft
+        from 3 iron_block + 4 iron_ingot). Taking the result COSTS XP LEVELS — read
+        getStats()/getState player.xp_level first; if you can't afford it nothing is
+        consumed and this raises. Renaming is not supported here.
+
+        Returns {combined, result:{item,count}, xp_levels_spent, position}. Raises
+        on no-anvil / item-missing / incompatible-combination / not-enough-XP."""
+        resp = await bridge.anvil_combine(left, right, x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def smithUpgrade(
+        template: str,
+        base: str,
+        addition: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        """Upgrade gear at a nearby smithing table. Three inputs, one of each:
+        `template`, `base` (the equipment), `addition` (the material).
+
+          - netherite: smithUpgrade("netherite_upgrade_smithing_template",
+                                     "diamond_chestplate", "netherite_ingot")
+          - armor trim: smithUpgrade("<trim>_armor_trim_smithing_template",
+                                     "<armor>", "<trim material>")  # cosmetic
+
+        No XP cost. Auto-walks to the table (craft it from 2 iron_ingot + 4 planks).
+        The netherite_upgrade template is loot-only (bastion chests) — it must
+        already be in your inventory; only the netherite_ingot is craftable
+        (4 netherite_scrap + 4 gold_ingot; scrap smelts from ancient_debris).
+
+        Returns {upgraded, result:{item,count}, position}. Raises on no-table /
+        item-missing / invalid combination."""
+        resp = await bridge.smithing_upgrade(template, base, addition, x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def enchant(
+        item: str,
+        tier: int = 3,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        """Enchant `item` at a nearby enchanting table. `tier` picks which of the
+        three on-screen options to take: 1=top/cheapest, 2=middle, 3=bottom/best
+        (default). The resulting enchantment(s) are RANDOM — you choose the tier,
+        not the enchantment.
+
+        Two prerequisites this can't fake (it raises with the reason if unmet):
+          - XP levels: needs experience (>= the tier's displayed requirement to
+            use it, and >= `tier` levels to pay). Grind via mining/smelting/combat;
+            check getState player.xp_level. Spends `tier` levels + `tier` lapis.
+          - Bookshelves: a bare table caps the offered levels low. Ring the table
+            with up to 15 bookshelves (1 block gap) to reach level-30 enchants.
+
+        Needs lapis_lazuli in inventory (>= tier). Auto-walks to the table (craft
+        from 1 book + 2 diamond + 4 obsidian).
+
+        Returns {enchanted, item, tier, enchantments:[{name,level}],
+        xp_levels_spent, lapis_used, position}. Raises on no-table / item-missing /
+        no-lapis / enchant-didn't-apply (too few levels or no bookshelves)."""
+        resp = await bridge.enchant(item, tier, x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
     async def equip(item: str, slot: str = "hand") -> str:
         """Equip an item to hand (default) or an armor slot. Equip the right tool
         BEFORE mining/fighting — placing/eating swaps your hand off the tool."""
@@ -303,6 +393,22 @@ def make_primitives(
         """Drop `count` items from PI slot (0..8 hotbar, 9..35 main inventory).
         Find the slot via getInventory(). Armor/offhand aren't discardable."""
         return _check(await bridge.discard(slot, count))
+
+    async def unequip(slot: str = "offhand") -> dict:
+        """Move an equipped item back into the inventory (NOT dropped) — the
+        counterpart to equip. `slot` is "offhand" | "head" | "chest" | "legs" |
+        "feet". Frees the offhand the attack loop auto-fills with a shield, or
+        strips an armor piece to swap or store it.
+
+        Returns {unequipped, slot, item, noop}: `noop` if the slot was already
+        empty; `unequipped` is False (item left equipped, not dropped) if the
+        inventory is full — check it. Raises only if not connected / bad slot."""
+        resp = await bridge.unequip(slot)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
 
     async def useItem(item: str) -> str:
         """Right-click in air with `item` held — eat food, drink potion,
@@ -524,7 +630,11 @@ def make_primitives(
         "chestStore": chestStore,
         "chestTake": chestTake,
         "chestInspect": chestInspect,
+        "useAnvil": useAnvil,
+        "smithUpgrade": smithUpgrade,
+        "enchant": enchant,
         "equip": equip,
+        "unequip": unequip,
         "discard": discard,
         "useItem": useItem,
         "interact": interact,

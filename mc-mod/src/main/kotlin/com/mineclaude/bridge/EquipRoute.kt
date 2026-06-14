@@ -68,7 +68,20 @@ object EquipRoute {
 
     fun register(bridge: HttpBridge) {
         bridge.addRoute("POST", "/equip") { ex -> handle(ex) }
+        bridge.addRoute("POST", "/unequip") { ex -> handleUnequip(ex) }
     }
+
+    /** PSH slot indices for the slots /unequip can clear: armor + offhand. */
+    private val UNEQUIP_PSH_SLOTS = InventoryHelpers.ARMOR_PSH_SLOTS + ("offhand" to 45)
+
+    /** EquipmentSlot for each, for reading the equipped stack (before/verify). */
+    private val UNEQUIP_EQUIPMENT_SLOTS = mapOf(
+        "offhand" to EquipmentSlot.OFFHAND,
+        "head" to EquipmentSlot.HEAD,
+        "chest" to EquipmentSlot.CHEST,
+        "legs" to EquipmentSlot.LEGS,
+        "feet" to EquipmentSlot.FEET,
+    )
 
     private fun handle(ex: HttpExchange): BridgeResponse {
         val body = try { ex.jsonBody() } catch (e: BodyParseException) {
@@ -287,6 +300,88 @@ object EquipRoute {
             mapOf("equipped" to true, "method" to "real"),
             "Equipped $item to $armorSlot",
         )
+    }
+
+    /**
+     * `POST /unequip {slot}` — move whatever is worn/held in an armor slot or
+     * the offhand back into the main inventory, *without* dropping it (the gap
+     * /discard left: discard throws items on the ground). Frees the offhand the
+     * attack loop auto-fills with a shield, or strips an armor piece to swap or
+     * store it.
+     */
+    private fun handleUnequip(ex: HttpExchange): BridgeResponse {
+        val body = try { ex.jsonBody() } catch (e: BodyParseException) {
+            return HttpBridge.err(e.message ?: "bad body", status = 400)
+        }
+        val slot = (body["slot"] as? String)?.lowercase().orEmpty()
+        if (slot.isEmpty()) {
+            return HttpBridge.err("Missing 'slot' parameter", status = 400)
+        }
+        if (slot !in UNEQUIP_PSH_SLOTS) {
+            return HttpBridge.err(
+                "Unknown unequip slot: $slot (expected one of ${UNEQUIP_PSH_SLOTS.keys.sorted().joinToString(", ")})",
+            )
+        }
+        return unequip(slot)
+    }
+
+    /**
+     * Shift-click (QUICK_MOVE) the equipped slot so MC transfers it into the
+     * main inventory and picks a free slot itself. A full inventory makes
+     * QUICK_MOVE a no-op — the item stays equipped (not dropped); we detect
+     * that (slot still occupied after the click) and report it. Truth-in-return
+     * `{unequipped, slot, item, noop}`: `noop`=slot was already empty,
+     * `unequipped`=the slot is empty after the move.
+     */
+    private fun unequip(slot: String): BridgeResponse {
+        val pshSlot = UNEQUIP_PSH_SLOTS.getValue(slot)
+        val equipmentSlot = UNEQUIP_EQUIPMENT_SLOTS.getValue(slot)
+
+        // Read what's there now; bail early if the slot is already empty.
+        val before = TickThread.submitAndWait(timeoutMs = 1_000) {
+            val player = MinecraftClient.getInstance().player ?: return@submitAndWait null
+            val stack = player.getEquippedStack(equipmentSlot)
+            if (stack.isEmpty) "" else Registries.ITEM.getId(stack.item).path
+        } ?: return HttpBridge.err("no player — not connected to a world")
+
+        if (before.isEmpty()) {
+            return HttpBridge.ok(
+                mapOf("unequipped" to false, "slot" to slot, "item" to null, "noop" to true),
+                "Nothing equipped in $slot",
+            )
+        }
+
+        TickThread.submitAndWait(timeoutMs = 2_000) {
+            val player = MinecraftClient.getInstance().player ?: return@submitAndWait Unit
+            InventoryHelpers.ensurePlayerScreenOpen(player)
+            InventoryHelpers.click(player, pshSlot, 0, SlotActionType.QUICK_MOVE)
+            Unit
+        }
+
+        Thread.sleep(POST_EQUIP_SETTLE_MS)
+        val after = TickThread.submitAndWait(timeoutMs = 1_000) {
+            val player = MinecraftClient.getInstance().player ?: return@submitAndWait null
+            val stack = player.getEquippedStack(equipmentSlot)
+            if (stack.isEmpty) "" else Registries.ITEM.getId(stack.item).path
+        }
+
+        val cleared = after == ""
+        val data = mapOf(
+            "unequipped" to cleared,
+            "slot" to slot,
+            "item" to before,
+            "noop" to false,
+        )
+        return if (cleared) {
+            HttpBridge.ok(data, "Unequipped $before from $slot")
+        } else {
+            // QUICK_MOVE no-op'd — almost always a full inventory. Not an error
+            // (nothing was lost; the item is still equipped), just reported.
+            HttpBridge.ok(
+                data,
+                "Couldn't unequip $before from $slot — inventory full? (left equipped, not dropped)",
+            )
+        }
     }
 
     /**

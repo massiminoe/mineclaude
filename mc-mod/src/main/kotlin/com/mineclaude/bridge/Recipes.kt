@@ -284,6 +284,16 @@ internal object Recipes {
         // `map` recipe yields filled_map (the empty/explorable version) — name resolution at the slot-0 check needs the actual item id.
         put("map", Recipe("filled_map", 1, listOf("PPP", "PCP", "PPP"), mapOf('P' to "paper", 'C' to "compass"), true))
 
+        // --- Interaction stations (anvil / smithing / enchanting) ---
+        put("anvil", Recipe("anvil", 1, listOf("III", " i ", "iii"), mapOf('I' to "iron_block", 'i' to "iron_ingot"), true))
+        put("smithing_table", Recipe("smithing_table", 1, listOf("ii", "##", "##"), mapOf('i' to "iron_ingot", '#' to "any_planks"), true))
+        put("enchanting_table", Recipe("enchanting_table", 1, listOf(" B ", "DOD", "OOO"), mapOf('B' to "book", 'D' to "diamond", 'O' to "obsidian"), true))
+        // Netherite ingot: shapeless 4 netherite_scrap + 4 gold_ingot. Laid out
+        // shaped (vanilla accepts any arrangement of a shapeless recipe).
+        // netherite_scrap smelts from ancient_debris; the
+        // netherite_upgrade_smithing_template is loot-only (not craftable).
+        put("netherite_ingot", Recipe("netherite_ingot", 1, listOf("GSG", "S S", "GSG"), mapOf('G' to "gold_ingot", 'S' to "netherite_scrap"), true))
+
         // --- Transport ---
         put("minecart", Recipe("minecart", 1, listOf("# #", "###"), mapOf('#' to "iron_ingot"), true))
         put("rail", Recipe("rail", 16, listOf("# #", "#S#", "# #"), mapOf('#' to "iron_ingot", 'S' to "stick"), true))

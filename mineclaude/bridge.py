@@ -74,7 +74,33 @@ class BridgeClient(Protocol):
         items: list[dict[str, Any]],
     ) -> BridgeResponse: ...
     async def chest_inspect(self, x: int, y: int, z: int) -> BridgeResponse: ...
+    async def anvil_combine(
+        self,
+        left: str,
+        right: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse: ...
+    async def smithing_upgrade(
+        self,
+        template: str,
+        base: str,
+        addition: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse: ...
+    async def enchant(
+        self,
+        item: str,
+        tier: int = 3,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse: ...
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse: ...
+    async def unequip(self, slot: str = "offhand") -> BridgeResponse: ...
     async def discard(self, slot: int, count: int = 1) -> BridgeResponse: ...
     async def chat(self, message: str) -> BridgeResponse: ...
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
@@ -284,8 +310,51 @@ class RealBridgeClient:
             params={"x": x, "y": y, "z": z},
         ))
 
+    async def anvil_combine(
+        self,
+        left: str,
+        right: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        body: dict[str, Any] = {"left": left, "right": right}
+        if x is not None and y is not None and z is not None:
+            body["x"], body["y"], body["z"] = x, y, z
+        return self._parse(await self._http.post("/anvil/combine", json=body))
+
+    async def smithing_upgrade(
+        self,
+        template: str,
+        base: str,
+        addition: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        body: dict[str, Any] = {"template": template, "base": base, "addition": addition}
+        if x is not None and y is not None and z is not None:
+            body["x"], body["y"], body["z"] = x, y, z
+        return self._parse(await self._http.post("/smithing/upgrade", json=body))
+
+    async def enchant(
+        self,
+        item: str,
+        tier: int = 3,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        body: dict[str, Any] = {"item": item, "tier": tier}
+        if x is not None and y is not None and z is not None:
+            body["x"], body["y"], body["z"] = x, y, z
+        return self._parse(await self._http.post("/enchant", json=body))
+
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         return self._parse(await self._http.post("/equip", json={"item": item, "slot": slot}))
+
+    async def unequip(self, slot: str = "offhand") -> BridgeResponse:
+        return self._parse(await self._http.post("/unequip", json={"slot": slot}))
 
     async def discard(self, slot: int, count: int = 1) -> BridgeResponse:
         return self._parse(await self._http.post("/discard", json={"slot": slot, "count": count}))
@@ -418,12 +487,17 @@ class MockBridgeClient:
         self._chests: dict[tuple[int, int, int], list[dict[str, Any]]] = {}
         self._health = 20.0
         self._hunger = 20
+        # Experience level — the spendable currency for anvil + enchanting.
+        # Seeded non-zero so the station mocks can succeed by default; tests
+        # that exercise the "not enough XP" path set it down explicitly.
+        self._xp_level = 30
         self._inventory: list[dict] = []
         # What the bot is holding / wearing, by slot. Mirrors the native
         # bridge's `equipped` block so MOCK_BRIDGE + tests see real values
         # in get_state().equipped instead of an all-null placeholder.
         self._equipped: dict[str, str | None] = {
-            "hand": None, "head": None, "chest": None, "legs": None, "feet": None,
+            "hand": None, "offhand": None,
+            "head": None, "chest": None, "legs": None, "feet": None,
         }
         self._held_slot = 0
         self._nearby_blocks: list[dict] = [
@@ -450,6 +524,7 @@ class MockBridgeClient:
             "time": 6000,
             "held_slot": self._held_slot,
             "equipped": dict(self._equipped),
+            "experience": {"level": self._xp_level, "progress": 0.0, "total": 0},
         }
         if include_events:
             data["events"] = []
@@ -907,6 +982,154 @@ class MockBridgeClient:
             },
         )
 
+    def _find_station(
+        self, block: str, x: int | None, y: int | None, z: int | None,
+    ) -> dict | None:
+        """Locate a station block (anvil/smithing_table/enchanting_table) either
+        at explicit coords or the nearest within radius 16. Anvil matches its
+        damaged variants too, mirroring the real bridge's id set."""
+        ids = {block}
+        if block == "anvil":
+            ids |= {"chipped_anvil", "damaged_anvil"}
+        if x is not None and y is not None and z is not None:
+            for b in self._nearby_blocks:
+                if b["name"] in ids and b["x"] == x and b["y"] == y and b["z"] == z:
+                    return b
+            return None
+        for b in self._nearby_blocks:
+            if b["name"] in ids and b["distance"] <= 16:
+                return b
+        return None
+
+    async def anvil_combine(
+        self,
+        left: str,
+        right: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        left = left.replace("minecraft:", "")
+        right = right.replace("minecraft:", "")
+        b = self._find_station("anvil", x, y, z)
+        if b is None:
+            return BridgeResponse("error", "No anvil nearby. Place one first.")
+        if not any(e["name"] == left for e in self._inventory):
+            return BridgeResponse("error", f"No {left} in inventory")
+        if not any(e["name"] == right for e in self._inventory):
+            return BridgeResponse("error", f"No {right} in inventory")
+        if self._xp_level < 1:
+            return BridgeResponse(
+                "error",
+                f"Result couldn't be taken — not enough experience (have level {self._xp_level}).",
+            )
+        # Simulate: the material/book (right) is consumed, the base (left) is
+        # kept (now repaired/enchanted), and a couple of XP levels are spent.
+        cost = min(2, self._xp_level)
+        self._xp_level -= cost
+        self._remove_from_inventory(right, 1)
+        result = {"item": left, "count": 1}
+        return BridgeResponse(
+            "success",
+            f"Combined {left} + {right} -> 1 {left} (xp -{cost})",
+            {
+                "combined": True,
+                "result": result,
+                "xp_levels_spent": cost,
+                "position": {"x": b["x"], "y": b["y"], "z": b["z"]},
+                "method": "simulated",
+            },
+        )
+
+    async def smithing_upgrade(
+        self,
+        template: str,
+        base: str,
+        addition: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        template = template.replace("minecraft:", "")
+        base = base.replace("minecraft:", "")
+        addition = addition.replace("minecraft:", "")
+        b = self._find_station("smithing_table", x, y, z)
+        if b is None:
+            return BridgeResponse("error", "No smithing table nearby. Place one first.")
+        for needed in (template, base, addition):
+            if not any(e["name"] == needed for e in self._inventory):
+                return BridgeResponse("error", f"No {needed} in inventory")
+        # Netherite upgrade: diamond_X + netherite_ingot -> netherite_X (template
+        # consumed). Anything else is treated as an armor trim (cosmetic; base
+        # kept, template + addition consumed).
+        if base.startswith("diamond_") and addition == "netherite_ingot":
+            out = "netherite_" + base[len("diamond_"):]
+            self._remove_from_inventory(base, 1)
+            self._remove_from_inventory(addition, 1)
+            self._remove_from_inventory(template, 1)
+            self._add_to_inventory(out, 1)
+        else:
+            out = base
+            self._remove_from_inventory(addition, 1)
+            self._remove_from_inventory(template, 1)
+        result = {"item": out, "count": 1}
+        return BridgeResponse(
+            "success",
+            f"Smithed {base} + {addition} -> 1 {out}",
+            {
+                "upgraded": True,
+                "result": result,
+                "position": {"x": b["x"], "y": b["y"], "z": b["z"]},
+                "method": "simulated",
+            },
+        )
+
+    async def enchant(
+        self,
+        item: str,
+        tier: int = 3,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> BridgeResponse:
+        item = item.replace("minecraft:", "")
+        tier = max(1, min(3, tier))
+        b = self._find_station("enchanting_table", x, y, z)
+        if b is None:
+            return BridgeResponse("error", "No enchanting table nearby. Place one first.")
+        if not any(e["name"] == item for e in self._inventory):
+            return BridgeResponse("error", f"No {item} in inventory")
+        lapis = sum(e["count"] for e in self._inventory if e["name"] == "lapis_lazuli")
+        if lapis < tier:
+            return BridgeResponse(
+                "error",
+                f"Not enough lapis_lazuli — tier {tier} needs {tier}, have {lapis}.",
+            )
+        if self._xp_level < tier:
+            return BridgeResponse(
+                "error",
+                f"Enchant did not apply at tier {tier} — need >= {tier} levels, "
+                f"have {self._xp_level}.",
+            )
+        # Simulate a deterministic roll: one enchant whose level == tier.
+        self._xp_level -= tier
+        self._remove_from_inventory("lapis_lazuli", tier)
+        enchantments = [{"name": "unbreaking", "level": tier}]
+        return BridgeResponse(
+            "success",
+            f"Enchanted {item} -> [unbreaking {tier}] (xp -{tier})",
+            {
+                "enchanted": True,
+                "item": item,
+                "tier": tier,
+                "enchantments": enchantments,
+                "xp_levels_spent": tier,
+                "lapis_used": tier,
+                "position": {"x": b["x"], "y": b["y"], "z": b["z"]},
+                "method": "simulated",
+            },
+        )
+
     async def equip(self, item: str, slot: str = "hand") -> BridgeResponse:
         name = item.replace("minecraft:", "")
         for entry in self._inventory:
@@ -918,6 +1141,27 @@ class MockBridgeClient:
                     self._equipped[key] = name
                 return BridgeResponse("success", f"Equipped {item} to {slot}")
         return BridgeResponse("error", f"No {item} in inventory")
+
+    async def unequip(self, slot: str = "offhand") -> BridgeResponse:
+        key = slot.lower()
+        if key not in ("offhand", "head", "chest", "legs", "feet"):
+            return BridgeResponse("error", f"Unknown unequip slot: {slot}")
+        item = self._equipped.get(key)
+        if item is None:
+            return BridgeResponse(
+                "success", f"Nothing equipped in {slot}",
+                {"unequipped": False, "slot": key, "item": None, "noop": True},
+            )
+        self._equipped[key] = None
+        existing = next((e for e in self._inventory if e["name"] == item), None)
+        if existing is not None:
+            existing["count"] += 1
+        else:
+            self._inventory.append({"name": item, "count": 1, "slot": len(self._inventory)})
+        return BridgeResponse(
+            "success", f"Unequipped {item} from {slot}",
+            {"unequipped": True, "slot": key, "item": item, "noop": False},
+        )
 
     async def discard(self, slot: int, count: int = 1) -> BridgeResponse:
         if slot not in range(0, 36):

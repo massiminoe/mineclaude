@@ -57,6 +57,7 @@ object PlayerStatusRoutes {
                 "inventory" to emptyList<Map<String, Any>>(),
                 "biome" to "unknown",
                 "time" to 0,
+                "experience" to mapOf("level" to 0, "progress" to 0.0, "total" to 0),
             )
         }
 
@@ -82,6 +83,14 @@ object PlayerStatusRoutes {
             "inventory" to readInventory(player.inventory),
             "biome" to biome,
             "time" to time,
+            // Experience — the level is what anvil + enchanting cost. `progress`
+            // is the fractional bar toward the next level (0..1); `total` is the
+            // lifetime points counter. Gamestate folds `level` into player.xp_level.
+            "experience" to mapOf(
+                "level" to player.experienceLevel,
+                "progress" to player.experienceProgress.toDouble(),
+                "total" to player.totalExperience,
+            ),
             // Held hotbar slot (0..8). Useful for diagnosing "why is the
             // wrong tool in mainhand" — the source of truth on the client.
             "held_slot" to player.inventory.selectedSlot,

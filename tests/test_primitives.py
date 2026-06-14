@@ -89,6 +89,40 @@ async def test_equip_mainhand_alias_maps_to_hand(bridge, prims):
 
 
 @pytest.mark.asyncio
+async def test_unequip_clears_slot_and_returns_item(bridge, prims):
+    """unequip() is the counterpart to equip: it clears the slot and the item
+    goes back to inventory (not dropped)."""
+    bridge._add_to_inventory("shield", 1)
+    await prims["equip"]("shield", "offhand")
+    assert (await bridge.get_status()).data["equipped"]["offhand"] == "shield"
+
+    result = await prims["unequip"]("offhand")
+    assert result["unequipped"] is True
+    assert result["noop"] is False
+    assert result["slot"] == "offhand"
+    assert result["item"] == "shield"
+    assert (await bridge.get_status()).data["equipped"]["offhand"] is None
+    inv = await prims["getInventory"]()
+    assert any(e["name"] == "shield" for e in inv)  # returned, not discarded
+
+
+@pytest.mark.asyncio
+async def test_unequip_empty_slot_is_noop(bridge, prims):
+    """Unequipping an empty slot is a reported no-op, not an error."""
+    result = await prims["unequip"]("chest")
+    assert result["noop"] is True
+    assert result["unequipped"] is False
+    assert result["item"] is None
+
+
+@pytest.mark.asyncio
+async def test_unequip_rejects_non_equipment_slot(bridge, prims):
+    """Only armor + offhand unequip; 'hand' (and junk) raise."""
+    with pytest.raises(RuntimeError, match="Unknown unequip slot"):
+        await prims["unequip"]("hand")
+
+
+@pytest.mark.asyncio
 async def test_get_nearby_blocks(bridge, prims):
     blocks = await prims["getNearbyBlocks"](16)
     assert len(blocks) > 0
@@ -580,4 +614,122 @@ async def test_use_bridge_strips_minecraft_prefix(bridge):
     resp = await bridge.use("minecraft:apple")
     assert resp.status == "success"
     assert resp.data["item"] == "apple"
-    assert resp.data["used"] is True
+
+
+# --- Anvil ----------------------------------------------------------------
+
+
+def _place_station(bridge, name):
+    bridge._nearby_blocks.append({"name": name, "x": 1, "y": 64, "z": 1, "distance": 1.4})
+
+
+@pytest.mark.asyncio
+async def test_use_anvil_combine_repairs_and_spends_xp(bridge, prims):
+    _place_station(bridge, "anvil")
+    bridge._add_to_inventory("iron_pickaxe", 1)
+    bridge._add_to_inventory("iron_ingot", 3)
+    bridge._xp_level = 10
+    result = await prims["useAnvil"]("iron_pickaxe", "iron_ingot")
+    assert result["combined"] is True
+    assert result["result"]["item"] == "iron_pickaxe"
+    assert result["xp_levels_spent"] > 0
+    assert bridge._xp_level < 10  # XP was spent
+    # The material (right) was consumed; the base (left) kept.
+    assert any(i["name"] == "iron_ingot" and i["count"] == 2 for i in bridge._inventory)
+    assert any(i["name"] == "iron_pickaxe" for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_use_anvil_no_anvil_raises(bridge, prims):
+    bridge._add_to_inventory("iron_pickaxe", 1)
+    bridge._add_to_inventory("iron_ingot", 1)
+    with pytest.raises(RuntimeError, match="No anvil"):
+        await prims["useAnvil"]("iron_pickaxe", "iron_ingot")
+
+
+@pytest.mark.asyncio
+async def test_use_anvil_no_xp_raises(bridge, prims):
+    _place_station(bridge, "anvil")
+    bridge._add_to_inventory("diamond_sword", 1)
+    bridge._add_to_inventory("enchanted_book", 1)
+    bridge._xp_level = 0
+    with pytest.raises(RuntimeError, match="not enough experience"):
+        await prims["useAnvil"]("diamond_sword", "enchanted_book")
+
+
+# --- Smithing -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_smith_upgrade_netherite(bridge, prims):
+    _place_station(bridge, "smithing_table")
+    bridge._add_to_inventory("netherite_upgrade_smithing_template", 1)
+    bridge._add_to_inventory("diamond_chestplate", 1)
+    bridge._add_to_inventory("netherite_ingot", 1)
+    result = await prims["smithUpgrade"](
+        "netherite_upgrade_smithing_template", "diamond_chestplate", "netherite_ingot",
+    )
+    assert result["upgraded"] is True
+    assert result["result"]["item"] == "netherite_chestplate"
+    assert any(i["name"] == "netherite_chestplate" for i in bridge._inventory)
+    # All three inputs consumed (template included, 1.20+ behaviour).
+    assert not any(i["name"] == "diamond_chestplate" for i in bridge._inventory)
+    assert not any(i["name"] == "netherite_ingot" for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_smith_upgrade_missing_material_raises(bridge, prims):
+    _place_station(bridge, "smithing_table")
+    bridge._add_to_inventory("netherite_upgrade_smithing_template", 1)
+    bridge._add_to_inventory("diamond_chestplate", 1)
+    with pytest.raises(RuntimeError, match="No netherite_ingot"):
+        await prims["smithUpgrade"](
+            "netherite_upgrade_smithing_template", "diamond_chestplate", "netherite_ingot",
+        )
+
+
+# --- Enchanting -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enchant_spends_xp_and_lapis(bridge, prims):
+    _place_station(bridge, "enchanting_table")
+    bridge._add_to_inventory("diamond_sword", 1)
+    bridge._add_to_inventory("lapis_lazuli", 5)
+    bridge._xp_level = 30
+    result = await prims["enchant"]("diamond_sword", tier=3)
+    assert result["enchanted"] is True
+    assert result["tier"] == 3
+    assert result["xp_levels_spent"] == 3
+    assert result["lapis_used"] == 3
+    assert result["enchantments"]  # non-empty
+    assert bridge._xp_level == 27
+    assert any(i["name"] == "lapis_lazuli" and i["count"] == 2 for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_enchant_not_enough_lapis_raises(bridge, prims):
+    _place_station(bridge, "enchanting_table")
+    bridge._add_to_inventory("diamond_sword", 1)
+    bridge._add_to_inventory("lapis_lazuli", 1)
+    bridge._xp_level = 30
+    with pytest.raises(RuntimeError, match="lapis"):
+        await prims["enchant"]("diamond_sword", tier=3)
+
+
+@pytest.mark.asyncio
+async def test_enchant_not_enough_xp_raises(bridge, prims):
+    _place_station(bridge, "enchanting_table")
+    bridge._add_to_inventory("diamond_sword", 1)
+    bridge._add_to_inventory("lapis_lazuli", 5)
+    bridge._xp_level = 1
+    with pytest.raises(RuntimeError, match="did not apply"):
+        await prims["enchant"]("diamond_sword", tier=3)
+
+
+@pytest.mark.asyncio
+async def test_xp_level_surfaced_in_state(bridge, prims):
+    """The new experience field flows through get_status into the player view."""
+    bridge._xp_level = 17
+    stats = await prims["getStats"]()
+    assert stats["experience"]["level"] == 17

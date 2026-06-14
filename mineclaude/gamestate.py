@@ -35,6 +35,7 @@ def build_game_state(
     if now is None:
         now = time.time()
     pos = status.get("position") or {}
+    xp = status.get("experience") or {}
     player = {
         "pos": [pos.get("x"), pos.get("y"), pos.get("z")],
         "health": status.get("health"),
@@ -44,6 +45,9 @@ def build_game_state(
         # Selected hotbar index (0..8) — the "what am I actually holding" read
         # that pairs with equipped.hand for diagnosing wrong-tool mining.
         "held_slot": status.get("held_slot"),
+        # Experience level — the spendable currency for anvil + enchanting.
+        # None when the bridge doesn't report it (pre-world / old mock).
+        "xp_level": xp.get("level"),
     }
     inventory = list(status.get("inventory") or [])
     return GameState(
