@@ -4,7 +4,7 @@ import { Feed } from "./components/Feed";
 import { Actions } from "./components/Actions";
 import { Reflexes } from "./components/Reflexes";
 import { InventoryModal } from "./components/InventoryModal";
-import { ItemIcon } from "./components/ItemIcon";
+import { ItemIcon, DurabilityBar } from "./components/ItemIcon";
 import { useItemIcons } from "./icons";
 import { usedMainSlots } from "./types";
 import type { GameState, InventoryItem } from "./types";
@@ -71,8 +71,9 @@ function Hotbar({ game, onExpand }: { game: GameState | null; onExpand: () => vo
               className={`hbc${k === held ? " held" : ""}${item ? "" : " empty"}`}
               title={item ? `${item.name}${item.count > 1 ? ` ×${item.count}` : ""}` : undefined}
             >
-              {item && <ItemIcon name={item.name} size={36} lookup={lookup} />}
+              {item && <ItemIcon name={item.name} size={44} lookup={lookup} />}
               {item && item.count > 1 && <span className="ct">{item.count}</span>}
+              {item?.durability && <DurabilityBar {...item.durability} />}
             </span>
           );
         })}

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { OFFHAND_SLOT, usedMainSlots } from "../types";
 import type { GameState, InventoryItem } from "../types";
-import { ItemIcon } from "./ItemIcon";
+import { ItemIcon, DurabilityBar } from "./ItemIcon";
 import { useItemIcons } from "../icons";
 
 // Faithful in-game inventory layout: a 3x9 main grid above the 9-slot hotbar,
@@ -32,6 +32,7 @@ function Cell({
     >
       <ItemIcon name={item.name} size={44} lookup={lookup} />
       {item.count > 1 && <span className="ct">{item.count}</span>}
+      {item.durability && <DurabilityBar {...item.durability} />}
     </div>
   );
 }
@@ -41,15 +42,18 @@ function ArmorSlot({
   label,
   glyph,
   lookup,
+  durability,
 }: {
   name: string | null;
   label: string;
   glyph: string;
   lookup: (name: string) => string | undefined;
+  durability?: { remaining: number; max: number };
 }) {
   return (
     <div className={`aslot${name ? " filled" : ""}`} title={name ? `${label}: ${name}` : `${label}: empty`}>
       {name ? <ItemIcon name={name} size={44} lookup={lookup} /> : <span className="glyph">{glyph}</span>}
+      {durability && <DurabilityBar {...durability} />}
     </div>
   );
 }
@@ -71,6 +75,11 @@ export function InventoryModal({ game, onClose }: { game: GameState; onClose: ()
   const equipped = game.equipped;
   const offhand = bySlot.get(OFFHAND_SLOT)?.name ?? null;
   const filled = usedMainSlots(game.inventory);
+  // equipped carries names only; pull durability from the inventory array
+  // (armor/offhand slots) by item name so worn gear shows wear too.
+  const durByName = new Map<string, { remaining: number; max: number }>();
+  for (const it of game.inventory) if (it.durability) durByName.set(it.name, it.durability);
+  const dur = (n: string | null) => (n ? durByName.get(n) : undefined);
 
   return (
     <div className="inv-scrim" onClick={onClose}>
@@ -86,7 +95,13 @@ export function InventoryModal({ game, onClose }: { game: GameState; onClose: ()
         <div className="inv-body">
           <div className="armorcol">
             <span className="col-lbl">Equipped</span>
-            <ArmorSlot name={equipped?.hand ?? null} label="Mainhand" glyph="hand" lookup={lookup} />
+            <ArmorSlot
+              name={equipped?.hand ?? null}
+              label="Mainhand"
+              glyph="hand"
+              lookup={lookup}
+              durability={dur(equipped?.hand ?? null)}
+            />
             <div className="armorgap" />
             {ARMOR_SLOTS.map((s) => (
               <ArmorSlot
@@ -95,10 +110,11 @@ export function InventoryModal({ game, onClose }: { game: GameState; onClose: ()
                 label={s.label}
                 glyph={s.label.toLowerCase()}
                 lookup={lookup}
+                durability={dur(equipped?.[s.key] ?? null)}
               />
             ))}
             <div className="armorgap" />
-            <ArmorSlot name={offhand} label="Offhand" glyph="off" lookup={lookup} />
+            <ArmorSlot name={offhand} label="Offhand" glyph="off" lookup={lookup} durability={dur(offhand)} />
           </div>
 
           <div className="gridcol">

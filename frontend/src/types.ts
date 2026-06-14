@@ -31,6 +31,8 @@ export interface InventoryItem {
   name: string;
   count: number;
   slot: number;
+  /** Present for tools/armor/weapons; absent for stackables. */
+  durability?: { remaining: number; max: number };
 }
 
 // The bridge's inventory array spans every player slot: 0-35 are the 36 main

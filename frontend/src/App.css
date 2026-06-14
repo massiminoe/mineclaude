@@ -554,18 +554,32 @@ footer {
   background: #0a0c0d;
 }
 
+/* MC-style durability bar, pinned to the bottom of a slot */
+.dura {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 4px;
+  height: 3px;
+  background: #000;
+}
+
+.dura-fill {
+  display: block;
+  height: 100%;
+}
+
 /* ── footer hotbar (always-on, click to expand) ── */
 
 .hotbar {
   flex: 1;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 18px;
   padding: 0 24px;
-  /* Reserve the rail width so the hotbar's right edge (and divider) line up
-     with the video pane's right edge above it, instead of running under the
-     actions/reflexes rail. */
+  /* Reserve the rail width so the hotbar group is centred under the video pane
+     (whose right edge is the rail boundary), not under the full footer width. */
   margin-right: var(--rail-width);
   min-width: 0;
   background: none;
@@ -592,8 +606,8 @@ footer {
 
 .hbc {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 58px;
+  height: 58px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -717,6 +731,7 @@ footer {
 }
 
 .aslot {
+  position: relative;
   width: 58px;
   height: 58px;
   display: flex;

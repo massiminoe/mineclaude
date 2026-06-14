@@ -32,3 +32,16 @@ export function ItemIcon({
     </span>
   );
 }
+
+/** MC-style durability bar pinned to the bottom of a slot. Hidden when the item
+ *  is undamaged (or has no durability). Colour shifts red→green with the ratio. */
+export function DurabilityBar({ remaining, max }: { remaining: number; max: number }) {
+  if (!max || remaining >= max) return null;
+  const ratio = Math.max(0, Math.min(1, remaining / max));
+  const hue = Math.round(ratio * 120); // 0 = red, 120 = green
+  return (
+    <span className="dura">
+      <span className="dura-fill" style={{ width: `${ratio * 100}%`, background: `hsl(${hue} 75% 45%)` }} />
+    </span>
+  );
+}
