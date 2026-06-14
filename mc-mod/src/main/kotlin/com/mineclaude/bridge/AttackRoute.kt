@@ -7,6 +7,9 @@ import net.minecraft.entity.LivingEntity
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket
 import net.minecraft.registry.Registries
 import net.minecraft.util.Hand
+import net.minecraft.util.hit.HitResult
+import net.minecraft.util.math.Vec3d
+import net.minecraft.world.RaycastContext
 import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -135,9 +138,42 @@ object AttackRoute {
     /** At most one in-flight attack session at a time. */
     private val current = AtomicReference<Session?>(null)
 
+    // -- ranged (bow) tuning ----------------------------------------------------
+
+    /** Hard cap on a single ranged engagement. Mirrors the melee timeout. */
+    private const val RANGED_TIMEOUT_MS = 30_000L
+
+    /** Cadence of the ranged planning loop (re-resolve, ammo, aim, fire). */
+    private const val RANGED_POLL_MS = 150L
+
+    /**
+     * How long to hold the draw before releasing. A vanilla bow reaches full
+     * power at 20 ticks (1.0s); the margin guarantees we're at max charge (and
+     * max arrow speed, which the ballistic solver assumes) before the release.
+     */
+    private const val DRAW_MS = 1_100L
+
+    /** Re-aim cadence during the draw so the recording tracks a moving target. */
+    private const val AIM_POLL_MS = 100L
+
+    /** Settle after the final aim so the rotation packet ships before release. */
+    private const val AIM_SETTLE_MS = 80L
+
+    /** Breather after a shot before planning the next one. */
+    private const val RECOVERY_MS = 250L
+
+    /**
+     * Consecutive failed planning passes (~[RANGED_POLL_MS] apart) before we
+     * give up. Stationary v1 doesn't reposition, so a target that stays out of
+     * range or behind cover ends the engagement rather than burning arrows.
+     */
+    private const val MAX_UNREACHABLE = 20
+    private const val MAX_NO_LOS = 20
+
     fun register(bridge: HttpBridge) {
         bridge.addRoute("POST", "/attack") { ex -> handle(ex) }
         bridge.addRoute("POST", "/attack/stop") { _ -> handleStop() }
+        bridge.addRoute("POST", "/attack/ranged") { ex -> handleRanged(ex) }
     }
 
     private fun handleStop(): BridgeResponse {
@@ -455,6 +491,314 @@ object AttackRoute {
         } catch (t: Throwable) {
             log.warn("attack: failed to restore held slot {}: {}", slot, t.message)
         }
+    }
+
+    // == ranged (bow) ==========================================================
+
+    /**
+     * `POST /attack/ranged {entity_id}` — shoot an entity with a bow until it's
+     * dead, despawns, runs out of arrows, leaves bow range, or the call is
+     * cancelled. Stationary v1: the bot holds its ground (no kiting), aims with
+     * the [WorldHelpers.solveBowAim] ballistic solver, leads the target by its
+     * observed velocity, and volleys full-charge shots.
+     *
+     * Shares the single combat-session slot with melee [/attack]: a new call of
+     * either flavour cancels the in-flight one, and [/attack/stop] cancels this
+     * loop too — so the reflex preempt path needs no new wiring.
+     *
+     * Response shape: `{fired, shots, reason, method}`, reason one of
+     * `killed | despawned | out_of_ammo | out_of_reach | no_line_of_sight |
+     * cancelled | timeout | not_found`. Success iff killed or cancelled.
+     */
+    private fun handleRanged(ex: HttpExchange): BridgeResponse {
+        val body = try { ex.jsonBody() } catch (e: BodyParseException) {
+            return HttpBridge.err(e.message ?: "bad body", status = 400)
+        }
+        val entityId = (body["entity_id"] as? String).orEmpty()
+        if (entityId.isEmpty()) {
+            return HttpBridge.err("Missing 'entity_id' parameter", status = 400)
+        }
+
+        cancelCurrent()
+        val session = Session(Thread.currentThread(), AtomicBoolean(false))
+        current.set(session)
+        Thread.interrupted() // clear any stale interrupt before we sleep
+
+        try {
+            return runRangedLoop(entityId, session)
+        } finally {
+            current.compareAndSet(session, null)
+            Thread.interrupted()
+        }
+    }
+
+    private fun runRangedLoop(entityId: String, session: Session): BridgeResponse {
+        val deadline = System.currentTimeMillis() + RANGED_TIMEOUT_MS
+        var shots = 0
+        var everEngaged = false
+
+        // Self-equip the bow once up front (ensureMainhand does its own
+        // tick-thread submissions, so it must run on the worker thread).
+        EquipRoute.ensureMainhand("bow")?.let { err ->
+            return rangedSummary("error", 0, entityId, detail = err)
+        }
+        val bowSlot = TickThread.submitAndWait(timeoutMs = 1_000) {
+            MinecraftClient.getInstance().player?.inventory?.selectedSlot ?: 0
+        }
+
+        // Observed-velocity tracking for target leading: per-tick delta of the
+        // target's position across our own polls (more reliable for server-
+        // driven mobs than reading Entity.velocity, which barely syncs).
+        var haveLast = false
+        var lastX = 0.0; var lastY = 0.0; var lastZ = 0.0; var lastMs = 0L
+        var unreachable = 0
+        var noLos = 0
+
+        try {
+            while (true) {
+                if (session.cancelled.get()) return rangedSummary("cancelled", shots, entityId)
+                val nowMs = System.currentTimeMillis()
+                if (nowMs >= deadline) return rangedSummary("timeout", shots, entityId)
+
+                when (val t = TickThread.submitAndWait(timeoutMs = 2_000) { resolveTargetOnTick(entityId) }) {
+                    is Target.NoPlayer -> return rangedSummary("error", shots, entityId, detail = "no player")
+                    is Target.NotFound ->
+                        return if (everEngaged) rangedSummary("despawned", shots, entityId)
+                        else rangedSummary("not_found", shots, entityId)
+                    is Target.Dead -> { everEngaged = true; return rangedSummary("killed", shots, entityId) }
+                    is Target.Alive -> {
+                        everEngaged = true
+
+                        // Per-tick observed velocity (blocks/tick) for leading.
+                        var vx = 0.0; var vy = 0.0; var vz = 0.0
+                        if (haveLast) {
+                            val ticks = ((nowMs - lastMs) / 50.0).coerceAtLeast(1.0)
+                            vx = (t.x - lastX) / ticks; vy = (t.y - lastY) / ticks; vz = (t.z - lastZ) / ticks
+                        }
+                        lastX = t.x; lastY = t.y; lastZ = t.z; lastMs = nowMs; haveLast = true
+
+                        if (!TickThread.submitAndWait(timeoutMs = 1_000) { hasArrow() }) {
+                            return rangedSummary("out_of_ammo", shots, entityId)
+                        }
+
+                        when (val plan = TickThread.submitAndWait(timeoutMs = 2_000) { planShot(entityId, vx, vy, vz) }) {
+                            is ShotPlan.Gone -> { /* re-resolve next loop catches dead/despawn */ }
+                            is ShotPlan.OutOfRange -> {
+                                if (++unreachable >= MAX_UNREACHABLE) {
+                                    return rangedSummary(
+                                        "out_of_reach", shots, entityId,
+                                        detail = "target out of bow range at full charge (we don't reposition)",
+                                    )
+                                }
+                            }
+                            is ShotPlan.Blocked -> {
+                                if (++noLos >= MAX_NO_LOS) {
+                                    return rangedSummary(
+                                        "no_line_of_sight", shots, entityId,
+                                        detail = "no clear shot — a block sits between us and the target",
+                                    )
+                                }
+                            }
+                            is ShotPlan.Ready -> {
+                                unreachable = 0; noLos = 0
+                                if (fireBow(entityId, bowSlot, session)) shots += 1
+                            }
+                        }
+
+                        try {
+                            Thread.sleep(RANGED_POLL_MS)
+                        } catch (_: InterruptedException) {
+                            if (session.cancelled.get()) return rangedSummary("cancelled", shots, entityId)
+                        }
+                    }
+                }
+            }
+        } finally {
+            // Always release the bow string so a kill/cancel/timeout can't leave
+            // the bot frozen mid-draw (idempotent if nothing is drawn).
+            releaseDraw()
+            restoreSlot(bowSlot)
+        }
+    }
+
+    /** True if any plain arrow is in the inventory. Tick-thread only. */
+    private fun hasArrow(): Boolean {
+        val player = MinecraftClient.getInstance().player ?: return false
+        return InventoryHelpers.existsInInventory(player, "arrow")
+    }
+
+    private sealed interface ShotPlan {
+        data object Gone : ShotPlan
+        data object OutOfRange : ShotPlan
+        data object Blocked : ShotPlan
+        data class Ready(val yaw: Float, val pitch: Float) : ShotPlan
+    }
+
+    /**
+     * Plan a leading shot at the target on the tick thread: solve the ballistic
+     * aim, advance the target by [vx]/[vy]/[vz] (blocks/tick) over the solved
+     * flight time, and re-solve so the arrow meets the target where it *will*
+     * be. Three iterations converge. Then gate on a clear sightline to the
+     * predicted impact point.
+     */
+    private fun planShot(entityId: String, vx: Double, vy: Double, vz: Double): ShotPlan {
+        val mc = MinecraftClient.getInstance()
+        val player = mc.player ?: return ShotPlan.Gone
+        val world = mc.world ?: return ShotPlan.Gone
+        val target = matchEntity(world.entities, entityId) ?: return ShotPlan.Gone
+        val eye = player.eyePos
+        val centre = target.boundingBox.center
+
+        var aimX = centre.x; var aimY = centre.y; var aimZ = centre.z
+        var aim: WorldHelpers.BowAim? = null
+        repeat(3) {
+            val solved = WorldHelpers.solveBowAim(aimX - eye.x, aimY - eye.y, aimZ - eye.z)
+                ?: return ShotPlan.OutOfRange
+            aim = solved
+            val tk = solved.flightTicks
+            aimX = centre.x + vx * tk; aimY = centre.y + vy * tk; aimZ = centre.z + vz * tk
+        }
+        val solved = aim ?: return ShotPlan.OutOfRange
+
+        val aimPoint = Vec3d(aimX, aimY, aimZ)
+        if (isObstructed(player, eye, aimPoint)) return ShotPlan.Blocked
+        return ShotPlan.Ready(solved.yaw, solved.pitch)
+    }
+
+    /** True if a block sits between the eye and the aim point. Tick-thread only. */
+    private fun isObstructed(player: net.minecraft.entity.Entity, eye: Vec3d, aimPoint: Vec3d): Boolean {
+        val world = MinecraftClient.getInstance().world ?: return false
+        val ctx = RaycastContext(
+            eye, aimPoint,
+            RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, player,
+        )
+        val hit = world.raycast(ctx)
+        // Treat a hit short of the target (with a little slack) as an occluder.
+        return hit.type == HitResult.Type.BLOCK &&
+            hit.pos.squaredDistanceTo(eye) < aimPoint.squaredDistanceTo(eye) - 0.25
+    }
+
+    /**
+     * Draw, hold to full charge while tracking the target, re-aim with the
+     * final lead, then release — the full bow shot. Runs on the worker thread
+     * (it sleeps between tick submissions). Returns true if a shot was loosed.
+     */
+    private fun fireBow(entityId: String, bowSlot: Int, session: Session): Boolean {
+        // Start the draw: hold the bow, press use, keep the key pinned across
+        // ticks (vanilla draws while right-click is held — same trick the shield
+        // raise uses).
+        val started = TickThread.submitAndWait(timeoutMs = 2_000) {
+            val mc = MinecraftClient.getInstance()
+            val player = mc.player ?: return@submitAndWait false
+            val mgr = mc.interactionManager ?: return@submitAndWait false
+            if (bowSlot in 0..8 && player.inventory.selectedSlot != bowSlot) {
+                player.inventory.selectedSlot = bowSlot
+                player.networkHandler.sendPacket(UpdateSelectedSlotC2SPacket(bowSlot))
+            }
+            mgr.interactItem(player, Hand.MAIN_HAND)
+            mc.options.useKey.setPressed(true)
+            player.swingHand(Hand.MAIN_HAND)
+            true
+        }
+        if (!started) return false
+
+        // Hold to full charge, tracking the target's body centre so the draw
+        // visibly follows it (no lead here — lead is applied at the release).
+        val drawDeadline = System.currentTimeMillis() + DRAW_MS
+        while (System.currentTimeMillis() < drawDeadline) {
+            if (session.cancelled.get()) { releaseDraw(); return false }
+            try {
+                Thread.sleep(minOf(AIM_POLL_MS, drawDeadline - System.currentTimeMillis()).coerceAtLeast(0L))
+            } catch (_: InterruptedException) {
+                releaseDraw()
+                return false
+            }
+            TickThread.submitAndWait(timeoutMs = 1_000) { aimAtCentre(entityId); Unit }
+        }
+
+        // Final precise aim with lead, then release on the next tick so the
+        // rotation packet has shipped first (the server fires along our last
+        // known rotation).
+        TickThread.submitAndWait(timeoutMs = 2_000) {
+            val plan = planShot(entityId, 0.0, 0.0, 0.0)
+            if (plan is ShotPlan.Ready) setRotation(plan.yaw, plan.pitch) else aimAtCentre(entityId)
+            Unit
+        }
+        try {
+            Thread.sleep(AIM_SETTLE_MS)
+        } catch (_: InterruptedException) {
+            releaseDraw()
+            return false
+        }
+        releaseDraw()
+        try { Thread.sleep(RECOVERY_MS) } catch (_: InterruptedException) { /* exiting */ }
+        return true
+    }
+
+    /** Aim the head at the target's body centre (no lead). Tick-thread only. */
+    private fun aimAtCentre(entityId: String) {
+        val mc = MinecraftClient.getInstance()
+        val player = mc.player ?: return
+        val world = mc.world ?: return
+        val target = matchEntity(world.entities, entityId) ?: return
+        val c = target.boundingBox.center
+        WorldHelpers.lookAtPosition(player, c.x, c.y, c.z)
+    }
+
+    /** Set head rotation directly (ballistic pitch can differ from a look_at). Tick-thread only. */
+    private fun setRotation(yaw: Float, pitch: Float) {
+        val player = MinecraftClient.getInstance().player ?: return
+        player.yaw = yaw
+        player.pitch = pitch
+        CameraDirector.noteFunctionalAim()
+    }
+
+    /** Release the bow string: stop the use + drop the key. Idempotent. */
+    private fun releaseDraw() {
+        try {
+            TickThread.submitAndWait(timeoutMs = 1_000) {
+                val mc = MinecraftClient.getInstance()
+                mc.options.useKey.setPressed(false)
+                mc.player?.let { mc.interactionManager?.stopUsingItem(it) }
+                Unit
+            }
+        } catch (t: Throwable) {
+            log.warn("attack/ranged: failed to release bow draw: {}", t.message)
+        }
+    }
+
+    private fun rangedSummary(
+        reason: String,
+        shots: Int,
+        entityId: String,
+        detail: String? = null,
+    ): BridgeResponse {
+        val data = mapOf(
+            "fired" to (shots > 0),
+            "shots" to shots,
+            "reason" to reason,
+            "method" to "real",
+        )
+        val msg = when (reason) {
+            "killed" -> "Shot $entityId dead in $shots arrows"
+            "despawned" -> "Target $entityId despawned after $shots arrows"
+            "out_of_ammo" -> "Out of arrows after $shots shots"
+            "out_of_reach" -> buildString {
+                append("Couldn't hit $entityId after $shots arrows")
+                if (detail != null) append(": $detail")
+            }
+            "no_line_of_sight" -> buildString {
+                append("No clear shot at $entityId after $shots arrows")
+                if (detail != null) append(": $detail")
+            }
+            "cancelled" -> "Ranged attack cancelled after $shots arrows"
+            "timeout" -> "Ranged attack timed out after $shots arrows (${RANGED_TIMEOUT_MS / 1000}s)"
+            "not_found" -> "Entity $entityId not found"
+            "error" -> "Ranged attack errored: ${detail ?: "unknown"}"
+            else -> reason
+        }
+        val ok = reason == "killed" || reason == "cancelled"
+        return if (ok) HttpBridge.ok(data, msg) else BridgeResponse("error", msg, data, 200)
     }
 
     private fun matchEntity(entities: Iterable<Entity>, query: String): Entity? {

@@ -554,6 +554,80 @@ async def test_attack_stop_cancels_in_flight_loop(bridge):
     assert resp.data["swings"] < 20
 
 
+@pytest.mark.asyncio
+async def test_attack_ranged_loops_to_kill(bridge):
+    """Mock /attack/ranged: needs a bow + arrows, consumes one arrow per shot,
+    loops until the target dies."""
+    bridge._add_to_inventory("bow", 1)
+    bridge._add_to_inventory("arrow", 10)
+    bridge._nearby_entities.append({
+        "name": "skeleton", "type": "skeleton", "x": 8, "y": 64, "z": 2, "distance": 8.2, "health": 12,
+    })
+    resp = await bridge.attack_ranged("skeleton")
+    assert resp.status == "success"
+    assert resp.data["reason"] == "killed"
+    assert resp.data["shots"] == 2  # 12 hp / 6-per-arrow
+    assert resp.data["fired"] is True
+    # Two arrows consumed.
+    assert sum(e["count"] for e in bridge._inventory if e["name"] == "arrow") == 8
+    assert all(e["name"] != "skeleton" for e in bridge._nearby_entities)
+
+
+@pytest.mark.asyncio
+async def test_attack_ranged_requires_bow(bridge):
+    bridge._add_to_inventory("arrow", 10)
+    bridge._nearby_entities.append({
+        "name": "zombie", "type": "zombie", "x": 8, "y": 64, "z": 2, "distance": 8.2, "health": 12,
+    })
+    resp = await bridge.attack_ranged("zombie")
+    assert resp.status == "error"
+    assert resp.data["shots"] == 0
+    assert "bow" in resp.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_attack_ranged_out_of_ammo(bridge):
+    """A bow with no arrows ends with out_of_ammo before firing."""
+    bridge._add_to_inventory("bow", 1)
+    bridge._nearby_entities.append({
+        "name": "creeper", "type": "creeper", "x": 8, "y": 64, "z": 2, "distance": 8.2, "health": 20,
+    })
+    resp = await bridge.attack_ranged("creeper")
+    assert resp.status == "error"
+    assert resp.data["reason"] == "out_of_ammo"
+    assert resp.data["shots"] == 0
+
+
+@pytest.mark.asyncio
+async def test_attack_ranged_not_found(bridge):
+    bridge._add_to_inventory("bow", 1)
+    bridge._add_to_inventory("arrow", 5)
+    resp = await bridge.attack_ranged("nonexistent_mob")
+    assert resp.status == "error"
+    assert resp.data["reason"] == "not_found"
+    assert resp.data["shots"] == 0
+
+
+@pytest.mark.asyncio
+async def test_attack_ranged_stop_cancels_in_flight(bridge):
+    """attack_stop cancels an in-flight ranged loop too (shared flag)."""
+    bridge._add_to_inventory("bow", 1)
+    bridge._add_to_inventory("arrow", 64)
+    bridge._nearby_entities.append({
+        "name": "iron_golem", "type": "iron_golem", "x": 8, "y": 64, "z": 2,
+        "distance": 8.2, "health": 100,
+    })
+    import asyncio as _asyncio
+    task = _asyncio.create_task(bridge.attack_ranged("iron_golem"))
+    for _ in range(3):
+        await _asyncio.sleep(0)
+    stop_resp = await bridge.attack_stop()
+    assert stop_resp.data["cancelled"] is True
+    resp = await task
+    assert resp.data["reason"] == "cancelled"
+    assert resp.data["shots"] < 20
+
+
 # --- unified use() primitive ------------------------------------------------
 
 @pytest.mark.asyncio

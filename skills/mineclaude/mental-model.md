@@ -132,6 +132,18 @@ it to strike — so an in-melee block comes for free, you don't orchestrate it.
 Keep a shield in the inventory and the bot fights with a guard up; put something
 else in the offhand on purpose (a totem) and it's left alone.
 
+`attackRanged(entity_id)` is the bow counterpart — fight a target with arrows
+instead of a sword. Same one-call-per-kill contract, same id source. It
+auto-equips a bow and owns the ballistics: it arcs each full-charge shot for
+gravity and leads the moving target, so you just pick who to shoot. It's
+**stationary** — it holds its ground and volleys, it does NOT chase or kite, so
+the target has to stay in bow range with a clear line of sight; it ends with
+`out_of_reach` (drifted out of range) or `no_line_of_sight` (a block in the way)
+rather than repositioning. Keep a bow and arrows in the inventory or it ends
+`out_of_ammo`/errors. This is the answer to the post-retreat creeper, a skeleton
+you'd rather not close with, or anything you can hit from safety — reach for it
+over `attack` whenever you don't want to be in melee.
+
 For defense *outside* the swing rhythm, `block(duration_s, look_at=(x,y,z))`
 raises a shield and holds it for that window without attacking (auto-equips the
 shield to the offhand). A shield just sitting in the offhand does nothing —

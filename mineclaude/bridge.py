@@ -35,6 +35,7 @@ class BridgeClient(Protocol):
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def collect(self, radius: float = 3) -> BridgeResponse: ...
     async def attack(self, entity_id: str) -> BridgeResponse: ...
+    async def attack_ranged(self, entity_id: str) -> BridgeResponse: ...
     async def attack_stop(self) -> BridgeResponse: ...
     async def craft(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def furnace_load(
@@ -231,6 +232,9 @@ class RealBridgeClient:
 
     async def attack(self, entity_id: str) -> BridgeResponse:
         return self._parse(await self._http.post("/attack", json={"entity_id": entity_id}))
+
+    async def attack_ranged(self, entity_id: str) -> BridgeResponse:
+        return self._parse(await self._http.post("/attack/ranged", json={"entity_id": entity_id}))
 
     async def attack_stop(self) -> BridgeResponse:
         return self._parse(await self._http.post("/attack/stop", timeout=_HALT_TIMEOUT_S))
@@ -683,6 +687,60 @@ class MockBridgeClient:
         return BridgeResponse(
             "error", f"Attack timed out after {swings} swings",
             {"attacked": True, "swings": swings, "reason": "timeout", "method": "simulated"},
+        )
+
+    async def attack_ranged(self, entity_id: str) -> BridgeResponse:
+        # Simulated bow loop: needs a bow + arrows, consumes one arrow per
+        # shot, mirrors the real /attack/ranged terminal reasons so
+        # MOCK_BRIDGE=1 exercises the same agent contract. Shares the
+        # `_attack_cancelled` flag with melee so `attack_stop` cancels either.
+        self._attack_cancelled = False
+        if not any(e["name"] == "bow" for e in self._inventory):
+            return BridgeResponse(
+                "error", "Ranged attack errored: No bow in inventory",
+                {"fired": False, "shots": 0, "reason": "error", "method": "simulated"},
+            )
+        shots = 0
+        max_shots = 100  # safety bound so a stuck mock can't spin forever
+        while shots < max_shots:
+            await asyncio.sleep(0)
+            if self._attack_cancelled:
+                return BridgeResponse(
+                    "success", f"Ranged attack cancelled after {shots} arrows",
+                    {"fired": shots > 0, "shots": shots, "reason": "cancelled", "method": "simulated"},
+                )
+            target = next(
+                (e for e in self._nearby_entities if e["name"] == entity_id or str(e.get("id", "")) == entity_id),
+                None,
+            )
+            if target is None:
+                if shots == 0:
+                    return BridgeResponse(
+                        "error", f"Entity {entity_id} not found",
+                        {"fired": False, "shots": 0, "reason": "not_found", "method": "simulated"},
+                    )
+                return BridgeResponse(
+                    "error", f"Target {entity_id} despawned after {shots} arrows",
+                    {"fired": True, "shots": shots, "reason": "despawned", "method": "simulated"},
+                )
+            arrows = sum(e["count"] for e in self._inventory if e["name"] == "arrow")
+            if arrows <= 0:
+                return BridgeResponse(
+                    "error", f"Out of arrows after {shots} shots",
+                    {"fired": shots > 0, "shots": shots, "reason": "out_of_ammo", "method": "simulated"},
+                )
+            self._remove_from_inventory("arrow", 1)
+            target["health"] = max(0, target.get("health", 5) - 6)
+            shots += 1
+            if target["health"] <= 0:
+                self._nearby_entities.remove(target)
+                return BridgeResponse(
+                    "success", f"Shot {entity_id} dead in {shots} arrows",
+                    {"fired": True, "shots": shots, "reason": "killed", "method": "simulated"},
+                )
+        return BridgeResponse(
+            "error", f"Ranged attack timed out after {shots} arrows",
+            {"fired": True, "shots": shots, "reason": "timeout", "method": "simulated"},
         )
 
     async def attack_stop(self) -> BridgeResponse:

@@ -8,7 +8,9 @@ import net.minecraft.util.math.Box
 import net.minecraft.util.math.Direction
 import net.minecraft.util.math.Vec3d
 import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.floor
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -301,4 +303,101 @@ internal object WorldHelpers {
 
     /** Held-position centre of [pos] as a Vec3d. */
     fun blockCentre(pos: BlockPos): Vec3d = Vec3d(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5)
+
+    // -- bow ballistics (ranged attack) ----------------------------------------
+
+    /** Launch speed of a full-charge bow arrow, in blocks/tick (vanilla: pull*3.0). */
+    private const val ARROW_SPEED = 3.0
+
+    /** Per-tick gravity applied to a fired arrow's vertical velocity (vanilla). */
+    private const val ARROW_GRAVITY = 0.05
+
+    /** Per-tick air drag multiplier on arrow velocity (vanilla, in air). */
+    private const val ARROW_DRAG = 0.99
+
+    /** Never aim steeper than this (radians, ~83°) — past it the shot is a near-vertical lob. */
+    private const val MAX_ELEVATION_RAD = 1.45
+
+    /** The solved aim for a bow shot: head rotation (MC degrees) + flight time. */
+    data class BowAim(val yaw: Float, val pitch: Float, val flightTicks: Double)
+
+    /**
+     * Solve the head rotation that lands a full-charge bow arrow on a point
+     * [dx],[dy],[dz] blocks from the player's eye. Yaw is the horizontal
+     * bearing; pitch is found by **forward-simulating** MC's exact arrow
+     * physics (drag [ARROW_DRAG] then gravity [ARROW_GRAVITY] per tick) and
+     * binary-searching the launch elevation for the low arc that passes through
+     * the target. Returns null when no elevation up to [MAX_ELEVATION_RAD]
+     * reaches the target — i.e. it's out of range at full charge.
+     *
+     * Horizontal motion collapses to a single scalar: drag is isotropic and
+     * gravity is vertical-only, so the bearing stays constant and only
+     * (horizontal-distance, height) matter — the sim is exact in 2D.
+     *
+     * [flightTicks] is returned so the caller can lead a moving target (advance
+     * it by velocity·flightTicks and re-solve).
+     */
+    fun solveBowAim(dx: Double, dy: Double, dz: Double): BowAim? {
+        val horiz = sqrt(dx * dx + dz * dz)
+        if (horiz < 1e-6) return null // straight up/down — not a meaningful bow shot
+        val yaw = (-Math.toDegrees(atan2(dx, dz))).toFloat()
+
+        // Launching straight at the target always undershoots (gravity pulls the
+        // arrow below the sight line), so the direct angle is a valid lower
+        // bound. Adaptively raise the upper bound until the arc overshoots the
+        // target height at the target distance (bracketing the low-arc root on
+        // the monotonic rising side); if it never overshoots before the cap,
+        // the target is unreachable at full charge.
+        val lo0 = atan2(dy, horiz)
+        var lo = lo0
+        var hi = lo0 + 0.05
+        var bracketed = false
+        while (hi <= MAX_ELEVATION_RAD) {
+            if (simulateArrow(horiz, hi).y >= dy) { bracketed = true; break }
+            lo = hi
+            hi += 0.15
+        }
+        if (!bracketed) return null // out of range
+
+        repeat(24) {
+            val mid = (lo + hi) / 2.0
+            if (simulateArrow(horiz, mid).y < dy) lo = mid else hi = mid
+        }
+        val theta = (lo + hi) / 2.0
+        val pitch = (-Math.toDegrees(theta)).toFloat() // MC pitch: negative = up
+        val flightTicks = simulateArrow(horiz, theta).ticks
+        return BowAim(yaw, pitch, flightTicks)
+    }
+
+    private data class ArrowSim(val y: Double, val ticks: Double)
+
+    /**
+     * Fly a full-charge arrow launched at elevation [theta] (radians, up
+     * positive) and report the height [y] (relative to launch) at the moment it
+     * first reaches horizontal distance [targetHoriz], plus the [ticks] elapsed
+     * (fractional, interpolated within the crossing tick). Mirrors MC's arrow
+     * tick: move by velocity, then decay (drag, then gravity).
+     */
+    private fun simulateArrow(targetHoriz: Double, theta: Double): ArrowSim {
+        var vH = ARROW_SPEED * cos(theta)
+        var vY = ARROW_SPEED * sin(theta)
+        var h = 0.0
+        var y = 0.0
+        var ticks = 0
+        val maxTicks = 200
+        while (ticks < maxTicks) {
+            val prevH = h
+            val prevY = y
+            h += vH
+            y += vY
+            vH *= ARROW_DRAG
+            vY = vY * ARROW_DRAG - ARROW_GRAVITY
+            ticks++
+            if (h >= targetHoriz) {
+                val frac = if (h > prevH) (targetHoriz - prevH) / (h - prevH) else 0.0
+                return ArrowSim(prevY + (y - prevY) * frac, ticks - 1 + frac)
+            }
+        }
+        return ArrowSim(y, ticks.toDouble())
+    }
 }

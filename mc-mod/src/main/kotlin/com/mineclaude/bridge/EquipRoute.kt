@@ -107,25 +107,38 @@ object EquipRoute {
      * hotbar via SWAP.
      */
     private fun handleHand(item: String, slot: String): BridgeResponse {
+        val err = ensureMainhand(item)
+        return if (err != null) HttpBridge.err(err)
+        else HttpBridge.ok(mapOf("equipped" to true, "method" to "real"), "Equipped $item to $slot")
+    }
+
+    /**
+     * Guarantee [item] is held in the mainhand after this returns null. Locate
+     * → stage to hotbar if needed → select → settle → verify. Returns an error
+     * message on failure. The mainhand twin of [ensureOffhand]; reused by the
+     * ranged-attack loop so it can self-equip the bow before drawing.
+     * Idempotent: an [item] already held selects no slot (the hotbar slot it's
+     * in is re-selected, a no-op if already current).
+     */
+    fun ensureMainhand(item: String): String? {
         val target = item.removePrefix("minecraft:")
 
         // Tick 1 — locate the item.
         val located = TickThread.submitAndWait(timeoutMs = 1_000) { locate(item) }
-            ?: return HttpBridge.err("No $item in inventory")
+            ?: return "No $item in inventory"
 
         // Determine the hotbar slot the item will end up in.
         val hotbarSlot: Int = if (located.inHotbar) {
             located.piSlot
         } else {
-            val staged = TickThread.submitAndWait(timeoutMs = 2_000) {
+            TickThread.submitAndWait(timeoutMs = 2_000) {
                 stageIntoHotbar(item)
-            } ?: return HttpBridge.err(
+            } ?: return (
                 if (TickThread.submitAndWait(timeoutMs = 500) { locate(item) != null })
                     "$item is in inventory but couldn't be moved to the hotbar"
                 else
                     "No $item in inventory"
             )
-            staged
         }
 
         // Select on a fresh tick so any pending SWAP packet ships first.
@@ -145,14 +158,9 @@ object EquipRoute {
         }
         if (!verified) {
             log.warn("equip: post-select mainhand does not hold {} (asked for slot {})", item, hotbarSlot)
-            return HttpBridge.err(
-                "equip did not take effect — mainhand is not $item after select."
-            )
+            return "equip did not take effect — mainhand is not $item after select."
         }
-        return HttpBridge.ok(
-            mapOf("equipped" to true, "method" to "real"),
-            "Equipped $item to $slot",
-        )
+        return null
     }
 
     private fun handleOffhand(item: String): BridgeResponse {

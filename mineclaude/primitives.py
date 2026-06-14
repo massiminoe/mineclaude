@@ -205,6 +205,19 @@ def make_primitives(
         own — keep one in your inventory for a free in-melee block."""
         return _check(await bridge.attack(str(entity_id)))
 
+    async def attackRanged(entity_id: int | str) -> str:
+        """Shoot the entity with this numeric id using a bow until it's dead —
+        the ranged counterpart to attack(). The bridge auto-equips a bow, owns
+        the ballistic aim (it leads the moving target and arcs for gravity), and
+        volleys full-charge shots from where it stands. STATIONARY: it holds its
+        ground (no kiting), so the target must stay in bow range with a clear
+        sightline. Get ids from getNearbyEntities / findEntities. One call per
+        kill, not per shot. Needs a bow and arrows in the inventory; ends with
+        out_of_ammo / out_of_reach / no_line_of_sight if it can't keep shooting.
+        Reach for this over attack() to fight from a distance (skeletons,
+        creepers you don't want to melee) or when you can't safely close in."""
+        return _check(await bridge.attack_ranged(str(entity_id)))
+
     async def craft(item: str, count: int = 1) -> str:
         """Craft `count` of the OUTPUT item (not iterations/inputs); returns the
         amount actually produced — read it. 3x3 recipes auto-locate a nearby
@@ -624,6 +637,7 @@ def make_primitives(
         "breakBlockAt": breakBlockAt,
         "collectItems": collectItems,
         "attack": attack,
+        "attackRanged": attackRanged,
         "block": block,
         "craft": craft,
         "furnaceLoad": furnaceLoad,
