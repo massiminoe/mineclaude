@@ -84,6 +84,12 @@ CREEPER_FLEE_DISTANCE = 12.0
 # hang the reflex — on expiry timed_op halts Baritone and the handler returns.
 CREEPER_FLEE_TIMEOUT_S = 8.0
 
+# How long to hold the shield when we react to a creeper by blocking instead of
+# fleeing. Sits just under the 3s reflex cooldown so a creeper that lingers in
+# radius re-triggers a fresh block on the next fire — we keep the guard up for
+# as long as it stays close, rather than gambling on one fixed window.
+CREEPER_BLOCK_DURATION_S = 3.0
+
 # Attacker entity kinds the damage reflex does NOT react to (no flee / no
 # retaliate). The event is still recorded for the next gameState — we only
 # suppress the automatic response.
@@ -553,13 +559,22 @@ async def hostile_nearby_handler(controller: "Controller", data: dict) -> None:
 
     Creeper — the one hostile worth an automatic, unprompted reaction. Its
     explosion is frequently lethal and craters terrain, and the fuse only
-    lights within ~3 blocks, so distance is a hard counter. We preempt the
-    current action and retreat directly away to CREEPER_FLEE_DISTANCE, buying
-    space before the fuse can start. The cancelled action (the agent's
-    `execute` returns) plus the reflex entry let Claude re-plan — shoot it,
-    kite-kill it, or carry on once it wanders off. We deliberately do NOT try
-    to *kill* it here: charging a creeper into melee is exactly what gets you
-    blown up, and that judgment belongs to the agent, not a survival reflex.
+    lights within ~3 blocks. We preempt the current action and respond by
+    threat-priority:
+
+      - If we're carrying a shield, we stand our ground and *block* toward the
+        creeper (CREEPER_BLOCK_DURATION_S). A raised shield negates most of the
+        blast, so this beats fleeing — running away is disruptive and abandons
+        whatever the agent was doing. The shield can be in storage or already
+        in the offhand; `block` auto-equips it either way.
+      - Otherwise we fall back to retreating directly away to
+        CREEPER_FLEE_DISTANCE, buying space before the fuse can start.
+
+    Either way the cancelled action (the agent's `execute` returns) plus the
+    reflex entry let Claude re-plan — shoot it, kite-kill it, or carry on once
+    it wanders off. We deliberately do NOT try to *kill* it here: charging a
+    creeper into melee is exactly what gets you blown up, and that judgment
+    belongs to the agent, not a survival reflex.
 
     Every other hostile — record-only. The dispatcher already logged the fire
     into `recent` for the next gameState; being merely near a zombie isn't an
@@ -575,7 +590,8 @@ async def hostile_nearby_handler(controller: "Controller", data: dict) -> None:
     cx = cpos.get("x")
     cz = cpos.get("z")
     if cx is None or cz is None:
-        return  # no position → no direction to retreat
+        return  # no position → no direction to face/retreat
+    cy = cpos.get("y")
 
     await controller.preempt()
 
@@ -583,7 +599,7 @@ async def hostile_nearby_handler(controller: "Controller", data: dict) -> None:
         try:
             status = (await controller.bridge.get_status()).data
         except Exception:
-            logger.exception("creeper retreat status fetch failed")
+            logger.exception("creeper reaction status fetch failed")
             return
         pos = status.get("position") or {}
         px = pos.get("x")
@@ -591,32 +607,52 @@ async def hostile_nearby_handler(controller: "Controller", data: dict) -> None:
         pz = pos.get("z")
         if px is None or py is None or pz is None:
             return
-        dx = px - cx
-        dz = pz - cz
-        mag = math.sqrt(dx * dx + dz * dz)
-        if mag < 0.1:
-            # Standing on top of the creeper — direction is undefined; pick an
-            # arbitrary axis so we still step off it rather than freeze in place.
-            dx, dz, mag = 1.0, 0.0, 1.0
-        fx = px + (dx / mag) * CREEPER_FLEE_DISTANCE
-        fz = pz + (dz / mag) * CREEPER_FLEE_DISTANCE
-        try:
-            await timed_op(
-                controller.bridge.goto(fx, py, fz),
-                controller.bridge.stop,
-            )
-        except Exception:
-            logger.exception("creeper retreat goto failed")
-            return
+
+        # readInventory iterates the full player inventory including the offhand
+        # (slot 40), so a name match covers a shield in storage AND one already
+        # equipped — `block` auto-equips from storage if needed.
+        inventory = status.get("inventory") or []
+        has_shield = any(
+            (entry.get("name") or "") == "shield" for entry in inventory
+        )
+
+        if has_shield:
+            # Stand and block toward the creeper rather than abandoning the task.
+            try:
+                await controller.bridge.block(
+                    CREEPER_BLOCK_DURATION_S,
+                    look_at=(cx, cy if cy is not None else py, cz),
+                )
+            except Exception:
+                logger.exception("creeper shield-block failed")
+                return
+        else:
+            dx = px - cx
+            dz = pz - cz
+            mag = math.sqrt(dx * dx + dz * dz)
+            if mag < 0.1:
+                # Standing on top of the creeper — direction is undefined; pick
+                # an arbitrary axis so we still step off it rather than freeze.
+                dx, dz, mag = 1.0, 0.0, 1.0
+            fx = px + (dx / mag) * CREEPER_FLEE_DISTANCE
+            fz = pz + (dz / mag) * CREEPER_FLEE_DISTANCE
+            try:
+                await timed_op(
+                    controller.bridge.goto(fx, py, fz),
+                    controller.bridge.stop,
+                )
+            except Exception:
+                logger.exception("creeper retreat goto failed")
+                return
 
     # Signal recovery completion (mirrors damage_taken) so a
-    # wait_for_event(["reflex_done"]) consumer sees the retreat finished. We
+    # wait_for_event(["reflex_done"]) consumer sees the reaction finished. We
     # resume manually rather than via resumes_on_complete so the record-only
-    # paths above stay silent — only an actual creeper retreat emits.
+    # paths above stay silent — only an actual creeper reaction emits.
     try:
         controller.resume("hostile_nearby")
     except Exception:
-        logger.exception("creeper retreat resume failed")
+        logger.exception("creeper reaction resume failed")
 
 
 async def _escape_to_shore(controller: "Controller") -> None:
