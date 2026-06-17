@@ -90,6 +90,13 @@ class MineclaudeBridgeClient : ClientModInitializer {
         UseRoute.register(bridge)
         UseItemRoute.register(bridge)
         InteractRoute.register(bridge)
+        // Dedicated bucket surface — /bucket/fill {x,y,z} validates a still
+        // source and fills; /bucket/empty {x,y,z,item?} pours into a cell.
+        // Split out of /use because empty vs. filled buckets need opposite aim
+        // strategies (source centre vs. adjacent-solid face), and because the
+        // agent can't see source-vs-flowing from block ids — the bridge owns
+        // both. The agent only names the cell.
+        BucketRoute.register(bridge)
         // Bed sleep — dedicated lifecycle route (click → confirm isSleeping →
         // wait for morning → leave bed). Can't be /interact: the bed click's
         // accept flag is an unreliable client prediction.

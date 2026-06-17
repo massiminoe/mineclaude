@@ -32,6 +32,8 @@ class BridgeClient(Protocol):
     async def explore(self) -> BridgeResponse: ...
     async def stop(self) -> BridgeResponse: ...
     async def place(self, block: str, x: int, z: int, y: int | None = None) -> BridgeResponse: ...
+    async def bucket_fill(self, x: int, y: int, z: int) -> BridgeResponse: ...
+    async def bucket_empty(self, x: int, y: int, z: int, item: str | None = None) -> BridgeResponse: ...
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse: ...
     async def collect(self, radius: float = 3) -> BridgeResponse: ...
     async def attack(self, entity_id: str) -> BridgeResponse: ...
@@ -399,6 +401,15 @@ class RealBridgeClient:
             body["hold_ms"] = hold_ms
         return self._parse(await self._http.post("/use", json=body))
 
+    async def bucket_fill(self, x: int, y: int, z: int) -> BridgeResponse:
+        return self._parse(await self._http.post("/bucket/fill", json={"x": x, "y": y, "z": z}))
+
+    async def bucket_empty(self, x: int, y: int, z: int, item: str | None = None) -> BridgeResponse:
+        body: dict[str, Any] = {"x": x, "y": y, "z": z}
+        if item is not None:
+            body["item"] = item
+        return self._parse(await self._http.post("/bucket/empty", json=body))
+
     async def block(
         self,
         duration_s: float = 2.0,
@@ -613,6 +624,53 @@ class MockBridgeClient:
             return BridgeResponse("error", f"No {block} in inventory")
         self._nearby_blocks.append({"name": block, "x": x, "y": resolved_y, "z": z, "distance": 1.0})
         return BridgeResponse("success", f"Placed {block} at {x}, {resolved_y}, {z}")
+
+    _BUCKET_FLUIDS = {"water_bucket": "water", "lava_bucket": "lava"}
+
+    async def bucket_fill(self, x: int, y: int, z: int) -> BridgeResponse:
+        # Source = a water/lava block at the named cell. Mock blocks carry no
+        # source-vs-flowing flag, so any water/lava cell counts as fillable.
+        src = next(
+            (b for b in self._nearby_blocks
+             if b["x"] == x and b["y"] == y and b["z"] == z and b["name"] in ("water", "lava")),
+            None,
+        )
+        if src is None:
+            return BridgeResponse("error", f"no water/lava source at ({x}, {y}, {z}) to fill from")
+        if not self._remove_from_inventory("bucket", 1):
+            return BridgeResponse("error", "No bucket in inventory")
+        filled = "water_bucket" if src["name"] == "water" else "lava_bucket"
+        self._add_to_inventory(filled, 1)
+        return BridgeResponse(
+            "success", f"Filled {filled} from {src['name']} at {x}, {y}, {z}",
+            {"filled": True, "fluid": src["name"], "position": [x, y, z],
+             "inventory_delta": {"bucket": -1, filled: 1}},
+        )
+
+    async def bucket_empty(self, x: int, y: int, z: int, item: str | None = None) -> BridgeResponse:
+        held = [b for b in self._BUCKET_FLUIDS if any(e["name"] == b for e in self._inventory)]
+        if item is not None:
+            item = item.replace("minecraft:", "")
+            if item not in self._BUCKET_FLUIDS:
+                return BridgeResponse("error", f"{item} isn't a filled bucket")
+            if item not in held:
+                return BridgeResponse("error", f"No {item} in inventory")
+            bucket = item
+        elif not held:
+            return BridgeResponse("error", "No filled bucket in inventory")
+        elif len(held) > 1:
+            return BridgeResponse("error", "inventory has both buckets — pass item= to say which to pour")
+        else:
+            bucket = held[0]
+        self._remove_from_inventory(bucket, 1)
+        self._add_to_inventory("bucket", 1)
+        fluid = self._BUCKET_FLUIDS[bucket]
+        self._nearby_blocks.append({"name": fluid, "x": x, "y": y, "z": z, "distance": 1.0})
+        return BridgeResponse(
+            "success", f"Poured {fluid} at {x}, {y}, {z}",
+            {"emptied": True, "fluid": fluid, "position": [x, y, z],
+             "inventory_delta": {bucket: -1, "bucket": 1}},
+        )
 
     async def break_block(self, x: int, y: int, z: int) -> BridgeResponse:
         for b in self._nearby_blocks:

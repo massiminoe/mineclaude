@@ -807,3 +807,72 @@ async def test_xp_level_surfaced_in_state(bridge, prims):
     bridge._xp_level = 17
     stats = await prims["getStats"]()
     assert stats["experience"]["level"] == 17
+
+
+# -- buckets ----------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fill_bucket_from_source(bridge, prims):
+    bridge._add_to_inventory("bucket", 1)
+    bridge._nearby_blocks.append({"name": "water", "x": 5, "y": 63, "z": 5, "distance": 2.0})
+
+    result = await prims["fillBucket"](5, 63, 5)
+
+    assert result["filled"] is True
+    assert result["fluid"] == "water"
+    assert result["inventory_delta"] == {"bucket": -1, "water_bucket": 1}
+    inv = await prims["getInventory"]()
+    names = {e["name"] for e in inv}
+    assert "water_bucket" in names and "bucket" not in names
+
+
+@pytest.mark.asyncio
+async def test_fill_bucket_no_source_raises(bridge, prims):
+    bridge._add_to_inventory("bucket", 1)
+    with pytest.raises(RuntimeError, match="no water/lava source"):
+        await prims["fillBucket"](5, 63, 5)
+
+
+@pytest.mark.asyncio
+async def test_fill_bucket_without_empty_bucket_raises(bridge, prims):
+    bridge._nearby_blocks.append({"name": "water", "x": 5, "y": 63, "z": 5, "distance": 2.0})
+    with pytest.raises(RuntimeError, match="No bucket"):
+        await prims["fillBucket"](5, 63, 5)
+
+
+@pytest.mark.asyncio
+async def test_empty_bucket_pours_fluid(bridge, prims):
+    bridge._add_to_inventory("water_bucket", 1)
+
+    result = await prims["emptyBucket"](10, 64, 10)
+
+    assert result["emptied"] is True
+    assert result["fluid"] == "water"
+    assert result["inventory_delta"] == {"water_bucket": -1, "bucket": 1}
+    # The poured fluid now exists in the world.
+    assert any(b["name"] == "water" and b["x"] == 10 for b in bridge._nearby_blocks)
+
+
+@pytest.mark.asyncio
+async def test_empty_bucket_ambiguous_requires_item(bridge, prims):
+    bridge._add_to_inventory("water_bucket", 1)
+    bridge._add_to_inventory("lava_bucket", 1)
+    with pytest.raises(RuntimeError, match="pass item="):
+        await prims["emptyBucket"](10, 64, 10)
+
+
+@pytest.mark.asyncio
+async def test_empty_bucket_disambiguated_by_item(bridge, prims):
+    bridge._add_to_inventory("water_bucket", 1)
+    bridge._add_to_inventory("lava_bucket", 1)
+
+    result = await prims["emptyBucket"](10, 64, 10, item="lava_bucket")
+
+    assert result["fluid"] == "lava"
+    assert result["inventory_delta"] == {"lava_bucket": -1, "bucket": 1}
+
+
+@pytest.mark.asyncio
+async def test_empty_bucket_without_filled_bucket_raises(bridge, prims):
+    with pytest.raises(RuntimeError, match="No filled bucket"):
+        await prims["emptyBucket"](10, 64, 10)

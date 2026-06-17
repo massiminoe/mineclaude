@@ -343,6 +343,43 @@ fill). Raises only on hard failures (item missing, navigation failed);
 a no-op (aim missed / not usable here) returns `used: False` rather
 than raising — check it.
 
+### `await fillBucket(x: 'int', y: 'int', z: 'int') -> 'dict'`
+
+Fill an empty bucket from the fluid SOURCE at (x, y, z).
+
+You name the source cell; the bridge does the rest — it validates the
+cell is a still *source* (not flowing — a bucket can't scoop runoff, and
+you can't tell source from flowing by block id, the bridge reads the
+fluid state), equips an empty `bucket`, walks into reach, aims at the
+source, and fills. Works for water and lava.
+
+This replaces the old `use("bucket", look_at=(x,y,z))` dance: no eye-ray
+geometry to hand-compute, and an honest error when the cell is flowing /
+empty / out of reach instead of a silent no-op.
+
+Find a source first with `getNearbyBlocks`/`findBlocks` (look for
+`"water"`/`"lava"`). Returns `{filled, fluid, position, inventory_delta}`
+(e.g. `{"bucket": -1, "water_bucket": 1}`). Raises on hard failures (no
+empty bucket, not a source, unreachable); a missed fill raises too.
+
+### `await emptyBucket(x: 'int', y: 'int', z: 'int', *, item: 'str | None' = None) -> 'dict'`
+
+Pour a filled bucket so the fluid lands in the cell (x, y, z).
+
+You name the destination air cell; the bridge picks a solid neighbour to
+pour against (the fluid spills onto the face pointing at your cell — the
+same anchor logic `placeBlock` uses), equips the bucket, walks into
+reach, and pours. The target cell must be empty/replaceable.
+
+Which bucket: auto-detected when you hold exactly one of
+`water_bucket`/`lava_bucket`. Pass `item="water_bucket"` (or
+`"lava_bucket"`) to disambiguate when you hold both.
+
+Returns `{emptied, fluid, position, inventory_delta}` (e.g.
+`{"water_bucket": -1, "bucket": 1}`). Raises on hard failures (no filled
+bucket, ambiguous without `item`, target occupied, no solid to pour
+against, unreachable).
+
 ### `await getStats() -> 'dict'`
 
 Return {health, hunger, position:{x,y,z}, biome, time}. Position is a
