@@ -18,7 +18,7 @@ Install your own reaction body for any event type with `set_handler` (see handle
 | `started_drowning` | True | 10 | True | surface, then walk to shore |
 | `started_burning` | True | 4 | True | douse in nearest water if reachable, else escape the heat source (off fire/lava/magma) |
 | `tool_broke` | True | 1 | True | record-only (you decide whether to re-equip) |
-| `hostile_nearby` | False | 3 | False | creeper → preempt + retreat to safety; any other mob → awareness only (never preempts/wakes you) |
+| `hostile_nearby` | False | 3 | False | creeper → preempt + block toward it if a shield is on hand, else retreat to safety; any other mob → awareness only (never preempts/wakes you) |
 
 ## Other events (recorded to the flushable buffer)
 

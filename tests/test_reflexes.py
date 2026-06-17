@@ -46,6 +46,7 @@ class _FakeBridge:
         }
         self._blocks = blocks or []
         self.goto_calls: list[tuple[float, float, float]] = []
+        self.block_calls: list[tuple[float, tuple[float, float, float] | None]] = []
         self.attack_calls: list[str] = []
         self.attack_blocking = False  # if True, attack() blocks forever (test cancellation)
         self.attack_stop_calls = 0
@@ -68,6 +69,11 @@ class _FakeBridge:
         self.goto_calls.append((x, y, z))
         self.call_order.append("goto")
         return BridgeResponse("success", "ok", {})
+
+    async def block(self, duration_s=2.0, look_at=None, item="shield"):
+        self.block_calls.append((duration_s, look_at))
+        self.call_order.append("block")
+        return BridgeResponse("success", "ok", {"blocking": True, "held_ms": int(duration_s * 1000)})
 
     async def attack(self, entity_id):
         self.attack_calls.append(entity_id)
@@ -335,10 +341,10 @@ async def test_hostile_nearby_non_creeper_is_informational_only():
     assert agent.bridge.goto_calls == []
 
 
-async def test_hostile_nearby_creeper_preempts_and_retreats():
-    """A creeper crossing into range is the one hostile that triggers an
-    unprompted reaction: preempt the current action and walk directly away
-    from the creeper to a safe distance, then signal recovery via resume."""
+async def test_hostile_nearby_creeper_without_shield_retreats():
+    """A creeper crossing into range with no shield in the pack triggers the
+    fallback: preempt the current action and walk directly away from the
+    creeper to a safe distance, then signal recovery via resume."""
     bridge = _FakeBridge(status={"position": {"x": 10.0, "y": 64.0, "z": 5.0}, "health": 18.0})
     agent = FakeAgent(bridge)
     reg = ReflexRegistry(agent)
@@ -355,6 +361,7 @@ async def test_hostile_nearby_creeper_preempts_and_retreats():
     await reg.flush()
 
     assert agent.preempt_calls == 1
+    assert bridge.block_calls == []  # no shield → no block
     assert len(bridge.goto_calls) == 1
     fx, fy, fz = bridge.goto_calls[0]
     assert fx > 10.0  # fled in +x, away from the creeper
@@ -362,6 +369,40 @@ async def test_hostile_nearby_creeper_preempts_and_retreats():
     assert fy == 64.0
     assert agent.resume_calls == ["hostile_nearby"]
     # The fire is still recorded for situational awareness.
+    assert reg.recent[0]["type"] == "hostile_nearby"
+
+
+async def test_hostile_nearby_creeper_with_shield_blocks():
+    """With a shield in the pack the creeper reaction stands its ground and
+    blocks toward the creeper instead of fleeing — no goto, aimed at the
+    creeper's position, then signal recovery via resume."""
+    bridge = _FakeBridge(status={
+        "position": {"x": 10.0, "y": 64.0, "z": 5.0},
+        "health": 18.0,
+        "inventory": [
+            {"name": "cobblestone", "count": 12, "slot": 0},
+            {"name": "shield", "count": 1, "slot": 8},
+        ],
+    })
+    agent = FakeAgent(bridge)
+    reg = ReflexRegistry(agent)
+    register_default_handlers(reg)
+
+    data = {
+        "kind": "creeper",
+        "entity_id": 7,
+        "distance": 6.0,
+        "pos": {"x": 4.0, "y": 64.0, "z": 5.0},
+    }
+    await reg.dispatch("hostile_nearby", data)
+    await reg.flush()
+
+    assert agent.preempt_calls == 1
+    assert bridge.goto_calls == []  # held ground, did not flee
+    assert len(bridge.block_calls) == 1
+    _duration, look_at = bridge.block_calls[0]
+    assert look_at == (4.0, 64.0, 5.0)  # aimed at the creeper
+    assert agent.resume_calls == ["hostile_nearby"]
     assert reg.recent[0]["type"] == "hostile_nearby"
 
 

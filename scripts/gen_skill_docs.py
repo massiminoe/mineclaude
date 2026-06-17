@@ -88,7 +88,7 @@ def gen_events() -> str:
         "started_drowning": "surface, then walk to shore",
         "started_burning": "douse in nearest water if reachable, else escape the heat source (off fire/lava/magma)",
         "tool_broke": "record-only (you decide whether to re-equip)",
-        "hostile_nearby": "creeper → preempt + retreat to safety; any other mob → awareness only (never preempts/wakes you)",
+        "hostile_nearby": "creeper → preempt + block toward it if a shield is on hand, else retreat to safety; any other mob → awareness only (never preempts/wakes you)",
     }
     for et in REFLEX_EVENT_TYPES:
         h = reg.get(et)

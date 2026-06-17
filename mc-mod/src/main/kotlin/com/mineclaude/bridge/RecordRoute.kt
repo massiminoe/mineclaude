@@ -15,13 +15,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  * One ffmpeg taps the `:99` framebuffer (the same read-only x11grab as
  * `/screenshot` + `/video/stream`, so the three coexist) and writes ONE
  * continuous file per recording — not the rotating 5-minute segments the
- * old `entrypoint.sh` recorder produced. The container is **mp4** (H.264) for
- * native playback — QuickTime opens it directly, no VLC/IINA needed. Accepted
- * trade-off: a clean stop/roll/shutdown finalizes the moov atom via SIGTERM,
- * but an abrupt SIGKILL (hard crash before the shutdown hook runs) can leave
- * the still-open file unplayable. Encoder settings (5 fps, libx264 CRF 28,
- * keyframe every 5 s, `MONITOR_VIDEO_FILTER` brighten) match the old recorder
- * so the only behavioural change from it is "one file instead of many".
+ * old `entrypoint.sh` recorder produced. The container is **fragmented mp4**
+ * (H.264, `+frag_keyframe+empty_moov`) for native playback — QuickTime opens
+ * it directly, no VLC/IINA needed. Fragmenting means a small moov is written
+ * up front and each GOP is flushed as a self-contained fragment, so there's no
+ * trailing moov atom to lose: a file killed mid-write (hard crash, or a
+ * `docker compose down` that SIGKILLs the container before the JVM's
+ * CLIENT_STOPPING hook can stop us cleanly) stays playable up to the last
+ * completed fragment. Encoder settings (5 fps, libx264 CRF 28, keyframe every
+ * 5 s, `MONITOR_VIDEO_FILTER` brighten) match the old recorder so the only
+ * behavioural change from it is "one file instead of many".
  *
  * Lifecycle:
  *   - **Auto-start:** when `RECORD_VIDEO=1`, the recorder kicks off the first
@@ -38,9 +41,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     never cold-starts. Use /record/start to begin from idle.
  *   - `GET  /record/status` — `{recording, file, started_at_ms, duration_s, dir}`.
  *
- * Stop/roll send SIGTERM (`Process.destroy`) so ffmpeg writes the mp4 moov
- * atom cleanly, with a [STOP_GRACE_S]s grace before SIGKILL. Launching
- * ffmpeg needs no MC state, so the route handlers run straight on the HTTP
+ * Stop/roll send SIGTERM (`Process.destroy`) so ffmpeg flushes the final
+ * fragment cleanly, with a [STOP_GRACE_S]s grace before SIGKILL (fragmenting
+ * means an ungraceful exit only loses the in-flight fragment, not the file).
+ * Launching ffmpeg needs no MC state, so the route handlers run straight on the HTTP
  * worker pool with no tick-thread hop (same as ScreenshotRoute /
  * VideoStreamRoute); auto-start offloads to a daemon thread to keep the
  * render thread free.
@@ -181,6 +185,13 @@ object RecordRoute {
             listOf(
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", CRF.toString(),
                 "-pix_fmt", "yuv420p", "-g", "25", "-an",
+                // Fragmented mp4: a small moov is written up front and each GOP is
+                // flushed as a self-contained fragment, so there's NO trailing moov
+                // atom to lose. A SIGKILLed file (hard crash / `docker compose down`
+                // before the JVM's CLIENT_STOPPING shutdown can SIGTERM us) stays
+                // playable up to the last completed fragment — no clean stop needed.
+                // fMP4 is the HLS/DASH container, so QuickTime still opens it natively.
+                "-movflags", "+frag_keyframe+empty_moov", "-flush_packets", "1",
                 path,
             )
         )
@@ -199,7 +210,7 @@ object RecordRoute {
     private fun stopRecording() {
         val p = proc ?: return
         if (p.isAlive) {
-            // SIGTERM → ffmpeg flushes and writes the mp4 moov atom, then exits.
+            // SIGTERM → ffmpeg flushes the final fragment and trailer, then exits.
             p.destroy()
             if (!p.waitFor(STOP_GRACE_S, TimeUnit.SECONDS)) {
                 log.warn("recorder didn't exit within {}s of SIGTERM, forcing", STOP_GRACE_S)
