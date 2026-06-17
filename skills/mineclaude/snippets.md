@@ -147,28 +147,48 @@ log(f"Items: {len(inv)}")
 return "Status check complete"
 ```
 
-## Fluids, obsidian, and a nether portal (the unified `use`)
+## Fluids, obsidian, and a nether portal
 
-`use(item, look_at=(x,y,z))` is the one right-click for buckets, torches, flint
-& steel, doors — it aims the eye and dispatches on the real raycast. The key is
-*where you aim*: a point on the water source fills, a point on a block face
-places against that face.
+For **buckets, use the dedicated `fillBucket` / `emptyBucket` primitives**, not
+`use(...)`. They own the finicky aim geometry and verify the result. Do NOT try
+to cast obsidian with `use("water_bucket", look_at=lava)` — that overwrites the
+lava cell with water (no obsidian), and on recessed/open pools the eye-raycast
+keeps missing into the rim or the block under your feet. `use` stays for
+torches, flint & steel, and doors (aim at a block face).
+
+**How obsidian actually forms** (learned the hard way — read before you try):
+- Obsidian appears only when water flows **down onto a still lava SOURCE** from a
+  *separate* cell above. Pouring water straight into the lava cell just replaces
+  the lava with water — no obsidian.
+- **Flowing lava + water = COBBLESTONE.** Only still *source* blocks convert. You
+  also can't `fillBucket` flowing lava ("fluid is flowing") — scoop sources only.
+- **Lava on open ground spreads ~4 blocks** → flowing lava (a hazard, and the
+  wrong block). You must *contain* it. Don't fight natural recessed lava pools —
+  build your own contained source.
+- `emptyBucket` needs `item=` when you hold **both** a `water_bucket` and a
+  `lava_bucket` (else it errors asking which to pour).
 
 ```python
-# Cast obsidian: pour water onto a lava SOURCE (flowing lava -> cobblestone).
-# One pour flows across a pool and converts every source it touches.
-r = await use("bucket", look_at=(-10.0, 68.9, 62.5))   # fill from the water surface
-log(r["inventory_delta"])                               # {"water_bucket": 1, "bucket": -1}
-await use("water_bucket", look_at=(-13.0, 68.9, 62.0))  # pour at the lava pool edge
-await use("bucket", look_at=(-13.0, 68.9, 62.0))        # scoop the source back (clears flow)
-
-# Mine the obsidian (diamond pickaxe; ~7-10s each). breakBlockAt self-navigates.
+# Cast obsidian — the reliable recipe: a 2-deep walled pit contains both fluids,
+# water poured ABOVE the lava flows down onto the source -> obsidian. Validated.
+bx, bz, by = -77, -113, 61          # column + floor y (lava goes at by)
 await equip("diamond_pickaxe")
-for x in range(-15, -12):
-    for z in range(62, 65):
-        await breakBlockAt(x, 68, z)
-await collectItems(10)
+await breakBlockAt(bx, by + 1, bz)  # dig the pit 2 deep so the walls contain it
+await breakBlockAt(bx, by, bz)
+
+await emptyBucket(bx, by, bz, item="lava_bucket")            # contained lava source
+r = await emptyBucket(bx, by + 1, bz, item="water_bucket")   # flows DOWN onto it
+log(r["verified"])                                            # confirm it took
+
+await fillBucket(bx, by + 1, bz)    # recover the water — reusable forever
+await breakBlockAt(bx, by, bz)      # mine the obsidian (~9s, diamond pick)
+await collectItems(5)
+return "1 obsidian cast"
 ```
+
+To batch a portal's 10–14 obsidian: refill empty buckets by `fillBucket`-ing
+**still lava sources** at a lava lake (flowing lava won't scoop), then run the
+pit recipe per lava bucket. One obsidian per lava bucket; the water is reused.
 
 ```python
 # Build + light a portal. Place bottom row -> side columns -> top row so every

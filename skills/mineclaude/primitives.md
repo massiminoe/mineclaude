@@ -382,6 +382,13 @@ Which bucket: auto-detected when you hold exactly one of
 `water_bucket`/`lava_bucket`. Pass `item="water_bucket"` (or
 `"lava_bucket"`) to disambiguate when you hold both.
 
+Casting obsidian: obsidian forms only when water flows DOWN onto a still
+lava SOURCE from a separate cell — pour lava into the bottom of a 2-deep
+walled pit, then pour water into the cell directly above it. Pouring
+water straight into the lava cell just replaces it (no obsidian), and
+water on FLOWING lava makes cobblestone. Lava on open ground spreads, so
+contain it. Recover the water afterward with `fillBucket` (reusable).
+
 Returns `{emptied, fluid, requested, placed_at, verified,
 inventory_delta}`. `placed_at` is where the fluid actually went (not an
 echo of the request) and `verified` is True only when a real fluid
