@@ -540,6 +540,8 @@ class MockBridgeClient:
             "held_slot": self._held_slot,
             "equipped": dict(self._equipped),
             "experience": {"level": self._xp_level, "progress": 0.0, "total": 0},
+            "on_fire": False,
+            "fire_ticks": 0,
         }
         if include_events:
             data["events"] = []
@@ -668,7 +670,8 @@ class MockBridgeClient:
         self._nearby_blocks.append({"name": fluid, "x": x, "y": y, "z": z, "distance": 1.0})
         return BridgeResponse(
             "success", f"Poured {fluid} at {x}, {y}, {z}",
-            {"emptied": True, "fluid": fluid, "position": [x, y, z],
+            {"emptied": True, "fluid": fluid, "requested": [x, y, z],
+             "placed_at": [x, y, z], "verified": True,
              "inventory_delta": {bucket: -1, "bucket": 1}},
         )
 

@@ -1,10 +1,18 @@
 package com.mineclaude.bridge
 
 import com.sun.net.httpserver.HttpExchange
+import net.minecraft.block.FluidFillable
 import net.minecraft.client.MinecraftClient
+import net.minecraft.fluid.Fluid
+import net.minecraft.fluid.Fluids
 import net.minecraft.registry.Registries
 import net.minecraft.util.Hand
+import net.minecraft.util.hit.BlockHitResult
+import net.minecraft.util.hit.HitResult
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.Direction
+import net.minecraft.util.math.Vec3d
+import net.minecraft.world.World
 import org.slf4j.LoggerFactory
 
 /**
@@ -162,17 +170,7 @@ object BucketRoute {
         }
         if (targetErr != null) return HttpBridge.err(targetErr)
 
-        // Need a solid neighbour to click against; the fluid spills onto the
-        // face pointing at the target — same anchor logic /place uses.
-        val anchor = TickThread.submitAndWait(timeoutMs = 1_000) {
-            MinecraftClient.getInstance().world ?: return@submitAndWait null
-            WorldHelpers.findAdjacentSolidBlock(pos)
-        } ?: return HttpBridge.err(
-            "no solid block beside (${pos.x}, ${pos.y}, ${pos.z}) to pour against — fluid needs a " +
-                "surface to spill from; place a block first or pick an edge cell",
-        )
-
-        return doEmpty(pos, bucket, fluid, anchor)
+        return doEmpty(pos, bucket, fluid)
     }
 
     private sealed interface BucketChoice {
@@ -209,54 +207,154 @@ object BucketRoute {
         }
     }
 
-    private fun doEmpty(
-        pos: BlockPos,
-        bucket: String,
-        fluid: String,
-        anchor: WorldHelpers.Adjacent,
-    ): BridgeResponse {
+    private sealed interface PourOutcome {
+        data class Fail(val message: String) : PourOutcome
+        /** No candidate sightline hit any block in reach. */
+        data object Blocked : PourOutcome
+        /** A sightline exists, but vanilla would pour into [landsAt], not the target. */
+        data class Diverts(val landsAt: BlockPos) : PourOutcome
+        /** A clean aim was found and the pour was fired. */
+        data object Poured : PourOutcome
+    }
+
+    private fun doEmpty(pos: BlockPos, bucket: String, fluid: String): BridgeResponse {
         UseRoute.ensureMainhandHolds(bucket)?.let { return HttpBridge.err(it) }
 
         navigateIfNeeded(pos)?.let { return it }
 
+        val fluidObj = if (fluid == "water") Fluids.WATER else Fluids.LAVA
+
+        // A filled BucketItem ignores any hit we'd hand interactBlock — it runs
+        // its OWN eye-raycast (FluidHandling.NONE) inside use(). So we can't
+        // inject a placement; we can only aim the head and let vanilla resolve.
+        // To stop the fluid landing somewhere we didn't ask for (the rim of a
+        // pit, a near lip), we PREVIEW: for each candidate aim, raycast exactly
+        // as vanilla will and compute the cell it would place into. We only fire
+        // when a candidate resolves to the target — same tick, same rotation, so
+        // the commit raycast matches the preview. If none does, we DON'T pour
+        // (no silent mess); we report where the open sightline would have gone.
         val before = snapshotCounts()
-        TickThread.submitAndWait(timeoutMs = 2_000) {
+        val outcome = TickThread.submitAndWait(timeoutMs = 2_000) {
             val mc = MinecraftClient.getInstance()
-            val player = mc.player ?: return@submitAndWait Unit
-            val mgr = mc.interactionManager ?: return@submitAndWait Unit
+            val player = mc.player ?: return@submitAndWait PourOutcome.Fail("no player")
+            val world = mc.world ?: return@submitAndWait PourOutcome.Fail("no world")
+            val mgr = mc.interactionManager ?: return@submitAndWait PourOutcome.Fail("no interaction manager")
             WorldHelpers.ensureNoScreenOpen(player)
-            // Aim at the point on the anchor's face that points at the target,
-            // so BucketItem's NONE raycast hits the solid and pours into [pos].
-            val face = anchor.face
-            WorldHelpers.lookAtPosition(
-                player,
-                anchor.pos.x + 0.5 + face.offsetX * 0.5,
-                anchor.pos.y + 0.5 + face.offsetY * 0.5,
-                anchor.pos.z + 0.5 + face.offsetZ * 0.5,
-            )
-            mgr.interactItem(player, Hand.MAIN_HAND)
-            player.swingHand(Hand.MAIN_HAND)
-            Unit
+
+            var diverted: BlockPos? = null
+            for (aim in pourCandidates(world, pos)) {
+                WorldHelpers.lookAtPosition(player, aim.x, aim.y, aim.z)
+                val hr = player.raycast(WorldHelpers.BLOCK_REACH, 1.0f, /*includeFluids=*/ false)
+                if (hr.type != HitResult.Type.BLOCK) continue
+                val landsAt = predictPlacement(world, hr as BlockHitResult, fluidObj)
+                if (landsAt == pos) {
+                    // Commit on this rotation — vanilla's use() raycast re-runs
+                    // from here and lands the same cell.
+                    mgr.interactItem(player, Hand.MAIN_HAND)
+                    player.swingHand(Hand.MAIN_HAND)
+                    return@submitAndWait PourOutcome.Poured
+                }
+                if (diverted == null) diverted = landsAt
+            }
+            if (diverted != null) PourOutcome.Diverts(diverted) else PourOutcome.Blocked
         }
+
+        when (outcome) {
+            is PourOutcome.Fail -> return HttpBridge.err(outcome.message)
+            is PourOutcome.Blocked -> return HttpBridge.err(
+                "nothing in reach to pour against at (${pos.x}, ${pos.y}, ${pos.z}) — a bucket needs a " +
+                    "solid face beside the cell; move closer or place a block to spill from",
+            )
+            is PourOutcome.Diverts -> {
+                val d = outcome.landsAt
+                return HttpBridge.err(
+                    "couldn't line up a pour into (${pos.x}, ${pos.y}, ${pos.z}) from here — the open " +
+                        "sightline lands at (${d.x}, ${d.y}, ${d.z}) instead (a lip or wall deflects " +
+                        "it). Break that edge, stand on a different side, or pick a more open cell.",
+                )
+            }
+            is PourOutcome.Poured -> Unit
+        }
+
         Thread.sleep(POST_USE_SETTLE_MS)
         val delta = computeDelta(before, snapshotCounts())
-
         val emptied = (delta[bucket] ?: 0) < 0
+
+        // Verify a real source of our fluid now sits in the target — the
+        // authoritative truth-in-return, not an echo of the request.
+        val landed = TickThread.submitAndWait(timeoutMs = 1_000) {
+            val w = MinecraftClient.getInstance().world ?: return@submitAndWait false
+            val fs = w.getFluidState(pos)
+            !fs.isEmpty && fs.fluid == fluidObj && fs.isStill
+        }
+
         val data = mutableMapOf<String, Any>(
             "emptied" to emptied,
             "fluid" to fluid,
-            "position" to listOf(pos.x, pos.y, pos.z),
+            "requested" to listOf(pos.x, pos.y, pos.z),
+            "placed_at" to listOf(pos.x, pos.y, pos.z),
+            "verified" to landed,
         )
         if (delta.isNotEmpty()) data["inventory_delta"] = delta
-        return if (emptied) {
-            log.info("bucket: poured {} into {}", fluid, pos)
-            HttpBridge.ok(data, "Poured $fluid at ${pos.x}, ${pos.y}, ${pos.z}")
-        } else {
-            HttpBridge.err(
+        return when {
+            emptied && landed -> {
+                log.info("bucket: poured {} into {} (verified source)", fluid, pos)
+                HttpBridge.ok(data, "Poured $fluid at ${pos.x}, ${pos.y}, ${pos.z}")
+            }
+            emptied -> HttpBridge.partial(
+                data,
+                "Emptied $bucket aimed at (${pos.x}, ${pos.y}, ${pos.z}) but couldn't confirm a $fluid " +
+                    "source there — it may have flowed off or the cell was obstructed",
+            )
+            else -> HttpBridge.err(
                 "bucket didn't empty — the pour didn't take (still holding $bucket); cell may be " +
                     "obstructed or out of reach",
             )
         }
+    }
+
+    /**
+     * Aim points to try for pouring into [target], in preference order. Each
+     * adjacent solid yields an aim at the face it shares with [target] (so a
+     * NONE raycast hitting that face spills the fluid into [target]); we add the
+     * cell centre + floor point last for open-ground pours. The caller previews
+     * each with a real raycast and keeps the first that resolves to [target] —
+     * so a pit's FAR wall (clean downward line) wins over the near lip the bot
+     * stands on (which the preview rejects). DOWN is first: "pour on the ground"
+     * is the common case and the floor is the natural anchor.
+     */
+    private fun pourCandidates(world: World, target: BlockPos): List<Vec3d> {
+        val out = ArrayList<Vec3d>()
+        for (d in Direction.values()) {
+            val neighbour = target.offset(d)
+            if (world.getBlockState(neighbour).isReplaceable) continue // air/fluid/grass — not an anchor
+            val faceTowardTarget = d.opposite
+            out.add(
+                Vec3d(
+                    neighbour.x + 0.5 + faceTowardTarget.offsetX * 0.5,
+                    neighbour.y + 0.5 + faceTowardTarget.offsetY * 0.5,
+                    neighbour.z + 0.5 + faceTowardTarget.offsetZ * 0.5,
+                ),
+            )
+        }
+        out.add(Vec3d(target.x + 0.5, target.y + 0.5, target.z + 0.5))
+        out.add(Vec3d(target.x + 0.5, target.y + 0.05, target.z + 0.5))
+        return out
+    }
+
+    /**
+     * The cell vanilla [net.minecraft.item.BucketItem.use] would place its fluid
+     * into for a given block [hit], mirroring `FluidModificationItem.placeFluid`:
+     * the hit block itself if it can hold the fluid (replaceable, or a
+     * waterloggable [FluidFillable]), otherwise the neighbour on the hit face.
+     */
+    private fun predictPlacement(world: World, hit: BlockHitResult, fluid: Fluid): BlockPos {
+        val p = hit.blockPos
+        val state = world.getBlockState(p)
+        val block = state.block
+        val canHoldAtHit = state.isReplaceable ||
+            (block is FluidFillable && block.canFillWithFluid(null, world, p, state, fluid))
+        return if (canHoldAtHit) p else p.offset(hit.side)
     }
 
     // -- shared helpers ---------------------------------------------------------

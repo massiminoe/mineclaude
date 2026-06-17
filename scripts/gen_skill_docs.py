@@ -86,6 +86,7 @@ def gen_events() -> str:
         "damage_taken": "hostile mob → retaliate (HP>6) or flee (HP≤6); fall/fire/player → record-only",
         "entered_lava": "walk to nearest shore",
         "started_drowning": "surface, then walk to shore",
+        "started_burning": "douse in nearest water if reachable, else escape the heat source (off fire/lava/magma)",
         "tool_broke": "record-only (you decide whether to re-equip)",
         "hostile_nearby": "creeper → preempt + retreat to safety; any other mob → awareness only (never preempts/wakes you)",
     }

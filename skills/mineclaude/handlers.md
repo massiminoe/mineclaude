@@ -34,7 +34,7 @@ handler task that called it — so a handler can interrupt the world and then ac
 the same body.
 
 - **`preempts=True`** — the runtime calls `interrupt()` *before* your body runs.
-  Use when the event always means "drop everything now" (lava, drowning, death).
+  Use when the event always means "drop everything now" (lava, drowning, fire, death).
   Your body starts with the slot held and the world frozen.
 - **`preempts=False`** — your body runs alongside whatever's happening. Use for
   events that only *sometimes* warrant interrupting (a chat message that might be

@@ -58,6 +58,8 @@ object PlayerStatusRoutes {
                 "biome" to "unknown",
                 "time" to 0,
                 "experience" to mapOf("level" to 0, "progress" to 0.0, "total" to 0),
+                "on_fire" to false,
+                "fire_ticks" to 0,
             )
         }
 
@@ -99,6 +101,13 @@ object PlayerStatusRoutes {
             // even with a full armor set on. `hand` is the live mainhand item,
             // so it also exposes "I'm mining with a torch, not a pickaxe".
             "equipped" to equippedView(player),
+            // Fire state — surfaced so the agent sees it's burning directly
+            // (it used to infer this from the damage log). `on_fire` is the
+            // live flag; `fire_ticks` is the remaining burn counter that ticks
+            // down (~20 ticks = 1 damage), so a small value means "about to go
+            // out", a large one (lava sets ~300) means "keep burning".
+            "on_fire" to player.isOnFire,
+            "fire_ticks" to player.fireTicks,
         )
     }
 

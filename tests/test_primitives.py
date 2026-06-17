@@ -848,6 +848,10 @@ async def test_empty_bucket_pours_fluid(bridge, prims):
 
     assert result["emptied"] is True
     assert result["fluid"] == "water"
+    # placed_at is the truthful landing cell, not just an echo, and verified.
+    assert result["placed_at"] == [10, 64, 10]
+    assert result["requested"] == [10, 64, 10]
+    assert result["verified"] is True
     assert result["inventory_delta"] == {"water_bucket": -1, "bucket": 1}
     # The poured fluid now exists in the world.
     assert any(b["name"] == "water" and b["x"] == 10 for b in bridge._nearby_blocks)

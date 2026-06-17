@@ -114,6 +114,19 @@ SHORE_MAX_DISTANCE = 12
 # decision, not a reflex one. 4 covers a normal pool/lake bank.
 SHORE_MAX_Y_DELTA = 4
 
+# Fire-douse parameters. On ignition the bot prefers to reach water (it cancels
+# fire ticks the instant the player touches it) before falling back to dry safe
+# ground. Same query radius as the shore finder; we only consider water that's
+# close + at a similar Y so the reflex never paths the bot off a cliff or across
+# a chasm just to douse — a far/awkward source is Claude's call, not a reflex's.
+DOUSE_SEARCH_RADIUS = 14
+DOUSE_MAX_DISTANCE = 10
+DOUSE_MAX_Y_DELTA = 4
+
+# Block names (no `minecraft:` prefix) that extinguish fire on contact. Both the
+# still source and the flowing variant douse, so we accept either.
+WATER_BLOCKS = frozenset({"water", "flowing_water"})
+
 
 # Weapon priority for damage_taken retaliation. Sword tier first (highest DPS
 # under the looping /attack — sword has 1.6 atk/sec vs axe's 1.0, so sword
@@ -416,6 +429,7 @@ REFLEX_EVENT_TYPES = (
     "damage_taken",
     "entered_lava",
     "started_drowning",
+    "started_burning",
     "tool_broke",
     "hostile_nearby",
 )
@@ -678,6 +692,72 @@ async def started_drowning_handler(controller: "Controller", data: dict) -> None
     await _escape_to_shore(controller)
 
 
+async def _walk_into_water(controller: "Controller") -> bool:
+    """Find the nearest reachable water cell and walk into it to extinguish.
+
+    Water cancels fire ticks the instant the player touches it, so a single
+    step into a pool/stream is the fastest douse. Mirrors `_escape_to_shore`'s
+    machinery but targets water instead of avoiding it: `/nearby/blocks` returns
+    distance-sorted, so the first qualifying cell is the closest.
+
+    Returns True if we issued a goto toward water (handled), False if no
+    suitable water was in range — the caller then falls back to escaping the
+    heat source. Deep water risks drowning, but the drowning reflex (10s air
+    buffer) covers that, and resumes_on_complete wakes Claude the moment this
+    douse-goto returns, so the bot won't linger submerged.
+    """
+    try:
+        status = (await controller.bridge.get_status()).data
+    except Exception:
+        return False
+    pos = status.get("position") or {}
+    py = pos.get("y")
+    if py is None:
+        return False
+
+    try:
+        resp = await controller.bridge.get_nearby_blocks(radius=DOUSE_SEARCH_RADIUS)
+    except Exception:
+        return False
+    blocks = resp.data.get("blocks") or []
+
+    for b in blocks:
+        if b.get("distance", float("inf")) > DOUSE_MAX_DISTANCE:
+            break  # sorted ascending — nothing closer remains
+        if b.get("name", "") not in WATER_BLOCKS:
+            continue
+        x, y, z = b["x"], b["y"], b["z"]
+        if abs(y - py) > DOUSE_MAX_Y_DELTA:
+            continue
+        try:
+            await controller.bridge.goto(float(x), float(y), float(z))
+        except Exception:
+            logger.exception("douse goto failed")
+        return True
+    return False
+
+
+async def started_burning_handler(controller: "Controller", data: dict) -> None:
+    """On fire — douse in water if any is reachable, else escape the heat source.
+
+    Preempt has already fired (preempts=True). Two-tier recovery:
+      1. Walk into the nearest water within DOUSE_MAX_DISTANCE — water
+         extinguishes fire on contact, the cleanest stop.
+      2. No water in range → walk to the nearest safe non-hazard tile (the same
+         shore finder lava/drowning use). This gets the bot OFF a fire/lava/
+         magma source so a sustained burn can't keep re-igniting; a one-off
+         ignition (stepped through a campfire) then simply ticks down on its own.
+
+    Both are best-effort. If neither finds a target the bot stays put, Claude
+    sees the `started_burning` reflex (and the new player.on_fire flag) on the
+    next gameState, and takes over. When the fire came from lava, entered_lava
+    fires a couple ticks later and supersedes this via latest-wins dispatch.
+    """
+    if await _walk_into_water(controller):
+        return
+    await _escape_to_shore(controller)
+
+
 def register_default_handlers(registry: ReflexRegistry) -> None:
     """Register every v1 reflex handler with its preempt + cooldown policy.
 
@@ -689,6 +769,11 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
       * entered_lava / started_drowning: always preempt + escape. The
         handler awaits goto arrival (bridge.goto polls) before returning,
         so resume fires once the bot is actually on shore.
+      * started_burning: always preempt + recover (douse in water, else
+        escape the heat source). Same await-arrival-then-resume model as the
+        other hazards. cooldown_s=4 so a sustained burn (lava sets ~15s of
+        fire) doesn't re-trigger the recovery every re-ignition; the edge is
+        re-armed mod-side only once the fire actually goes out.
       * tool_broke: preempt only — handler is a stub. Resume fires
         immediately so Claude can decide whether to re-equip and continue.
       * hostile_nearby: mostly informational. preempts=False and
@@ -720,6 +805,13 @@ def register_default_handlers(registry: ReflexRegistry) -> None:
         handle=started_drowning_handler,
         preempts=True,
         cooldown_s=10.0,
+        resumes_on_complete=True,
+    ))
+    registry.register(ReflexHandler(
+        event_type="started_burning",
+        handle=started_burning_handler,
+        preempts=True,
+        cooldown_s=4.0,
         resumes_on_complete=True,
     ))
     registry.register(ReflexHandler(

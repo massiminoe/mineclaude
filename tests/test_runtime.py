@@ -29,6 +29,8 @@ def _default_status() -> dict:
         "inventory": [{"slot": 0, "name": "oak_log", "count": 12}],
         "equipped": {"hand": "iron_pickaxe"},
         "held_slot": 3,
+        "on_fire": True,
+        "fire_ticks": 80,
     }
 
 
@@ -206,6 +208,9 @@ async def test_get_state_shape():
     }
     # held_slot (selected hotbar index) is carried into the player block.
     assert state.player["held_slot"] == 3
+    # Fire state is carried into the player block (started_burning's poll view).
+    assert state.player["on_fire"] is True
+    assert state.player["fire_ticks"] == 80
     assert state.action["state"] == "idle"
     assert state.events == []
     assert state.events_truncated is False

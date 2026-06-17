@@ -48,6 +48,13 @@ def build_game_state(
         # Experience level — the spendable currency for anvil + enchanting.
         # None when the bridge doesn't report it (pre-world / old mock).
         "xp_level": xp.get("level"),
+        # Fire state — surfaced so the agent reads "I'm burning" directly
+        # instead of inferring it from the damage log. `on_fire` is the live
+        # flag; `fire_ticks` counts the remaining burn down (~20 ticks = 1
+        # damage), so small = about to go out, large = keep burning. The
+        # started_burning reflex acts on the rising edge; this is the poll view.
+        "on_fire": status.get("on_fire"),
+        "fire_ticks": status.get("fire_ticks"),
     }
     inventory = list(status.get("inventory") or [])
     return GameState(

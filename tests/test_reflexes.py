@@ -29,6 +29,7 @@ from mineclaude.reflexes import (
     format_recent,
     pick_best_weapon,
     register_default_handlers,
+    started_burning_handler,
     started_drowning_handler,
     stub_handler,
     timed_op,
@@ -290,6 +291,7 @@ async def test_register_default_handlers_preempt_flags():
     assert by_type["damage_taken"].preempts is False  # handler decides
     assert by_type["entered_lava"].preempts is True
     assert by_type["started_drowning"].preempts is True
+    assert by_type["started_burning"].preempts is True
     assert by_type["tool_broke"].preempts is True
     assert by_type["hostile_nearby"].preempts is False  # informational
 
@@ -302,7 +304,7 @@ async def test_register_default_handlers_recovery_handlers_resume():
     agent = FakeAgent()
     reg = ReflexRegistry(agent)
     register_default_handlers(reg)
-    recovery = ("damage_taken", "entered_lava", "started_drowning", "tool_broke")
+    recovery = ("damage_taken", "entered_lava", "started_drowning", "started_burning", "tool_broke")
     for et in recovery:
         assert reg._handlers[et].resumes_on_complete is True, et
     assert reg._handlers["hostile_nearby"].resumes_on_complete is False
@@ -941,6 +943,46 @@ async def test_started_drowning_still_walks_when_surface_fails():
     agent = FakeAgent(bridge)
     await started_drowning_handler(agent, {})
     assert bridge.goto_calls == [(2.0, 62.0, 0.0)]
+
+
+async def test_started_burning_douses_in_nearest_water():
+    """On fire with water in range → walk straight into the nearest water cell
+    (water extinguishes on contact), NOT to dry shore."""
+    blocks = [
+        _block("fire", 0, 64, 0, 0.5),     # standing in fire
+        _block("dirt", 1, 63, 0, 1.5),     # dry shore, but water is closer below
+        _block("water", 0, 64, 2, 2.0),    # nearest water
+        _block("water", 0, 64, 3, 3.0),
+    ]
+    bridge = _FakeBridge({"position": {"x": 0.0, "y": 64.0, "z": 0.0}}, blocks=blocks)
+    agent = FakeAgent(bridge)
+    await started_burning_handler(agent, {})
+    # Goto the water cell itself (y unchanged — we step into it).
+    assert bridge.goto_calls == [(0.0, 64.0, 2.0)]
+
+
+async def test_started_burning_escapes_to_shore_when_no_water():
+    """On fire with no water reachable → fall back to the shore finder so the
+    bot gets off the fire/lava source (escape avoids hazard blocks)."""
+    blocks = [
+        _block("magma_block", 0, 63, 0, 0.5),  # standing on a heat source
+        _block("dirt", 2, 63, 0, 2.5),         # safe shore: y+1/+2 air
+    ]
+    bridge = _FakeBridge({"position": {"x": 0.0, "y": 64.0, "z": 0.0}}, blocks=blocks)
+    agent = FakeAgent(bridge)
+    await started_burning_handler(agent, {})
+    # Shore finder targets y+1 (top of the block, where the player stands).
+    assert bridge.goto_calls == [(2.0, 64.0, 0.0)]
+
+
+async def test_started_burning_far_water_is_ignored():
+    """Water beyond DOUSE_MAX_DISTANCE isn't a douse target — the reflex won't
+    path the bot across the map; with no closer safe tile it stays put."""
+    blocks = [_block("water", 0, 64, 30, 30.0)]
+    bridge = _FakeBridge({"position": {"x": 0.0, "y": 64.0, "z": 0.0}}, blocks=blocks)
+    agent = FakeAgent(bridge)
+    await started_burning_handler(agent, {})
+    assert bridge.goto_calls == []
 
 
 async def test_entered_lava_handler_uses_shore_finder():

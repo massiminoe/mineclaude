@@ -29,6 +29,10 @@ import org.slf4j.LoggerFactory
  *                        is needed)
  *   - started_drowning  (END_CLIENT_TICK edge on air ≤ 60 while submerged;
  *                        same await-completion model as entered_lava)
+ *   - started_burning   (END_CLIENT_TICK edge on player.isOnFire rising;
+ *                        no debounce — ignition is a sustained state. The
+ *                        agent's reflex douses/escapes; entered_lava
+ *                        supersedes it when the fire came from lava)
  *   - tool_broke        (END_CLIENT_TICK detects the held damageable
  *                        stack vanishing without a slot change)
  *   - hostile_nearby    (END_CLIENT_TICK edge on a SpawnGroup.MONSTER mob
@@ -64,6 +68,10 @@ object EventBus {
     // damage starts at 0 — gives a handler real time to react.
     @Volatile private var wasDrowning = false
     private const val DROWNING_AIR_THRESHOLD = 60
+
+    // On-fire edge state. Re-arms on the falling edge so a fresh ignition
+    // after the previous burn ends fires a new event.
+    @Volatile private var wasOnFire = false
 
     // Damage attribution. Mixin on the damage-tilt packet handler stashes
     // [pendingDamage] off the tick thread; END_CLIENT_TICK reads + clears
@@ -119,7 +127,7 @@ object EventBus {
     fun register() {
         registerChat()
         registerTickStateMachines()
-        log.info("EventBus: hooked chat / death / lava / drowning / damage / tool / hostile / advancement")
+        log.info("EventBus: hooked chat / death / lava / drowning / fire / damage / tool / hostile / advancement")
     }
 
     /**
@@ -206,6 +214,7 @@ object EventBus {
                     wasInLava = false
                     lavaTickCount = 0
                     wasDrowning = false
+                    wasOnFire = false
                     lastHeldItem = null
                     lastHeldWasDamageable = false
                     lastHeldRemaining = Int.MAX_VALUE
@@ -286,6 +295,26 @@ object EventBus {
                     pushEvent("started_drowning")
                 } else if (!drowning) {
                     wasDrowning = false
+                }
+
+                // 4b. On-fire edge — fire when the burning flag rises. Unlike
+                // lava we don't debounce: ignition is a sustained multi-second
+                // state (not a one-tick brush), so there's nothing to filter and
+                // reacting a tick sooner matters. Walking into lava sets this too;
+                // entered_lava — firing a couple ticks later — supersedes it via
+                // the reflex dispatcher's latest-wins cancellation. As with the
+                // other hazards we don't emit a paired "stopped_burning": the
+                // handler awaits its douse/escape, and player.on_fire (now in
+                // /status) lets the agent poll the live flag.
+                val onFire = player.isOnFire
+                if (onFire && !wasOnFire) {
+                    wasOnFire = true
+                    pushEvent("started_burning", mapOf(
+                        "fire_ticks" to player.fireTicks,
+                        "pos" to mapOf("x" to player.x, "y" to player.y, "z" to player.z),
+                    ))
+                } else if (!onFire) {
+                    wasOnFire = false
                 }
 
                 // 5. Tool broke — held mainhand stack disappeared in-place.

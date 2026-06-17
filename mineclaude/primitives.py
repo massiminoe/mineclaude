@@ -551,19 +551,30 @@ def make_primitives(
     async def emptyBucket(x: int, y: int, z: int, *, item: str | None = None) -> dict:
         """Pour a filled bucket so the fluid lands in the cell (x, y, z).
 
-        You name the destination air cell; the bridge picks a solid neighbour to
-        pour against (the fluid spills onto the face pointing at your cell — the
-        same anchor logic `placeBlock` uses), equips the bucket, walks into
-        reach, and pours. The target cell must be empty/replaceable.
+        You name the destination air cell; the bridge equips the bucket, walks
+        into reach, and pours INTO that cell. A filled bucket runs its own
+        eye-raycast, so the bridge can't force the hit — instead it previews
+        several sightlines (each solid face beside the cell, plus the cell
+        itself) and only fires the one that vanilla will actually resolve into
+        your cell. In a pit it picks the far wall over the near lip you stand on.
+
+        If no sightline lands in the cell (a lip/wall deflects every angle), it
+        does NOT pour a mess elsewhere — it raises, naming where the fluid would
+        have gone, so you can break that edge, stand on another side, or pick a
+        more open cell. The target cell must be empty/replaceable.
 
         Which bucket: auto-detected when you hold exactly one of
         `water_bucket`/`lava_bucket`. Pass `item="water_bucket"` (or
         `"lava_bucket"`) to disambiguate when you hold both.
 
-        Returns `{emptied, fluid, position, inventory_delta}` (e.g.
-        `{"water_bucket": -1, "bucket": 1}`). Raises on hard failures (no filled
-        bucket, ambiguous without `item`, target occupied, no solid to pour
-        against, unreachable).
+        Returns `{emptied, fluid, requested, placed_at, verified,
+        inventory_delta}`. `placed_at` is where the fluid actually went (not an
+        echo of the request) and `verified` is True only when a real fluid
+        source is confirmed in the cell afterward — a `[partial]` result means
+        the bucket emptied but the source couldn't be confirmed (it flowed off
+        or the cell was obstructed). Raises on hard failures (no filled bucket,
+        ambiguous without `item`, target occupied, no clean sightline,
+        unreachable).
         """
         resp = await bridge.bucket_empty(x, y, z, item=item)
         if resp.status == "error":
