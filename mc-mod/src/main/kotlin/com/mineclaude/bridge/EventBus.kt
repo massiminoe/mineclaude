@@ -3,6 +3,7 @@ package com.mineclaude.bridge
 import com.google.gson.Gson
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents
+import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientPlayerEntity
 import net.minecraft.entity.SpawnGroup
 import net.minecraft.item.Item
@@ -57,6 +58,26 @@ object EventBus {
 
     // Death state — flipped on each fire so we can't double-emit.
     @Volatile private var wasDead = false
+
+    // Death packet latch. The per-tick `health <= 0` poll below misses ~40% of
+    // deaths when `doImmediateRespawn` is on: the server kills + respawns in one
+    // server tick, so the respawn packet swaps in a fresh full-HP player before
+    // END_CLIENT_TICK ever samples `health <= 0` — the whole alive->dead->alive
+    // transition goes unobserved (no death event, no preempt, no respawn). The
+    // onHealthUpdate mixin calls [onHealthPacket] the instant the lethal packet
+    // lands, latching the death (with the dying player's position, captured
+    // before the swap can clobber it) for the tick callback to emit. Set on the
+    // network thread, read + cleared on the tick thread; the data class is
+    // immutable so a single volatile reference suffices for publication.
+    @Volatile var pendingDeath: PendingDeath? = null
+        @JvmStatic get
+        @JvmStatic set
+
+    data class PendingDeath(
+        val pos: Triple<Double, Double, Double>,
+        val dimension: String?,
+        val cause: String?,
+    )
 
     // Lava edge state. `lavaTickCount` debounces entry so a one-tick brush
     // (jumping over a 1-block lava channel) doesn't trip the reflex.
@@ -137,6 +158,50 @@ object EventBus {
      */
     fun emit(type: String, data: Map<String, Any> = emptyMap()) = pushEvent(type, data)
 
+    /**
+     * Latch a death from the death-message packet (driven by the onDeathMessage
+     * mixin). This is the reliable signal: the server sends DeathMessageS2CPacket
+     * synchronously inside `onDeath`, *before* the immediate respawn — so unlike
+     * the lethal health update (which can be skipped when the player entity is
+     * replaced before the server syncs health=0), it always reaches the client.
+     */
+    @JvmStatic
+    fun onDeathPacket() = latchDeath()
+
+    /**
+     * Secondary latch from the lethal health-update packet. Redundant with the
+     * death-message latch (whichever lands first wins via the guard); kept as a
+     * backstop for any path where a health=0 update precedes the death message.
+     */
+    @JvmStatic
+    fun onHealthPacket(health: Float) {
+        if (health > 0f) return
+        latchDeath()
+    }
+
+    /**
+     * Capture the dying player's snapshot the instant a death packet lands —
+     * independent of the END_CLIENT_TICK health poll, which races the respawn
+     * under `doImmediateRespawn`. Grabs position before a respawn swap can
+     * replace it; the tick callback reads the latch and emits the `death` event.
+     *
+     * Idempotent and self-gating: `wasDead` / an existing latch suppress
+     * re-entry (a HEAD inject can fire twice — once on the network thread, once
+     * after the main-thread reschedule — and both packets fire per death).
+     */
+    private fun latchDeath() {
+        if (wasDead || pendingDeath != null) return
+        val client = MinecraftClient.getInstance()
+        val player = client.player ?: return
+        val cause = runCatching { player.recentDamageSource?.name }.getOrNull()
+            ?: pendingDamage?.source
+        pendingDeath = PendingDeath(
+            Triple(player.x, player.y, player.z),
+            client.world?.registryKey?.value?.toString(),
+            cause,
+        )
+    }
+
     private fun registerChat() {
         // CHAT fires for player-authored chat (signed or profileless).
         ClientReceiveMessageEvents.CHAT.register(
@@ -190,7 +255,12 @@ object EventBus {
                 AdvancementTracker.tick(client)
 
                 val currentHealth = player.health
-                val dead = currentHealth <= 0f || player.isDead
+                // The packet latch ([onHealthPacket]) is the immediate-respawn-
+                // proof signal; the health poll is the fallback for deaths whose
+                // dead state lingers ≥1 sampled tick. Either trips the same
+                // wasDead-guarded branch, so they can't double-emit.
+                val latchedDeath = pendingDeath
+                val dead = currentHealth <= 0f || player.isDead || latchedDeath != null
 
                 // 1. Death / respawn
                 if (dead && !wasDead) {
@@ -199,15 +269,27 @@ object EventBus {
                     // item-drop location the agent needs for recovery; cause
                     // is the damage-source msgId ("lava", "fall", "mob", ...)
                     // — best-effort, the source can already be cleared.
-                    val deathData = mutableMapOf<String, Any>(
-                        "message" to "Player died",
-                        "pos" to mapOf("x" to player.x, "y" to player.y, "z" to player.z),
-                    )
-                    client.world?.registryKey?.value?.toString()?.let { deathData["dimension"] = it }
-                    runCatching { player.recentDamageSource?.name }.getOrNull()?.let { deathData["cause"] = it }
+                    val deathData = mutableMapOf<String, Any>("message" to "Player died")
+                    if (latchedDeath != null) {
+                        // Death captured at packet-time. Use that snapshot — the
+                        // live `player` may already be the respawned body at a
+                        // different position (immediate respawn).
+                        deathData["pos"] = mapOf(
+                            "x" to latchedDeath.pos.first,
+                            "y" to latchedDeath.pos.second,
+                            "z" to latchedDeath.pos.third,
+                        )
+                        latchedDeath.dimension?.let { deathData["dimension"] = it }
+                        latchedDeath.cause?.let { deathData["cause"] = it }
+                    } else {
+                        deathData["pos"] = mapOf("x" to player.x, "y" to player.y, "z" to player.z)
+                        client.world?.registryKey?.value?.toString()?.let { deathData["dimension"] = it }
+                        runCatching { player.recentDamageSource?.name }.getOrNull()?.let { deathData["cause"] = it }
+                    }
                     pushEvent("death", deathData)
                     // Reset transient state across death so we don't false-fire
                     // on respawn (player.air resets, isInLava clears, etc.).
+                    pendingDeath = null
                     lastHealth = -1f
                     pendingDamage = null
                     pendingDamageAge = 0
