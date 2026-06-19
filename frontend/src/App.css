@@ -866,3 +866,240 @@ footer {
   color: var(--text);
   text-shadow: 0 0 3px #000, 0 0 3px #000;
 }
+
+/* ─────────────────────── responsive / mobile ───────────────────────
+   The base layout above is a fixed landscape "flight deck": a 372px rail
+   beside the feed, no scrolling. Two overrides adapt it for phones, split
+   by orientation (they never overlap, and neither touches a normal desktop
+   viewport, which is landscape AND tall):
+
+   • portrait phones  → stack everything; the rail drops below the feed and
+     a tab bar (.mtabs) switches Actions/Events.
+   • landscape phones → keep the side-by-side layout (ideal for watching the
+     feed) but slim the rail and compress the short-viewport chrome.        */
+
+/* Tab bar: present in the DOM always, shown only in the portrait query. */
+.mtabs {
+  display: none;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--hairline);
+}
+
+.mtabs button {
+  flex: 1;
+  background: none;
+  border: 0;
+  border-right: 1px solid var(--hairline);
+  padding: 13px 0;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.mtabs button:last-child {
+  border-right: 0;
+}
+
+.mtabs button.on {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--amber);
+}
+
+/* ── portrait phones: single column + tabbed rail ── */
+@media (orientation: portrait) and (max-width: 768px) {
+  /* dvh tracks the mobile browser's collapsing toolbar so the rail bottom
+     isn't hidden behind it. */
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    /* drop the desktop grid tracks entirely */
+    grid-template-rows: none;
+    grid-template-columns: none;
+  }
+
+  .app > header {
+    flex: 0 0 auto;
+  }
+
+  /* feed keeps a real 16:9 box at the top instead of stretching a grid row */
+  .app > main {
+    flex: 0 0 auto;
+    aspect-ratio: 16 / 9;
+    width: 100%;
+  }
+
+  .app > footer {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+  }
+
+  .mtabs {
+    display: flex;
+  }
+
+  /* the rail fills the remaining height and scrolls internally */
+  .app > aside {
+    flex: 1 1 auto;
+    min-height: 0;
+    border-left: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .app > aside .rail-section {
+    flex: 1 1 auto;
+    min-height: 0;
+    border-top: 0;
+  }
+
+  /* show only the tab-selected section */
+  .app[data-tab="actions"] .rail-events {
+    display: none;
+  }
+
+  .app[data-tab="events"] .rail-actions {
+    display: none;
+  }
+
+  /* compact footer: position + vitals on one row, hotbar wraps to its own */
+  footer .fcell {
+    padding: 8px 14px;
+  }
+
+  .coords {
+    font-size: 16px;
+    gap: 12px;
+  }
+
+  .vitals {
+    gap: 14px;
+  }
+
+  .vitals .field .val {
+    font-size: 12px;
+  }
+
+  .hotbar {
+    flex: 1 0 100%;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 8px 14px;
+    border-top: 1px solid var(--hairline);
+    overflow-x: auto;
+  }
+
+  .hbc {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+  }
+
+  .hbc .item-icon,
+  .hbc .item-icon-fallback {
+    width: 26px !important;
+    height: 26px !important;
+  }
+
+  .hotbar-meta {
+    display: none;
+  }
+}
+
+/* ── landscape phones: keep side-by-side, slim + compress ── */
+@media (orientation: landscape) and (max-height: 520px) {
+  .app {
+    grid-template-rows: 34px 1fr 54px;
+    /* slimmer rail → more feed; clamps so it never dominates a small width */
+    grid-template-columns: minmax(0, 1fr) clamp(216px, 33vw, 300px);
+  }
+
+  header {
+    padding: 0 12px;
+  }
+
+  .hgroup {
+    margin-left: 22px;
+    gap: 18px;
+  }
+
+  footer .fcell {
+    padding: 0 14px;
+    gap: 3px;
+  }
+
+  .coords {
+    font-size: 15px;
+    gap: 12px;
+  }
+
+  .vitals {
+    gap: 16px;
+  }
+
+  .vitals .field .val {
+    font-size: 12px;
+  }
+
+  .meter {
+    margin-top: 2px;
+  }
+
+  .hotbar {
+    gap: 7px;
+    padding: 0 12px;
+  }
+
+  .hbc {
+    width: 36px;
+    height: 36px;
+  }
+
+  .hbc .item-icon,
+  .hbc .item-icon-fallback {
+    width: 28px !important;
+    height: 28px !important;
+  }
+
+  /* the slot-count label is the first thing to cut when space is tight */
+  .hotbar-meta {
+    display: none;
+  }
+}
+
+/* ── inventory modal: fit small screens (either orientation) ── */
+@media (max-width: 768px), (max-height: 520px) {
+  .inv-modal {
+    max-width: 94vw;
+    max-height: 90dvh;
+    overflow: auto;
+    padding: 16px 18px 18px;
+  }
+
+  .inv-body {
+    gap: 14px;
+  }
+
+  .invgrid {
+    grid-template-columns: repeat(9, 30px);
+    gap: 3px;
+  }
+
+  .invc,
+  .aslot {
+    width: 30px;
+    height: 30px;
+  }
+
+  .invc .item-icon,
+  .invc .item-icon-fallback,
+  .aslot .item-icon,
+  .aslot .item-icon-fallback {
+    width: 24px !important;
+    height: 24px !important;
+  }
+}

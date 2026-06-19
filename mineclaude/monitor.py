@@ -119,9 +119,17 @@ class MonitorServer:
             return web.Response(status=503, text="no bridge configured")
         qs = request.query_string
         upstream_url = f"{base}/video/stream" + (f"?{qs}" if qs else "")
-        # No read timeout: an MJPEG stream is intentionally open-ended.
+        # total=None: an MJPEG stream is intentionally open-ended. But sock_read
+        # MUST be finite — the bridge spawns one ffmpeg per stream client, and a
+        # stalled/overloaded bridge (software-GL capture saturates under several
+        # concurrent grabs) can go silent while holding the connection open. With
+        # no read timeout, iter_any() below blocks forever, so a browser that has
+        # since navigated away is never detected and the upstream ffmpeg leaks —
+        # leaked grabs then pile up and wedge the whole client. A healthy feed
+        # sends a frame every ~100ms (fps=10), so a 30s read gap means dead:
+        # bail, the finally closes the upstream, and the bridge reaps its ffmpeg.
         session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=30)
         )
         try:
             upstream = await session.get(upstream_url)

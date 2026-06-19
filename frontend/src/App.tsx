@@ -127,6 +127,11 @@ function Footer({ game, onExpand }: { game: GameState | null; onExpand: () => vo
 export default function App() {
   const { queue, gameState, reflexes, events, videoUrl, connected } = useSocket();
   const [invOpen, setInvOpen] = useState(false);
+  // Portrait-phone only: which rail panel the tab bar shows. The rail can't
+  // fit beside the feed at ~360px wide, so on portrait it drops below and these
+  // tabs pick Actions vs Events. Ignored (tab bar hidden via CSS) at all other
+  // sizes — landscape/desktop keep the side-by-side rail with both visible.
+  const [mobileTab, setMobileTab] = useState<"actions" | "events">("actions");
 
   // Shared 1 Hz clock for running-action elapsed time and reflex ages.
   const [now, setNow] = useState(() => Date.now() / 1000);
@@ -136,12 +141,32 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className="app" data-tab={mobileTab}>
       <Header game={gameState} connected={connected} />
       <main>
         <Feed videoUrl={videoUrl} connected={connected} />
       </main>
       <Footer game={gameState} onExpand={() => setInvOpen(true)} />
+      {/* Portrait-only tab bar (hidden by CSS otherwise). Switches which rail
+          panel shows when the rail is stacked below the feed on a phone. */}
+      <nav className="mtabs" role="tablist" aria-label="Rail panel">
+        <button
+          role="tab"
+          aria-selected={mobileTab === "actions"}
+          className={mobileTab === "actions" ? "on" : ""}
+          onClick={() => setMobileTab("actions")}
+        >
+          Actions
+        </button>
+        <button
+          role="tab"
+          aria-selected={mobileTab === "events"}
+          className={mobileTab === "events" ? "on" : ""}
+          onClick={() => setMobileTab("events")}
+        >
+          Events
+        </button>
+      </nav>
       {/* Full-height right rail — spans the main + footer rows so the sidebar
           runs unbroken from under the header to the bottom of the viewport. */}
       <aside>
