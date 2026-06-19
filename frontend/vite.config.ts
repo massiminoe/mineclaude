@@ -10,6 +10,9 @@ export default defineConfig({
         target: 'http://localhost:5555',
         ws: true,
       },
+      '/video': {
+        target: 'http://localhost:5555',
+      },
       '/bridge': {
         target: 'http://localhost:8081',
         rewrite: (path: string) => path.replace(/^\/bridge/, ''),

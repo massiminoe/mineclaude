@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 
 from .runtime import MONITOR_EVENT_TYPES
@@ -34,6 +35,13 @@ class MonitorServer:
         self._app.router.add_get("/api/queue", self._handle_queue)
         self._app.router.add_get("/api/game", self._handle_game)
         self._app.router.add_get("/api/ws", self._handle_ws)
+        # Video MJPEG proxy: streams the bridge's /video/stream through the
+        # monitor so the feed shares this server's origin. Without it the
+        # frontend's <img> would point at the bridge host (localhost:8081),
+        # which is unreachable from any device other than the host itself
+        # (e.g. a phone over Tailscale resolves "localhost" to itself). One
+        # port (5555) is now the only surface a remote viewer needs.
+        self._app.router.add_get("/video/stream", self._handle_video)
         # Static files (production build) — added last so API routes take priority
         dist = Path(__file__).parent.parent / "frontend" / "dist"
         if dist.is_dir():
@@ -84,7 +92,11 @@ class MonitorServer:
             "game": game,
             "reflexes": reflexes,
             "events": events,
-            "video_url": f"{video_base}/video/stream?fps=10&quality=50" if video_base else None,
+            # Relative, same-origin path served by _handle_video below — so the
+            # feed is reachable wherever the monitor is (Tailscale, LAN, tunnel)
+            # with no second port and no hardcoded host. video_base only gates
+            # whether a bridge exists to proxy at all.
+            "video_url": "/video/stream?fps=10&quality=50" if video_base else None,
         })
 
     async def _handle_queue(self, request: web.Request) -> web.Response:
@@ -93,6 +105,52 @@ class MonitorServer:
     async def _handle_game(self, request: web.Request) -> web.Response:
         game = await self._get_game_state()
         return web.json_response(game)
+
+    async def _handle_video(self, request: web.Request) -> web.StreamResponse:
+        """Proxy the bridge's MJPEG stream through the monitor's origin.
+
+        Opens a long-lived upstream GET to ``{bridge.base_url}/video/stream``
+        and pumps multipart chunks straight to the client. One upstream
+        connection (and thus one bridge-side ffmpeg) per viewer, same as
+        hitting the bridge directly — we just relay it on this port.
+        """
+        base = (getattr(self.agent.bridge, "base_url", "") or "").rstrip("/")
+        if not base:
+            return web.Response(status=503, text="no bridge configured")
+        qs = request.query_string
+        upstream_url = f"{base}/video/stream" + (f"?{qs}" if qs else "")
+        # No read timeout: an MJPEG stream is intentionally open-ended.
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
+        )
+        try:
+            upstream = await session.get(upstream_url)
+        except Exception as e:
+            await session.close()
+            logger.warning(f"video proxy connect failed: {e}")
+            return web.Response(status=502, text="bridge video unavailable")
+
+        resp = web.StreamResponse(
+            status=upstream.status,
+            headers={
+                "Content-Type": upstream.headers.get(
+                    "Content-Type", "multipart/x-mixed-replace"
+                ),
+                "Cache-Control": "no-cache, no-store",
+            },
+        )
+        await resp.prepare(request)
+        try:
+            async for chunk in upstream.content.iter_any():
+                await resp.write(chunk)
+        except (asyncio.CancelledError, ConnectionResetError):
+            pass  # viewer navigated away / connection dropped — expected
+        except Exception as e:
+            logger.debug(f"video proxy stream ended: {e}")
+        finally:
+            upstream.release()
+            await session.close()
+        return resp
 
     async def _handle_index(self, request: web.Request) -> web.FileResponse:
         dist = Path(__file__).parent.parent / "frontend" / "dist"

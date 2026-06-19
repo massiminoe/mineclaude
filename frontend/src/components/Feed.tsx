@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 
-const FALLBACK_STREAM_URL = "http://localhost:8081/video/stream?fps=10&quality=50";
+// Same-origin path proxied by the monitor (see monitor.py `_handle_video`).
+// Must stay relative so the feed loads on whatever host is serving this page
+// (Tailscale, LAN, tunnel) — an absolute localhost URL resolves to the
+// *viewer's* machine, not the bot host. The monitor also sends this exact
+// path as `video_url`; the fallback covers the pre-first-fetch render.
+const FALLBACK_STREAM_URL = "/video/stream?fps=10&quality=50";
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 10000;
 
