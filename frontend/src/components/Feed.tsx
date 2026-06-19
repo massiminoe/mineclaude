@@ -21,9 +21,50 @@ export function Feed({ videoUrl, connected }: Props) {
   >("loading");
   const [streamSrc, setStreamSrc] = useState(streamUrl);
   const imgRef = useRef<HTMLImageElement>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
   const retryTimer = useRef<number>(0);
   const retryDelay = useRef(RETRY_BASE_MS);
   const wasConnected = useRef(connected);
+
+  // Fullscreen: prefer the native Fullscreen API (hides browser chrome — best
+  // for watching on a phone in landscape). It rejects on browsers that won't
+  // fullscreen a non-<video> element (notably iOS Safari on our <img> feed), so
+  // we fall back to a CSS fixed-overlay that works everywhere. `fs` reflects
+  // either path; `manualFs` is the fallback's own state.
+  const [manualFs, setManualFs] = useState(false);
+  const [nativeFs, setNativeFs] = useState(false);
+  const fs = nativeFs || manualFs;
+
+  useEffect(() => {
+    const sync = () => setNativeFs(document.fullscreenElement === feedRef.current);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+
+  // Escape closes the manual (non-native) overlay; native fullscreen handles
+  // Escape itself via the browser.
+  useEffect(() => {
+    if (!manualFs) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setManualFs(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [manualFs]);
+
+  const toggleFullscreen = () => {
+    const el = feedRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else if (manualFs) {
+      setManualFs(false);
+    } else if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => setManualFs(true));
+    } else {
+      setManualFs(true);
+    }
+  };
 
   useEffect(() => {
     const img = imgRef.current;
@@ -79,7 +120,7 @@ export function Feed({ videoUrl, connected }: Props) {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   return (
-    <div className="feed">
+    <div ref={feedRef} className={`feed${manualFs ? " feed-manual-fs" : ""}`}>
       {streamStatus !== "connected" && (
         <div className="feed-placeholder">
           {streamStatus === "loading" ? "acquiring signal" : "no signal"}
@@ -97,6 +138,22 @@ export function Feed({ videoUrl, connected }: Props) {
       <div className="feed-tick bl" />
       <div className="feed-tick br" />
       <div className="feed-cap">cam 01 / mjpeg 10fps</div>
+      <button
+        className="feed-fs-btn"
+        onClick={toggleFullscreen}
+        title={fs ? "Exit fullscreen" : "Fullscreen"}
+        aria-label={fs ? "Exit fullscreen" : "Enter fullscreen"}
+      >
+        {fs ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+          </svg>
+        )}
+      </button>
     </div>
   );
 }
