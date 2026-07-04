@@ -6,6 +6,7 @@
   "client": [
     "ClientPlayNetworkHandlerDamageMixin",
     "ClientPlayNetworkHandlerHealthMixin",
+    "FishingBobberAccessor",
     "InteractionManagerEventsMixin"
   ],
   "injectors": {

@@ -77,7 +77,10 @@ if hp <= 6 and ap.get("x") is not None:
     me = (await getStats())["position"]
     dx, dz = me["x"] - ap["x"], me["z"] - ap["z"]      # away from the attacker
     mag = max(0.1, math.sqrt(dx * dx + dz * dz))
-    await goToPosition(me["x"] + dx / mag * 10, me["z"] + dz / mag * 10)
+    tx, tz = me["x"] + dx / mag * 10, me["z"] + dz / mag * 10
+    ty = await standableY(int(tx), int(tz))            # y is required — resolve, then read
+    if ty is not None:
+        await goToPosition(tx, tz, y=ty)
     await say("disengaging")
 ```
 

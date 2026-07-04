@@ -147,6 +147,27 @@ after = len(await findEntities("cow", 24))
 return f"{'Baby bred!' if after > before else 'No baby yet'} ({before} -> {after} cows)"
 ```
 
+## Fish until something bites
+
+```python
+# fishRod() owns cast -> wait -> reel in one call; it raises on no_bite/lost,
+# so a bare loop is the "keep fishing" idiom. Stand at the water's edge with
+# open sky above first (indoor/covered fishing spots roll no catches).
+rods = await getInventory()
+if not any(i["name"] == "fishing_rod" for i in rods):
+    return "No fishing_rod — craft one (3 stick + 2 string)"
+
+caught = []
+for _ in range(5):                    # cap the loop, re-observe after
+    try:
+        r = await fishRod()           # default wait_s=40, capped at 60 server-side
+        caught.append(r["inventory_delta"])
+        log(f"caught: {r['inventory_delta']}")
+    except RuntimeError as e:
+        log(f"no catch this cast: {e}")   # no_bite or lost — just recast
+return f"Caught {len(caught)} thing(s): {caught}"
+```
+
 ## Smelt a batch
 
 ```python
@@ -225,7 +246,7 @@ for x in range(-8, -4):                       # top row
 # real ray hits its DOWN face -> fire lands in the interior-top cell and the
 # portal ignites while you stay outside the portal plane (no nether teleport).
 # Stand within ~4.5 blocks first or use() will try (and fail) to path upward.
-await goToPosition(-6, 60)
+await goToPosition(-6, 60, y=await standableY(-6, 60))
 await use("flint_and_steel", look_at=(-6, 73, 59))
 ```
 

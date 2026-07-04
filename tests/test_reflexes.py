@@ -65,7 +65,9 @@ class _FakeBridge:
         sorted_blocks = sorted(self._blocks, key=lambda b: b.get("distance", 0.0))
         return BridgeResponse("success", "ok", {"blocks": sorted_blocks})
 
-    async def goto(self, x, y, z):
+    async def goto(self, x, z, *, y=None, allow_break=False):
+        # Recorded as (x, y, z) — y is None when the caller left it to the
+        # bridge's heightmap auto-resolve (the terrain-following flee case).
         self.goto_calls.append((x, y, z))
         self.call_order.append("goto")
         return BridgeResponse("success", "ok", {})
@@ -366,7 +368,7 @@ async def test_hostile_nearby_creeper_without_shield_retreats():
     fx, fy, fz = bridge.goto_calls[0]
     assert fx > 10.0  # fled in +x, away from the creeper
     assert fz == 5.0
-    assert fy == 64.0
+    assert fy is None  # y left to the bridge's heightmap auto-resolve
     assert agent.resume_calls == ["hostile_nearby"]
     # The fire is still recorded for situational awareness.
     assert reg.recent[0]["type"] == "hostile_nearby"
@@ -496,7 +498,7 @@ async def test_damage_taken_phantom_low_hp_flees():
     assert agent.bridge.attack_calls == []
     assert len(agent.bridge.goto_calls) == 1
     fx, fy, fz = agent.bridge.goto_calls[0]
-    assert fy == 64.0
+    assert fy is None  # y left to the bridge's heightmap auto-resolve
     assert fz == pytest.approx(5.0)
     assert fx == pytest.approx(20.0)
 
@@ -533,8 +535,8 @@ async def test_damage_taken_low_hp_flees_opposite_attacker():
     assert len(agent.bridge.goto_calls) == 1
     fx, fy, fz = agent.bridge.goto_calls[0]
     # Player at x=10, attacker at x=8, so flee direction is +x.
-    # 10 blocks east = x ~= 20, y unchanged, z unchanged.
-    assert fy == 64.0
+    # 10 blocks east = x ~= 20, y auto-resolved bridge-side, z unchanged.
+    assert fy is None
     assert fz == pytest.approx(5.0)
     assert fx == pytest.approx(20.0)
 

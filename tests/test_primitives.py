@@ -49,6 +49,34 @@ async def test_go_to_position_no_op_is_flagged(bridge, prims):
 
 
 @pytest.mark.asyncio
+async def test_go_to_position_requires_y(prims):
+    # y is deliberately required: silently auto-resolving it once pathed the
+    # bot from underground to the night surface. Omitting it must fail loudly.
+    with pytest.raises(TypeError):
+        await prims["goToPosition"](100, 200)
+
+
+@pytest.mark.asyncio
+async def test_go_to_position_rejects_explicit_none_y(prims):
+    # Annotations don't run — an explicit y=None must not slip through to the
+    # bridge's auto-resolve.
+    with pytest.raises(ValueError, match="requires y"):
+        await prims["goToPosition"](100, 200, y=None)
+
+
+@pytest.mark.asyncio
+async def test_go_to_position_accepts_allow_break(bridge, prims):
+    result = await prims["goToPosition"](50, 50, y=64, allow_break=True)
+    assert "Walked to" in result
+
+
+@pytest.mark.asyncio
+async def test_standable_y(prims):
+    # Mock heightmap reports feet-y 64 everywhere.
+    assert await prims["standableY"](100, 200) == 64
+
+
+@pytest.mark.asyncio
 async def test_get_stats(bridge, prims):
     stats = await prims["getStats"]()
     assert stats["health"] == 20.0
@@ -626,6 +654,35 @@ async def test_attack_ranged_stop_cancels_in_flight(bridge):
     resp = await task
     assert resp.data["reason"] == "cancelled"
     assert resp.data["shots"] < 20
+
+
+@pytest.mark.asyncio
+async def test_fish_rod_catches_something(bridge, prims):
+    bridge._add_to_inventory("fishing_rod", 1)
+    result = await prims["fishRod"]()
+    assert result["caught"] is True
+    assert result["reason"] == "caught"
+    assert result["inventory_delta"] == {"cod": 1}
+    assert any(e["name"] == "cod" for e in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_fish_rod_requires_rod(prims):
+    with pytest.raises(RuntimeError, match="No fishing_rod in inventory"):
+        await prims["fishRod"]()
+
+
+@pytest.mark.asyncio
+async def test_fish_stop_cancels_in_flight(bridge):
+    bridge._add_to_inventory("fishing_rod", 1)
+    import asyncio as _asyncio
+    task = _asyncio.create_task(bridge.fish())
+    await _asyncio.sleep(0)
+    stop_resp = await bridge.fish_stop()
+    assert stop_resp.data["cancelled"] is True
+    resp = await task
+    assert resp.data["reason"] == "cancelled"
+    assert resp.data["caught"] is False
 
 
 # --- unified use() primitive ------------------------------------------------

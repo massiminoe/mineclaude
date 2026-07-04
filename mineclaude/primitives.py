@@ -77,12 +77,22 @@ def make_primitives(
 ) -> dict[str, Any]:
     """Create a dict of name → async callable primitives, closed over bridge."""
 
-    async def goToPosition(x: float, z: float, *, y: float | None = None) -> str:
-        """Walk to (x, z). y is optional — when omitted the bridge resolves
-        the standable y server-side via the heightmap (feet/head clearance,
-        non-replaceable floor, closest to your current y). Pin y explicitly
-        only when you mean a specific altitude (e.g. a y you read off
-        gameState or a known landmark).
+    async def goToPosition(x: float, z: float, *, y: float, allow_break: bool = False) -> str:
+        """Walk to (x, y, z). y is REQUIRED — you decide the altitude;
+        Baritone paths to the exact 3-D goal you give it. Don't know y?
+        Resolve it first with `standableY(x, z)` and LOOK at the result: if
+        it names a y far from where you are (e.g. the surface while you're in
+        a mine), that IS where this call would take you — don't pass it on
+        blindly. Underground, y comes from your own survey (gameState
+        position, your design line, a getHeightmap scan), never from a guess.
+
+        `allow_break=False` (the default) forbids Baritone from breaking
+        blocks en route: the walk uses only existing passable terrain, and if
+        no dig-free path exists it fails as "Stuck" after ~5s of no progress
+        (possibly partway there — read the error's position). Pass
+        `allow_break=True` only when you're OK with Baritone digging its own
+        route; every block it breaks shows up as a `block_broken` event in
+        `get_state(flush=True).events`, so check that after a permissive walk.
 
         Returns where you ACTUALLY ended up, not the target: "Walked to
         (px, py, pz) - <d> from target (tx, ty, tz)" on a real move, or
@@ -90,7 +100,29 @@ def make_primitives(
         was already within ~2 blocks (a no-op). So a returned string that names
         coords near your start, or says "Did not move", means you did not
         travel there — read it instead of re-scanning position to confirm."""
-        return _check(await bridge.goto(x, z, y))
+        if y is None:  # the annotation alone can't stop an explicit y=None
+            raise ValueError(
+                "goToPosition requires y — resolve it with standableY(x, z) "
+                "and READ the result before passing it on"
+            )
+        return _check(await bridge.goto(x, z, y=y, allow_break=allow_break))
+
+    async def standableY(x: int, z: int, near_y: int | None = None) -> int | None:
+        """The y your feet would occupy at column (x, z): replaceable feet +
+        head cells over a solid floor, searching outward from `near_y` (your
+        current y if omitted) up to +-64. Returns None when no standable cell
+        exists in that window — commonly an UNLOADED CHUNK (targets beyond
+        ~50 blocks), not impossible terrain; chain shorter hops instead.
+
+        This is the explicit form of the y-resolution goToPosition used to do
+        implicitly. The value is proximity-based, not "the surface": from
+        inside a cave you get the cave floor near you — but if your column is
+        solid at your depth, the nearest standable cell may be the surface.
+        READ the value before feeding it to goToPosition."""
+        resp = await bridge.heightmap(x, z, 1, 1, near_y)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data["ys"][0][0]
 
     async def goToPlayer(player: str, distance: int = 3) -> str:
         """Walk to within `distance` blocks of a named player."""
@@ -217,6 +249,33 @@ def make_primitives(
         Reach for this over attack() to fight from a distance (skeletons,
         creepers you don't want to melee) or when you can't safely close in."""
         return _check(await bridge.attack_ranged(str(entity_id)))
+
+    async def fishRod(wait_s: float | None = None) -> dict:
+        """Cast a fishing rod, wait for a bite, reel in, and report the catch.
+        One call owns the whole lifecycle — cast, wait, reel — the same shape
+        as sleepInBed owns bed/wake.
+
+        Equips a `fishing_rod` first (raises if you don't have one). Waits up
+        to `wait_s` (default 40s, capped at 60s server-side — vanilla's
+        un-Lure'd bite window is 5-30s) for the bobber's bite signal, reels in
+        the instant it fires (the catch window is only a couple of seconds),
+        and verifies the catch via an inventory-count diff — the same
+        truth-in-return pattern as fillBucket/emptyBucket.
+
+        Returns {caught, reason, position, inventory_delta}. `reason` is one
+        of `caught | no_bite | lost`. Raises on `no_bite` (no bite within the
+        window — try a different spot: open water, clear sky above) and
+        `lost` (the hook vanished before biting; just cast again) so a bare
+        `await fishRod()` in a loop is the natural "fish until something
+        bites" idiom. Needing a longer wait than the per-call cap? Loop this
+        call rather than expecting one call to block indefinitely.
+        """
+        resp = await bridge.fish(wait_s)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
 
     async def craft(item: str, count: int = 1) -> str:
         """Craft `count` of the OUTPUT item (not iterations/inputs); returns the
@@ -748,6 +807,7 @@ def make_primitives(
 
     primitives = {
         "goToPosition": goToPosition,
+        "standableY": standableY,
         "goToPlayer": goToPlayer,
         "followPlayer": followPlayer,
         "stop": stop,
@@ -759,6 +819,7 @@ def make_primitives(
         "collectItems": collectItems,
         "attack": attack,
         "attackRanged": attackRanged,
+        "fishRod": fishRod,
         "block": block,
         "craft": craft,
         "furnaceLoad": furnaceLoad,

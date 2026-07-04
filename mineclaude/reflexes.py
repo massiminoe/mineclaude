@@ -497,7 +497,9 @@ async def damage_taken_handler(controller: "Controller", data: dict) -> None:
         fx = px + (dx / mag) * FLEE_DISTANCE
         fz = pz + (dz / mag) * FLEE_DISTANCE
         try:
-            await controller.bridge.goto(fx, py, fz)
+            # y auto-resolves bridge-side (terrain-following flee); digging
+            # stays allowed — this is a survival path, not agent navigation.
+            await controller.bridge.goto(fx, fz, allow_break=True)
         except Exception:
             logger.exception("flee goto failed")
         return
@@ -638,7 +640,7 @@ async def hostile_nearby_handler(controller: "Controller", data: dict) -> None:
             fz = pz + (dz / mag) * CREEPER_FLEE_DISTANCE
             try:
                 await timed_op(
-                    controller.bridge.goto(fx, py, fz),
+                    controller.bridge.goto(fx, fz, allow_break=True),
                     controller.bridge.stop,
                 )
             except Exception:
@@ -700,7 +702,7 @@ async def _escape_to_shore(controller: "Controller") -> None:
         if abs(y - py) > SHORE_MAX_Y_DELTA:
             continue
         try:
-            await controller.bridge.goto(float(x), float(y + 1), float(z))
+            await controller.bridge.goto(float(x), float(z), y=float(y + 1), allow_break=True)
         except Exception:
             logger.exception("escape goto failed")
         return
@@ -766,7 +768,7 @@ async def _walk_into_water(controller: "Controller") -> bool:
         if abs(y - py) > DOUSE_MAX_Y_DELTA:
             continue
         try:
-            await controller.bridge.goto(float(x), float(y), float(z))
+            await controller.bridge.goto(float(x), float(z), y=float(y), allow_break=True)
         except Exception:
             logger.exception("douse goto failed")
         return True

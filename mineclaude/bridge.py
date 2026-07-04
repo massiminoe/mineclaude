@@ -26,7 +26,7 @@ class BridgeClient(Protocol):
     async def get_status(self, include_events: bool = False) -> BridgeResponse: ...
     async def get_nearby_blocks(self, radius: int = 16, block_types: list[str] | None = None) -> BridgeResponse: ...
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse: ...
-    async def goto(self, x: float, z: float, y: float | None = None) -> BridgeResponse: ...
+    async def goto(self, x: float, z: float, *, y: float | None = None, allow_break: bool = False) -> BridgeResponse: ...
     async def mine(self, block: str, count: int = 1) -> BridgeResponse: ...
     async def follow(self, player: str, distance: int = 3) -> BridgeResponse: ...
     async def explore(self) -> BridgeResponse: ...
@@ -39,6 +39,8 @@ class BridgeClient(Protocol):
     async def attack(self, entity_id: str) -> BridgeResponse: ...
     async def attack_ranged(self, entity_id: str) -> BridgeResponse: ...
     async def attack_stop(self) -> BridgeResponse: ...
+    async def fish(self, wait_s: float | None = None) -> BridgeResponse: ...
+    async def fish_stop(self) -> BridgeResponse: ...
     async def craft(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def furnace_load(
         self,
@@ -203,8 +205,8 @@ class RealBridgeClient:
     async def get_nearby_entities(self, radius: int = 32) -> BridgeResponse:
         return self._parse(await self._http.get("/nearby/entities", params={"r": radius}))
 
-    async def goto(self, x: float, z: float, y: float | None = None) -> BridgeResponse:
-        body: dict[str, Any] = {"x": x, "z": z}
+    async def goto(self, x: float, z: float, *, y: float | None = None, allow_break: bool = False) -> BridgeResponse:
+        body: dict[str, Any] = {"x": x, "z": z, "allow_break": allow_break}
         if y is not None:
             body["y"] = y
         return self._parse(await self._http.post("/goto", json=body))
@@ -241,6 +243,15 @@ class RealBridgeClient:
 
     async def attack_stop(self) -> BridgeResponse:
         return self._parse(await self._http.post("/attack/stop", timeout=_HALT_TIMEOUT_S))
+
+    async def fish(self, wait_s: float | None = None) -> BridgeResponse:
+        body: dict[str, Any] = {}
+        if wait_s is not None:
+            body["wait_s"] = wait_s
+        return self._parse(await self._http.post("/fish", json=body))
+
+    async def fish_stop(self) -> BridgeResponse:
+        return self._parse(await self._http.post("/fish/stop", timeout=_HALT_TIMEOUT_S))
 
     async def craft(self, item: str, count: int = 1) -> BridgeResponse:
         return self._parse(await self._http.post("/craft", json={"item": item, "count": count}))
@@ -565,7 +576,7 @@ class MockBridgeClient:
         entities = [e for e in self._nearby_entities if e["distance"] <= radius]
         return BridgeResponse("success", f"Found {len(entities)} entities", {"entities": entities})
 
-    async def goto(self, x: float, z: float, y: float | None = None) -> BridgeResponse:
+    async def goto(self, x: float, z: float, *, y: float | None = None, allow_break: bool = False) -> BridgeResponse:
         # Mock: pretend the heightmap puts feet at y=64 unless caller pinned it.
         # Mirror the real bridge's truth-in-return shape: report the achieved
         # position + whether the bot actually moved, so a no-op can't read as a
@@ -817,6 +828,47 @@ class MockBridgeClient:
         return BridgeResponse(
             "success",
             "Attack cancelled" if was_running else "No attack in progress",
+            {"cancelled": was_running},
+        )
+
+    # Deterministic "ticks until bite" so tests can assert on cancel timing —
+    # mirrors the fixed per-swing damage the mock attack loop uses.
+    _FISH_BITE_TICKS = 3
+
+    async def fish(self, wait_s: float | None = None) -> BridgeResponse:
+        """Mock /fish: needs a fishing_rod, loops a fixed number of ticks then
+        catches deterministically (unless cancelled) — mirrors the real
+        bridge's cast/wait/reel loop closely enough for MOCK_BRIDGE=1 to
+        exercise the same agent contract."""
+        if not any(e["name"] == "fishing_rod" for e in self._inventory):
+            return BridgeResponse(
+                "error", "No fishing_rod in inventory",
+                {"caught": False, "reason": "error", "method": "simulated"},
+            )
+        self._fish_cancelled = False
+        for _ in range(self._FISH_BITE_TICKS):
+            await asyncio.sleep(0)
+            if self._fish_cancelled:
+                return BridgeResponse(
+                    "success", "Fishing cancelled",
+                    {"caught": False, "reason": "cancelled", "method": "simulated"},
+                )
+        catch = "cod"
+        self._add_to_inventory(catch, 1)
+        return BridgeResponse(
+            "success", f"Caught something (+1 {catch})",
+            {
+                "caught": True, "reason": "caught",
+                "inventory_delta": {catch: 1}, "method": "simulated",
+            },
+        )
+
+    async def fish_stop(self) -> BridgeResponse:
+        was_running = not getattr(self, "_fish_cancelled", True)
+        self._fish_cancelled = True
+        return BridgeResponse(
+            "success",
+            "Fishing cancelled" if was_running else "Not fishing",
             {"cancelled": was_running},
         )
 

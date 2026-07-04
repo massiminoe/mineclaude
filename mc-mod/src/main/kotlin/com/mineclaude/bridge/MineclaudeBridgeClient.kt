@@ -112,6 +112,10 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // block pose for a window, then lower it. Owns the use-key hold +
         // isBlocking confirmation; a held shield is inert without it.
         ShieldRoute.register(bridge)
+        // Fishing — cast, poll the bobber's (mixin-exposed) caughtFish flag
+        // for a bite, reel in, verify the catch via inventory delta. Owns the
+        // full cast/wait/reel lifecycle like /sleep owns bed/wake.
+        FishingRoute.register(bridge)
         // Phase 7 vision — /screenshot and /video/stream. Both shell out
         // to ffmpeg x11grab from `:99` — the same approach as the legacy
         // bridge, because NativeImage.writeTo() produces 0-byte PNGs on
