@@ -36,6 +36,37 @@ def _load_dotenv() -> None:
             os.environ[key] = value
 
 
+# The bot's custom skin is broadcast server-side by Fabric Tailor (mc-server runs
+# TYPE=FABRIC). Fabric Tailor persists it in the world's playerdata, so a normal
+# relaunch keeps it — but `docker compose down -v` wipes the world and the bot
+# reverts to default Steve. Re-assert the skin every launch so a clean restart
+# self-heals; it's idempotent (Fabric Tailor just re-sets the same texture) and a
+# no-op when already set. The URL is a Mojang-hosted upload of skins/claude_crab.png
+# (via MineSkin). Override with SKIN_TEXTURE_URL / SKIN_MODEL; set the URL to "" to
+# disable. To change the skin: replace skins/claude_crab.png, re-upload it at
+# https://mineskin.org, and paste the new textures.minecraft.net URL below.
+DEFAULT_SKIN_URL = (
+    "https://textures.minecraft.net/texture/"
+    "6c75af04ca959367bb55dec6beb0f4b57dec5451481cc399a6443ef510d84258"
+)
+
+
+async def _reapply_skin(bridge, url: str, model: str, logger) -> None:
+    """Re-assert the bot's broadcast skin at launch. Waits until the bot is
+    in-world (the bridge HTTP is up before the server join finishes), then runs
+    Fabric Tailor's /skin command as the bot (it's opped)."""
+    for _ in range(20):
+        try:
+            st = await bridge.get_status()
+            if st.status == "success" and st.data.get("health") is not None:
+                break
+        except Exception:
+            pass
+        await asyncio.sleep(1.0)
+    await bridge.chat(f"/skin set URL {model} {url}")
+    logger.info("re-applied bot skin (broadcast via Fabric Tailor)")
+
+
 def main() -> None:
     _load_dotenv()
 
@@ -58,6 +89,8 @@ def main() -> None:
     monitor_port = int(os.environ.get("MONITOR_PORT", "5555"))
     mcp_host = os.environ.get("MCP_HOST", "127.0.0.1")
     mcp_port = int(os.environ.get("MCP_PORT", "5556"))
+    skin_url = os.environ.get("SKIN_TEXTURE_URL", DEFAULT_SKIN_URL)
+    skin_model = os.environ.get("SKIN_MODEL", "classic")
 
     from mineclaude import mcp_server
     from mineclaude.bridge import create_bridge
@@ -96,6 +129,12 @@ def main() -> None:
                 logger.info("rolled gameplay recording for this run")
             except Exception as e:
                 logger.warning(f"recording roll skipped: {e}")
+            # Re-assert the bot's broadcast skin (self-heals after `down -v`).
+            if skin_url:
+                try:
+                    await _reapply_skin(bridge, skin_url, skin_model, logger)
+                except Exception as e:
+                    logger.warning(f"skin re-apply skipped: {e}")
         # Both run forever: the MCP HTTP server and the bridge event loop
         # (reconnecting WS). gather lets either's failure surface and exit.
         await asyncio.gather(

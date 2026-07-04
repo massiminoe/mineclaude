@@ -20,6 +20,20 @@ services:
       # message. Disable enforcement so human players (e.g. Massimino) stay
       # connected. The bot sidesteps this separately by speaking via /tellraw.
       ENFORCE_SECURE_PROFILE: "false"
+      # --- custom bot skin (broadcast) ---
+      # A skin is a `textures` property on the player's GameProfile that the
+      # server sends to every client. A vanilla offline server never populates
+      # it (it builds the profile from just the name), so the bot shows as
+      # default Steve. To broadcast a real skin the server must run code, so we
+      # run Fabric. Fabric Tailor is a *server-side* skin mod — vanilla human
+      # clients install nothing and still see the skin. itzg auto-resolves the
+      # correct Fabric build of each Modrinth project for VERSION + TYPE and
+      # pulls Fabric API (a Fabric Tailor dependency) via DOWNLOAD_DEPENDENCIES.
+      # The bot's skin is set once with `/skin set url <mineskin-url>` (the bot
+      # runs it itself; it's opped) and Fabric Tailor persists it under /data.
+      TYPE: "FABRIC"
+      MODRINTH_PROJECTS: "fabrictailor"
+      MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
       DIFFICULTY: "peaceful"
       GAMEMODE: "survival"
       SPAWN_PROTECTION: "0"
