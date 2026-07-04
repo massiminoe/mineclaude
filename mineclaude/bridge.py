@@ -109,6 +109,7 @@ class BridgeClient(Protocol):
     async def surface(self, timeout: float = 2.0) -> BridgeResponse: ...
     async def use_item(self, item: str, hold_ms: int | None = None) -> BridgeResponse: ...
     async def interact(self, x: int, y: int, z: int) -> BridgeResponse: ...
+    async def use_on_entity(self, entity_id: str, item: str | None = None) -> BridgeResponse: ...
     async def sleep_in_bed(self, x: int, y: int, z: int, wait_s: float | None = None) -> BridgeResponse: ...
     async def block(
         self,
@@ -379,6 +380,12 @@ class RealBridgeClient:
 
     async def interact(self, x: int, y: int, z: int) -> BridgeResponse:
         return self._parse(await self._http.post("/interact", json={"x": x, "y": y, "z": z}))
+
+    async def use_on_entity(self, entity_id: str, item: str | None = None) -> BridgeResponse:
+        body: dict[str, Any] = {"entity_id": entity_id}
+        if item is not None:
+            body["item"] = item
+        return self._parse(await self._http.post("/use_on_entity", json=body))
 
     async def sleep_in_bed(self, x: int, y: int, z: int, wait_s: float | None = None) -> BridgeResponse:
         body: dict[str, Any] = {"x": x, "y": y, "z": z}
@@ -1353,6 +1360,73 @@ class MockBridgeClient:
                     {"slept": True, "night_skipped": True, "time": 0},
                 )
         return BridgeResponse("error", f"No bed at ({x}, {y}, {z})")
+
+    # Items an animal consumes on a right-click (feeding/breeding) — the mock
+    # decrements these so tests see the same inventory_delta contract as the
+    # real /use_on_entity. Tools (shears, buckets, leads) are not consumed.
+    _ANIMAL_FOODS = {
+        "wheat", "carrot", "potato", "beetroot", "wheat_seeds", "beetroot_seeds",
+        "melon_seeds", "pumpkin_seeds", "hay_block", "golden_apple", "golden_carrot",
+        "apple", "seagrass", "bamboo", "bone", "sweet_berries",
+    }
+
+    async def use_on_entity(self, entity_id: str, item: str | None = None) -> BridgeResponse:
+        """Mock of the entity right-click. Mirrors the real route's contract:
+        not-found error, vehicle denial, villager trade-screen partial, and
+        an inventory_delta when the click consumes the held item."""
+        target = next(
+            (
+                e for e in self._nearby_entities
+                if e["name"] == entity_id
+                or e.get("type") == entity_id
+                or str(e.get("id", "")) == str(entity_id)
+            ),
+            None,
+        )
+        if target is None:
+            return BridgeResponse("error", f"Entity {entity_id} not found nearby")
+        etype = str(target.get("type", target["name"]))
+        if etype.endswith(("boat", "raft", "minecart")):
+            return BridgeResponse(
+                "error",
+                f"Boarding boats/minecarts isn't supported — can't use {entity_id} ({etype})",
+            )
+
+        held = "empty_hand"
+        inv_delta: dict[str, int] = {}
+        if item is not None:
+            held = item.replace("minecraft:", "")
+            if not any(e["name"] == held for e in self._inventory):
+                return BridgeResponse("error", f"No {held} in inventory")
+            if held in self._ANIMAL_FOODS:
+                self._remove_from_inventory(held, 1)
+                inv_delta = {held: -1}
+
+        data: dict[str, Any] = {
+            "used": True,
+            "dispatch": "entity",
+            "item": held,
+            "entity": {"id": target.get("id"), "type": etype, "name": target["name"]},
+            "method": "simulated",
+        }
+        if inv_delta:
+            data["inventory_delta"] = inv_delta
+
+        if etype == "villager":
+            data["opened_screen"] = "MerchantScreen"
+            return BridgeResponse(
+                "partial",
+                f"Used {held} on villager — opened a MerchantScreen screen and closed it; "
+                "screen-driven entity interactions (e.g. villager trading) aren't supported yet",
+                data,
+            )
+
+        delta_str = f" (-1 {held})" if inv_delta else ""
+        return BridgeResponse(
+            "success",
+            f"Used {held} on {etype} (id {target.get('id')}){delta_str}",
+            data,
+        )
 
     _USE_FOODS = {
         "bread": 5, "cooked_beef": 8, "apple": 4, "carrot": 3,

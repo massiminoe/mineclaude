@@ -186,6 +186,24 @@ and `attack` at once — use `block` to tank a skeleton's volley or a creeper's
 approach (where you *don't* want to charge in), then `attack`. Check the
 returned `blocking`.
 
+## Animals and entities
+
+`useOnEntity(entity_id, item?)` is the right-click on a mob — the use-key twin
+of `attack`, and the whole husbandry toolkit in one primitive: feed and breed
+(`"wheat"` on a cow — feed TWO adults, then confirm the baby via
+`getNearbyEntities` a few seconds later; the hearts themselves aren't readable),
+leash (`"lead"`), shear (`"shears"`), milk (`"bucket"`), tame (`"bone"` on a
+wolf, repeated). Same id source and same `type`-not-`name` filtering rule as
+combat. It hits the exact entity — no aiming — and auto-walks into reach. Read
+the returned `inventory_delta` to confirm a feed took (`{"wheat": -1}`); a
+`used: False` means that mob doesn't react to that item.
+
+What it deliberately won't do: board boats/minecarts (denied — riding isn't
+available) and villager trading (the trade screen opens but can't be driven
+yet; the call returns a `[partial]` saying so). Piglin bartering is not a
+right-click at all — `discard` a gold ingot near the piglin, step back, and
+`collectItems` what it throws.
+
 ## When something goes wrong
 
 If `get_state` shows a `cancelled` action and a recent reflex, the reflex

@@ -127,6 +127,26 @@ if not r["night_skipped"]:
 return f"Slept through to morning (time={r['time']})"
 ```
 
+## Breed two animals
+
+```python
+# Feed two adults of the same species, then confirm the baby by a new entity
+# appearing — love-mode hearts aren't client-readable, but the wheat delta
+# and the head-count are. Babies have the same `type` as adults.
+cows = await findEntities("cow", 24)
+if len(cows) < 2:
+    return f"Only {len(cows)} cow(s) in range — need two adults to breed"
+before = len(cows)
+for c in cows[:2]:
+    r = await useOnEntity(c["id"], "wheat")
+    if not r["used"]:
+        return f"Cow {c['id']} refused the wheat — already bred recently?"
+    log(f"fed cow {c['id']}: {r.get('inventory_delta')}")
+await sleep(8)                     # courtship + baby spawn takes a few seconds
+after = len(await findEntities("cow", 24))
+return f"{'Baby bred!' if after > before else 'No baby yet'} ({before} -> {after} cows)"
+```
+
 ## Smelt a batch
 
 ```python

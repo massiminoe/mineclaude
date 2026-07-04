@@ -31,9 +31,11 @@ const repoRoot = path.resolve(__dirname, "..");
 const frontendDir = path.join(repoRoot, "frontend");
 const outPath = path.join(frontendDir, "public", "itemIcons.json");
 
-// minecraft-assets is a devDependency of the frontend, so resolve it from there.
+// minecraft-assets and pngjs are devDependencies of the frontend, so resolve
+// them from there.
 const require = createRequire(path.join(frontendDir, "package.json"));
 const mcAssets = require("minecraft-assets");
+const { PNG } = require("pngjs");
 
 const assets = mcAssets(VERSION);
 if (!assets) {
@@ -72,6 +74,26 @@ function resolveTexture(name, entry) {
   return null;
 }
 
+// Beds have no flat item/block face texture — the item entry's `texture`
+// resolves to the base color's plain wool square (e.g. white_bed → a blank
+// white tile that vanishes against the monitor's dark UI), and the block
+// entry resolves to bare oak planks. Neither reads as "a bed". The real
+// texture lives in the entity atlas (entity/bed/<color>.png, used to render
+// the in-world 3D model) — its top-left 24x24 corner happens to contain the
+// head-of-bed view (headboard + pillow + quilt), which crops cleanly into a
+// recognizable, correctly-colored icon.
+const BED_CROP = 24;
+function bedIcon(name) {
+  const m = /^(\w+)_bed$/.exec(name);
+  if (!m) return null;
+  const p = path.join(dir, "entity", "bed", `${m[1]}.png`);
+  if (!fs.existsSync(p)) return null;
+  const src = PNG.sync.read(fs.readFileSync(p));
+  const out = new PNG({ width: BED_CROP, height: BED_CROP });
+  PNG.bitblt(src, out, 0, 0, BED_CROP, BED_CROP, 0, 0);
+  return PNG.sync.write(out);
+}
+
 // Build a name → entry map (items take precedence, blocks fill gaps).
 const byName = {};
 for (const e of assets.itemsArray) byName[e.name] = e;
@@ -81,6 +103,12 @@ const icons = {};
 let hit = 0;
 const misses = [];
 for (const name of Object.keys(byName).sort()) {
+  const bed = bedIcon(name);
+  if (bed) {
+    icons[name] = `data:image/png;base64,${bed.toString("base64")}`;
+    hit++;
+    continue;
+  }
   const file = resolveTexture(name, byName[name]);
   if (!file) {
     misses.push(name);

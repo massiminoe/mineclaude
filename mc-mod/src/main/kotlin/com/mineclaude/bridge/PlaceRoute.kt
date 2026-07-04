@@ -7,6 +7,7 @@ import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket
 import net.minecraft.util.Hand
 import net.minecraft.util.hit.BlockHitResult
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.Direction
 import org.slf4j.LoggerFactory
 
 /**
@@ -220,7 +221,7 @@ object PlaceRoute {
 
     private fun doPlace(target: BlockPos, block: String, hotbarSlot: Int): BridgeResponse {
         val placeResult = TickThread.submitAndWait(timeoutMs = 3_000) {
-            placeOnTick(target, hotbarSlot)
+            placeOnTick(target, hotbarSlot, block)
         }
         when (placeResult) {
             is PlaceTickResult.Error -> return HttpBridge.err(placeResult.message)
@@ -358,7 +359,7 @@ object PlaceRoute {
         data object Clicked : PlaceTickResult
     }
 
-    private fun placeOnTick(target: BlockPos, hotbarSlot: Int): PlaceTickResult {
+    private fun placeOnTick(target: BlockPos, hotbarSlot: Int, block: String): PlaceTickResult {
         val mc = MinecraftClient.getInstance()
         val player = mc.player ?: return PlaceTickResult.Error("no player")
         val mgr = mc.interactionManager ?: return PlaceTickResult.Error("no interaction manager")
@@ -370,6 +371,21 @@ object PlaceRoute {
         // own placement code keys off the eye-ray hit, but interactBlock
         // will accept any in-reach BlockHitResult we hand it directly.
         WorldHelpers.lookAtBlock(player, adjacent.pos)
+
+        // Beds are 2-cell + orientation-dependent: vanilla derives the head
+        // direction from the player's yaw at click time, which the aim above
+        // just set for an unrelated reason (raycasting the adjacent block).
+        // Left alone, that yaw is arbitrary — and near-degenerate (unstable
+        // atan2) for the common "place on the ground below" case — so pick a
+        // real direction (head cell must be free) and override yaw with it.
+        if (isBed(block)) {
+            val facing = resolveBedFacing(target, player)
+                ?: return PlaceTickResult.Error(
+                    "No clear cell for the bed's head next to (${target.x},${target.y},${target.z}) " +
+                        "— all 4 cardinal neighbours are blocked",
+                )
+            player.yaw = facing.positiveHorizontalDegrees
+        }
 
         // Re-affirm hotbar selection on the tick we click — guards against
         // the rare case where another tick handler swapped us between
@@ -401,5 +417,24 @@ object PlaceRoute {
     private fun selectHotbar(player: ClientPlayerEntity, slot: Int) {
         player.inventory.setSelectedSlot(slot)
         player.networkHandler.sendPacket(UpdateSelectedSlotC2SPacket(slot))
+    }
+
+    private fun isBed(block: String): Boolean {
+        val id = WorldHelpers.normalizeBlockId(block)
+        return id == "bed" || id.endsWith("_bed")
+    }
+
+    /**
+     * Which cardinal direction the bed's head should point (foot lands at
+     * [target], head at `target.offset(direction)`, matching vanilla's
+     * `BedBlock.getPlacementState`). Prefers the player's current facing —
+     * least surprising when it's free — else the first cardinal whose head
+     * cell is replaceable. Null only when boxed in on all 4 sides.
+     */
+    private fun resolveBedFacing(target: BlockPos, player: ClientPlayerEntity): Direction? {
+        val current = Direction.fromHorizontalDegrees(player.yaw.toDouble())
+        val cardinals = listOf(Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST)
+        val order = (listOf(current) + cardinals).distinct()
+        return order.firstOrNull { WorldHelpers.isReplaceable(target.offset(it)) }
     }
 }

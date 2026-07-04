@@ -690,6 +690,73 @@ async def test_use_bridge_strips_minecraft_prefix(bridge):
     assert resp.data["item"] == "apple"
 
 
+# --- useOnEntity ------------------------------------------------------------
+
+
+def _add_entity(bridge, name, etype, entity_id, distance=2.0):
+    bridge._nearby_entities.append(
+        {"name": name, "type": etype, "id": entity_id, "x": 2, "y": 64, "z": 0,
+         "distance": distance, "health": 10},
+    )
+
+
+@pytest.mark.asyncio
+async def test_use_on_entity_feeds_animal(bridge, prims):
+    """Feeding a cow consumes one wheat and reports the delta."""
+    _add_entity(bridge, "Cow", "cow", 42)
+    bridge._add_to_inventory("wheat", 3)
+    result = await prims["useOnEntity"](42, "wheat")
+    assert result["used"] is True
+    assert result["entity"]["type"] == "cow"
+    assert result["inventory_delta"] == {"wheat": -1}
+    assert any(i["name"] == "wheat" and i["count"] == 2 for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_use_on_entity_tool_not_consumed(bridge, prims):
+    """A tool click (shears on a sheep) doesn't eat the tool."""
+    _add_entity(bridge, "Sheep", "sheep", 43)
+    bridge._add_to_inventory("shears", 1)
+    result = await prims["useOnEntity"](43, "shears")
+    assert result["used"] is True
+    assert "inventory_delta" not in result
+    assert any(i["name"] == "shears" for i in bridge._inventory)
+
+
+@pytest.mark.asyncio
+async def test_use_on_entity_not_found_raises(bridge, prims):
+    with pytest.raises(RuntimeError, match="not found"):
+        await prims["useOnEntity"](999)
+
+
+@pytest.mark.asyncio
+async def test_use_on_entity_denies_vehicles(bridge, prims):
+    """Boats/minecarts are quietly denied — boarding isn't supported."""
+    _add_entity(bridge, "Boat", "oak_boat", 44)
+    _add_entity(bridge, "Minecart", "chest_minecart", 45)
+    with pytest.raises(RuntimeError, match="isn't supported"):
+        await prims["useOnEntity"](44)
+    with pytest.raises(RuntimeError, match="isn't supported"):
+        await prims["useOnEntity"](45)
+
+
+@pytest.mark.asyncio
+async def test_use_on_entity_missing_item_raises(bridge, prims):
+    _add_entity(bridge, "Cow", "cow", 46)
+    with pytest.raises(RuntimeError, match="No wheat in inventory"):
+        await prims["useOnEntity"](46, "wheat")
+
+
+@pytest.mark.asyncio
+async def test_use_on_entity_villager_reports_trade_screen(bridge, prims):
+    """A villager click opens the trade screen — surfaced as a partial with
+    opened_screen, so the agent learns trading isn't driveable."""
+    _add_entity(bridge, "Villager", "villager", 47)
+    result = await prims["useOnEntity"](47)
+    assert result["opened_screen"] == "MerchantScreen"
+    assert "aren't supported" in result["message"]
+
+
 # --- Anvil ----------------------------------------------------------------
 
 

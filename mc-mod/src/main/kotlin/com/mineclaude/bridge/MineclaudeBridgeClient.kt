@@ -90,6 +90,13 @@ class MineclaudeBridgeClient : ClientModInitializer {
         UseRoute.register(bridge)
         UseItemRoute.register(bridge)
         InteractRoute.register(bridge)
+        // Right-click an ENTITY — /use_on_entity {entity_id, item?}. The
+        // use-key twin of /attack's attackEntity (explicit entity, no
+        // crosshair raycast): feeding/breeding, leads, shears, milking,
+        // taming, name tags. Boats/minecarts are denied (riding isn't
+        // supported); a villager click opens the trade screen, which is
+        // closed and reported as partial (no /trade yet).
+        UseOnEntityRoute.register(bridge)
         // Dedicated bucket surface — /bucket/fill {x,y,z} validates a still
         // source and fills; /bucket/empty {x,y,z,item?} pours into a cell.
         // Split out of /use because empty vs. filled buckets need opposite aim

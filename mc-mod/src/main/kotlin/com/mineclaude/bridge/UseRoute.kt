@@ -357,9 +357,9 @@ object UseRoute {
         player.networkHandler.sendPacket(UpdateSelectedSlotC2SPacket(slot))
     }
 
-    // -- inventory diff + screen close -----------------------------------------
+    // -- inventory diff + screen close (shared with /use_on_entity) ------------
 
-    private fun snapshotCounts(): Map<String, Int> = TickThread.submitAndWait(timeoutMs = 1_000) {
+    internal fun snapshotCounts(): Map<String, Int> = TickThread.submitAndWait(timeoutMs = 1_000) {
         val player = MinecraftClient.getInstance().player ?: return@submitAndWait emptyMap<String, Int>()
         val inv = player.inventory
         val out = HashMap<String, Int>()
@@ -372,7 +372,7 @@ object UseRoute {
         out
     }
 
-    private fun computeDelta(start: Map<String, Int>, end: Map<String, Int>): Map<String, Int> {
+    internal fun computeDelta(start: Map<String, Int>, end: Map<String, Int>): Map<String, Int> {
         val out = LinkedHashMap<String, Int>()
         for (name in (start.keys + end.keys)) {
             val d = (end[name] ?: 0) - (start[name] ?: 0)
@@ -381,7 +381,7 @@ object UseRoute {
         return out
     }
 
-    private fun closeAnyScreen(): String? = TickThread.submitAndWait(timeoutMs = 1_000) {
+    internal fun closeAnyScreen(): String? = TickThread.submitAndWait(timeoutMs = 1_000) {
         val mc = MinecraftClient.getInstance()
         val screen = mc.currentScreen ?: return@submitAndWait null
         val name = screen.javaClass.simpleName

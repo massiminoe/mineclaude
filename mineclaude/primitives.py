@@ -523,6 +523,42 @@ def make_primitives(
         data["message"] = resp.message
         return data
 
+    async def useOnEntity(entity_id: int | str, item: str | None = None) -> dict:
+        """Right-click an entity — the use-key twin of attack(). This is how a
+        player feeds, breeds, leashes, shears, milks, tames, saddles, and
+        name-tags mobs; get ids from getNearbyEntities / findEntities.
+
+        Forms:
+          - useOnEntity(id, "wheat")     -> feed a cow/sheep (breed: feed TWO)
+          - useOnEntity(id, "lead")      -> leash an animal (click a fence via
+                                            use(look_at=...) to tie it off)
+          - useOnEntity(id, "shears")    -> shear a sheep
+          - useOnEntity(id, "bucket")    -> milk a cow
+          - useOnEntity(id, "bone")      -> tame a wolf (repeat until it sits)
+          - useOnEntity(id)              -> empty-hand click (toggle a tamed
+                                            wolf sit, pick up a leashed lead)
+
+        Equips `item` first if given, auto-navigates within reach (the target
+        may wander; it retries a few times). Hits the exact entity — no aiming
+        needed. Returns a dict: `used` (did the entity react), `entity`
+        ({id, type, name}), and `inventory_delta` (e.g. {"wheat": -1} after a
+        feed — read it to confirm the feed took). Breeding hearts aren't
+        client-readable: confirm a baby via getNearbyEntities a few seconds
+        later. A no-op click (wrong item for this mob) returns `used: False`
+        rather than raising — check it.
+
+        NOT supported: boats/minecarts (boarding is denied — riding isn't
+        available) and villager trading (the trade screen is closed and
+        reported as a [partial]). Piglin bartering is not a right-click at
+        all — drop a gold ingot near the piglin (discard) and collect what it
+        throws back."""
+        resp = await bridge.use_on_entity(str(entity_id), item)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
     async def fillBucket(x: int, y: int, z: int) -> dict:
         """Fill an empty bucket from the fluid SOURCE at (x, y, z).
 
@@ -729,6 +765,7 @@ def make_primitives(
         "interact": interact,
         "sleepInBed": sleepInBed,
         "use": use,
+        "useOnEntity": useOnEntity,
         "fillBucket": fillBucket,
         "emptyBucket": emptyBucket,
         "getStats": getStats,

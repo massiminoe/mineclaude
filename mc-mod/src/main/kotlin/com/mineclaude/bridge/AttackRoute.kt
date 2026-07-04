@@ -801,27 +801,8 @@ object AttackRoute {
         return if (ok) HttpBridge.ok(data, msg) else BridgeResponse("error", msg, data, 200)
     }
 
-    private fun matchEntity(entities: Iterable<Entity>, query: String): Entity? {
-        // Numeric id path — used by the damage_taken reflex to retaliate
-        // against the exact attacker. Skip the name/type loop entirely so
-        // a stringified id can't accidentally substring-match a mob name.
-        query.toIntOrNull()?.let { id ->
-            for (entity in entities) {
-                if (entity is net.minecraft.client.network.ClientPlayerEntity) continue
-                if (entity.id == id) return entity
-            }
-            return null
-        }
-        val q = query.lowercase()
-        for (entity in entities) {
-            if (entity is net.minecraft.client.network.ClientPlayerEntity) continue
-            val name = entity.name.string.lowercase().removePrefix("minecraft:")
-            val type = Registries.ENTITY_TYPE.getId(entity.type).path.lowercase()
-            if (q == name || q == type) return entity
-            if (q in name || q in type) return entity
-        }
-        return null
-    }
+    private fun matchEntity(entities: Iterable<Entity>, query: String): Entity? =
+        EntityHelpers.matchEntity(entities, query)
 
     private fun summary(
         reason: String,
