@@ -4,9 +4,9 @@ import { Feed } from "./components/Feed";
 import { Actions } from "./components/Actions";
 import { Events } from "./components/Events";
 import { InventoryModal } from "./components/InventoryModal";
-import { ItemIcon, DurabilityBar } from "./components/ItemIcon";
+import { ItemIcon, DurabilityBar, EnchantTip } from "./components/ItemIcon";
 import { useItemIcons } from "./icons";
-import { usedMainSlots } from "./types";
+import { usedMainSlots, formatEnchantments } from "./types";
 import type { GameState, InventoryItem } from "./types";
 import "./App.css";
 
@@ -65,15 +65,22 @@ function Hotbar({ game, onExpand }: { game: GameState | null; onExpand: () => vo
       <div className="hotbar-cells">
         {Array.from({ length: 9 }, (_, k) => {
           const item = bySlot.get(k);
+          const enchanted = !!item?.enchantments?.length;
+          const enchTitle = formatEnchantments(item?.enchantments);
           return (
             <span
               key={k}
-              className={`hbc${k === held ? " held" : ""}${item ? "" : " empty"}`}
-              title={item ? `${item.name}${item.count > 1 ? ` ×${item.count}` : ""}` : undefined}
+              className={`hbc${k === held ? " held" : ""}${item ? "" : " empty"}${enchanted ? " enchanted" : ""}`}
+              title={
+                item
+                  ? `${item.name}${item.count > 1 ? ` ×${item.count}` : ""}${enchTitle ? ` · ${enchTitle}` : ""}`
+                  : undefined
+              }
             >
               {item && <ItemIcon name={item.name} size={44} lookup={lookup} />}
               {item && item.count > 1 && <span className="ct">{item.count}</span>}
               {item?.durability && <DurabilityBar {...item.durability} />}
+              {item && <EnchantTip name={item.name} enchantments={item.enchantments} />}
             </span>
           );
         })}

@@ -149,6 +149,14 @@ object PlayerStatusRoutes {
                     "max" to stack.maxDamage,
                 )
             }
+            // Enchanted gear only — worn armor/held tools live in this same
+            // list (slots 36..40), so this is the one place that needs to
+            // read enchantments for both the inventory grid and the
+            // equipped view to surface them (frontend looks them up by name).
+            val enchantments = stackEnchantments(stack)
+            if (enchantments.isNotEmpty()) {
+                entry["enchantments"] = enchantments
+            }
             result.add(entry)
         }
         return result

@@ -1234,6 +1234,9 @@ class MockBridgeClient:
         self._xp_level -= tier
         self._remove_from_inventory("lapis_lazuli", tier)
         enchantments = [{"name": "unbreaking", "level": tier}]
+        entry = next((e for e in self._inventory if e["name"] == item), None)
+        if entry is not None:
+            entry["enchantments"] = enchantments
         return BridgeResponse(
             "success",
             f"Enchanted {item} -> [unbreaking {tier}] (xp -{tier})",

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
-import { OFFHAND_SLOT, usedMainSlots } from "../types";
-import type { GameState, InventoryItem } from "../types";
-import { ItemIcon, DurabilityBar } from "./ItemIcon";
+import { OFFHAND_SLOT, usedMainSlots, formatEnchantments } from "../types";
+import type { GameState, InventoryItem, Enchantment } from "../types";
+import { ItemIcon, DurabilityBar, EnchantTip } from "./ItemIcon";
 import { useItemIcons } from "../icons";
 
 // Faithful in-game inventory layout: a 3x9 main grid above the 9-slot hotbar,
@@ -25,14 +25,17 @@ function Cell({
   lookup: (name: string) => string | undefined;
 }) {
   if (!item) return <div className="invc empty" />;
+  const enchanted = !!item.enchantments?.length;
+  const enchTitle = formatEnchantments(item.enchantments);
   return (
     <div
-      className={`invc${held ? " held" : ""}`}
-      title={`${item.name}${item.count > 1 ? ` ×${item.count}` : ""} · slot ${item.slot}`}
+      className={`invc${held ? " held" : ""}${enchanted ? " enchanted" : ""}`}
+      title={`${item.name}${item.count > 1 ? ` ×${item.count}` : ""} · slot ${item.slot}${enchTitle ? ` · ${enchTitle}` : ""}`}
     >
       <ItemIcon name={item.name} size={44} lookup={lookup} />
       {item.count > 1 && <span className="ct">{item.count}</span>}
       {item.durability && <DurabilityBar {...item.durability} />}
+      <EnchantTip name={item.name} enchantments={item.enchantments} />
     </div>
   );
 }
@@ -43,17 +46,25 @@ function ArmorSlot({
   glyph,
   lookup,
   durability,
+  enchantments,
 }: {
   name: string | null;
   label: string;
   glyph: string;
   lookup: (name: string) => string | undefined;
   durability?: { remaining: number; max: number };
+  enchantments?: Enchantment[];
 }) {
+  const enchanted = !!enchantments?.length;
+  const enchTitle = formatEnchantments(enchantments);
   return (
-    <div className={`aslot${name ? " filled" : ""}`} title={name ? `${label}: ${name}` : `${label}: empty`}>
+    <div
+      className={`aslot${name ? " filled" : ""}${enchanted ? " enchanted" : ""}`}
+      title={name ? `${label}: ${name}${enchTitle ? ` · ${enchTitle}` : ""}` : `${label}: empty`}
+    >
       {name ? <ItemIcon name={name} size={44} lookup={lookup} /> : <span className="glyph">{glyph}</span>}
       {durability && <DurabilityBar {...durability} />}
+      {name && <EnchantTip name={name} enchantments={enchantments} />}
     </div>
   );
 }
@@ -75,11 +86,15 @@ export function InventoryModal({ game, onClose }: { game: GameState; onClose: ()
   const equipped = game.equipped;
   const offhand = bySlot.get(OFFHAND_SLOT)?.name ?? null;
   const filled = usedMainSlots(game.inventory);
-  // equipped carries names only; pull durability from the inventory array
-  // (armor/offhand slots) by item name so worn gear shows wear too.
+  // equipped carries names only; pull durability + enchantments from the
+  // inventory array (armor/offhand slots) by item name so worn gear shows
+  // wear and enchant glint too.
   const durByName = new Map<string, { remaining: number; max: number }>();
   for (const it of game.inventory) if (it.durability) durByName.set(it.name, it.durability);
   const dur = (n: string | null) => (n ? durByName.get(n) : undefined);
+  const enchByName = new Map<string, Enchantment[]>();
+  for (const it of game.inventory) if (it.enchantments?.length) enchByName.set(it.name, it.enchantments);
+  const ench = (n: string | null) => (n ? enchByName.get(n) : undefined);
 
   return (
     <div className="inv-scrim" onClick={onClose}>
@@ -101,6 +116,7 @@ export function InventoryModal({ game, onClose }: { game: GameState; onClose: ()
               glyph="hand"
               lookup={lookup}
               durability={dur(equipped?.hand ?? null)}
+              enchantments={ench(equipped?.hand ?? null)}
             />
             <div className="armorgap" />
             {ARMOR_SLOTS.map((s) => (
@@ -111,10 +127,18 @@ export function InventoryModal({ game, onClose }: { game: GameState; onClose: ()
                 glyph={s.label.toLowerCase()}
                 lookup={lookup}
                 durability={dur(equipped?.[s.key] ?? null)}
+                enchantments={ench(equipped?.[s.key] ?? null)}
               />
             ))}
             <div className="armorgap" />
-            <ArmorSlot name={offhand} label="Offhand" glyph="off" lookup={lookup} durability={dur(offhand)} />
+            <ArmorSlot
+              name={offhand}
+              label="Offhand"
+              glyph="off"
+              lookup={lookup}
+              durability={dur(offhand)}
+              enchantments={ench(offhand)}
+            />
           </div>
 
           <div className="gridcol">

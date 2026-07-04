@@ -53,6 +53,8 @@ object CollectRoute {
         bridge.addRoute("POST", "/collect") { ex -> handle(ex) }
     }
 
+    private const val STORAGE_SLOTS = 36
+
     private fun handle(ex: HttpExchange): BridgeResponse {
         val body = try { ex.jsonBody() } catch (e: BodyParseException) {
             return HttpBridge.err(e.message ?: "bad body", status = 400)
@@ -60,6 +62,13 @@ object CollectRoute {
         val radius = (body["radius"] as? Number)?.toDouble() ?: 3.0
 
         val callId = "%04x".format((System.nanoTime() ushr 8).toInt() and 0xFFFF)
+
+        val occupied = occupiedSlots()
+        if (occupied >= STORAGE_SLOTS) {
+            log.info("collect[{}]: ABORT inventory full ({}/{})", callId, occupied, STORAGE_SLOTS)
+            return HttpBridge.err("Inventory full ($occupied/$STORAGE_SLOTS) — cannot collect items")
+        }
+
         log.info("collect[{}]: BEGIN radius={}", callId, radius)
         val result = runCollect(callId, radius)
         log.info("collect[{}]: END collected={} unreachable={}",
@@ -361,6 +370,11 @@ object CollectRoute {
             }
             ScanResult(px, py, pz, out)
         }
+    }
+
+    private fun occupiedSlots(): Int = TickThread.submitAndWait(timeoutMs = 1_000) {
+        val inv = MinecraftClient.getInstance().player?.inventory ?: return@submitAndWait 0
+        (0 until STORAGE_SLOTS).count { !inv.getStack(it).isEmpty }
     }
 
     private fun snapshotInventory(): Map<String, Int> {

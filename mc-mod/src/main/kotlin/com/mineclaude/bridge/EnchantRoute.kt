@@ -129,16 +129,26 @@ object EnchantRoute {
 /**
  * Read the enchantments on the stack in [slot] as a list of {name, level}.
  * Empty list if the slot is empty or unenchanted. Kept on StationMenu so the
- * enchant route shares its tick-thread idioms; uses only the stable
- * EnchantmentHelper / ItemEnchantmentsComponent surface.
+ * enchant route shares its tick-thread idioms; delegates to [stackEnchantments]
+ * so `/status` can read the same shape off a plain inventory stack.
  */
 internal fun StationMenu.enchantInfo(handler: ScreenHandler, slot: Int): List<Map<String, Any?>> =
     TickThread.submitAndWait(timeoutMs = 1_000) {
         val stack = handler.slots.getOrNull(slot)?.stack ?: return@submitAndWait emptyList()
-        if (stack.isEmpty) return@submitAndWait emptyList()
-        val comp = EnchantmentHelper.getEnchantments(stack)
-        comp.enchantments.map { entry ->
-            val name = entry.key.map { it.value.path }.orElse("unknown")
-            mapOf<String, Any?>("name" to name, "level" to comp.getLevel(entry))
-        }
+        stackEnchantments(stack)
     }
+
+/**
+ * Read the enchantments on [stack] as a list of {name, level}; empty if the
+ * stack is empty or unenchanted. Caller must already be on the tick thread —
+ * this does no submitting itself, so `PlayerStatusRoutes.readInventory` (which
+ * runs inside the `/status` tick-thread snapshot) can call it directly per item.
+ */
+internal fun stackEnchantments(stack: net.minecraft.item.ItemStack): List<Map<String, Any?>> {
+    if (stack.isEmpty) return emptyList()
+    val comp = EnchantmentHelper.getEnchantments(stack)
+    return comp.enchantments.map { entry ->
+        val name = entry.key.map { it.value.path }.orElse("unknown")
+        mapOf<String, Any?>("name" to name, "level" to comp.getLevel(entry))
+    }
+}

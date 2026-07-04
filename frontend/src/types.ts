@@ -27,12 +27,41 @@ export interface QueueState {
   recent: ActionItem[];
 }
 
+export interface Enchantment {
+  name: string;
+  level: number;
+}
+
 export interface InventoryItem {
   name: string;
   count: number;
   slot: number;
   /** Present for tools/armor/weapons; absent for stackables. */
   durability?: { remaining: number; max: number };
+  /** Present when the stack carries at least one enchantment. */
+  enchantments?: Enchantment[];
+}
+
+const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+
+/** 1 -> "I", 5 -> "V", 11+ falls back to the plain number (enchant levels
+ *  never go that high in vanilla, but nothing should render blank). */
+export function romanize(level: number): string {
+  return ROMAN[level] ?? String(level);
+}
+
+/** "unbreaking" -> "Unbreaking", "silk_touch" -> "Silk Touch". */
+export function titleCase(name: string): string {
+  return name
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** "Sharpness V, Unbreaking III" — human-readable enchantment summary for
+ *  tooltips. Empty string when there's nothing to show. */
+export function formatEnchantments(list: Enchantment[] | undefined): string {
+  if (!list || list.length === 0) return "";
+  return list.map((e) => `${titleCase(e.name)} ${romanize(e.level)}`).join(", ");
 }
 
 // The bridge's inventory array spans every player slot: 0-35 are the 36 main

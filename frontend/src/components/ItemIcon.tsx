@@ -1,6 +1,9 @@
 // A pixel-art Minecraft item icon. Pure renderer — the caller passes a `lookup`
 // from useItemIcons() (so a list of icons shares one hook subscription).
 
+import { romanize, titleCase } from "../types";
+import type { Enchantment } from "../types";
+
 /** Falls back to a dimmed monogram square when no texture exists for the name
  *  (or the map is still loading), so a cell is never blank. */
 export function ItemIcon({
@@ -43,5 +46,24 @@ export function DurabilityBar({ remaining, max }: { remaining: number; max: numb
     <span className="dura">
       <span className="dura-fill" style={{ width: `${ratio * 100}%`, background: `hsl(${hue} 75% 45%)` }} />
     </span>
+  );
+}
+
+/** Flight-deck-styled hover popover listing an enchanted item's enchantments.
+ *  Renders nothing without any — drop it inside any `position: relative` slot
+ *  (`.invc` / `.aslot` / `.hbc` all already qualify) and it shows on `:hover`
+ *  via CSS, no JS wiring needed. */
+export function EnchantTip({ name, enchantments }: { name: string; enchantments: Enchantment[] | undefined }) {
+  if (!enchantments || enchantments.length === 0) return null;
+  return (
+    <div className="ench-tip">
+      <span className="ench-tip-lbl">Enchantments</span>
+      <span className="ench-tip-item">{titleCase(name)}</span>
+      {enchantments.map((e, i) => (
+        <div className="ench-tip-line" key={i}>
+          {titleCase(e.name)} {romanize(e.level)}
+        </div>
+      ))}
+    </div>
   );
 }
