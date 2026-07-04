@@ -198,6 +198,17 @@ combat. It hits the exact entity — no aiming — and auto-walks into reach. Re
 the returned `inventory_delta` to confirm a feed took (`{"wheat": -1}`); a
 `used: False` means that mob doesn't react to that item.
 
+The bare form `useOnEntity(id)` is a *guaranteed* empty-hand click — it stows
+whatever you're holding first (never drops it), so toggling a tamed wolf's sit
+right after bone-taming can't accidentally feed the leftover bone. If you want
+an item involved, pass it explicitly.
+
+To tie a leashed animal to a fence post: `use(look_at=(fence centre))`. The
+tie-off is verified world-side — vanilla gives the client no success signal
+for it, so the bridge checks the leash actually moved to a knot on the post
+and returns `used: True` with `tied` (mob ids) and `leash_knot` ({x,y,z}).
+Trust that over eyeballing.
+
 What it deliberately won't do: board boats/minecarts (denied — riding isn't
 available) and villager trading (the trade screen opens but can't be driven
 yet; the call returns a `[partial]` saying so). Piglin bartering is not a

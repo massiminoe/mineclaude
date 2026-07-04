@@ -515,6 +515,12 @@ def make_primitives(
         fill). Raises only on hard failures (item missing, navigation failed);
         a no-op (aim missed / not usable here) returns `used: False` rather
         than raising — check it.
+
+        Leash tie-off: aiming at a fence while leading mobs (after
+        useOnEntity(id, "lead")) ties them to a knot on the post. The bridge
+        verifies this against world state (vanilla gives the client no
+        success signal for it) and returns `used: True` with `tied` (the mob
+        ids) and `leash_knot` ({x,y,z}) when it took.
         """
         resp = await bridge.use(item, look_at=look_at, hold_ms=hold_ms)
         if resp.status == "error":
@@ -535,8 +541,11 @@ def make_primitives(
           - useOnEntity(id, "shears")    -> shear a sheep
           - useOnEntity(id, "bucket")    -> milk a cow
           - useOnEntity(id, "bone")      -> tame a wolf (repeat until it sits)
-          - useOnEntity(id)              -> empty-hand click (toggle a tamed
-                                            wolf sit, pick up a leashed lead)
+          - useOnEntity(id)              -> guaranteed EMPTY-hand click (toggle
+                                            a tamed wolf sit, unleash) — stows
+                                            whatever was held first, so a
+                                            leftover bone can't feed the wolf
+                                            you meant to sit
 
         Equips `item` first if given, auto-navigates within reach (the target
         may wander; it retries a few times). Hits the exact entity — no aiming

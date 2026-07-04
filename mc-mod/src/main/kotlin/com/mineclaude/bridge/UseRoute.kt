@@ -3,8 +3,11 @@ package com.mineclaude.bridge
 import com.sun.net.httpserver.HttpExchange
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientPlayerEntity
+import net.minecraft.entity.Leashable
+import net.minecraft.entity.decoration.LeashKnotEntity
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket
 import net.minecraft.registry.Registries
+import net.minecraft.registry.tag.BlockTags
 import net.minecraft.screen.slot.SlotActionType
 import net.minecraft.util.Hand
 import net.minecraft.util.hit.BlockHitResult
@@ -44,6 +47,19 @@ import org.slf4j.LoggerFactory
  * use). We treat any not-accepted block result as "fall through", which is
  * simpler and harmless for every item we care about (a failed block-place's
  * `BlockItem.use()` is a no-op). We rely only on `ActionResult.isAccepted`.
+ *
+ * # Leash tie-off: the one click ActionResult can't see
+ * Tying leashed mobs to a fence is invisible to client prediction:
+ * `LeadItem.useOnBlock` on a fence returns PASS **unconditionally on the
+ * client** (the attach logic is `!world.isClient`-gated), so a tie-off that
+ * worked server-side reads as "nothing happened" here — a false negative
+ * that made the agent retry a leash that was already tied. Since no
+ * ActionResult can ever be right, we verify against world state instead
+ * (the `/bucket/empty` pattern): before a fence click we snapshot which
+ * mobs are leashed to the player, and if the dispatch comes back
+ * not-accepted we poll the client-synced leash state — any of those mobs
+ * now held by a [LeashKnotEntity] at the clicked pos means the tie-off
+ * happened. Reported as `used: true` + `tied` + `leash_knot`.
  */
 object UseRoute {
     private val log = LoggerFactory.getLogger("mineclaude-bridge.use")!!
@@ -53,6 +69,12 @@ object UseRoute {
 
     /** Settle window so a screen-opening interaction lands before we check. */
     private const val POST_CLICK_SETTLE_MS = 150L
+
+    /**
+     * How long to poll for the server round-trip that proves a leash
+     * tie-off (knot spawn + attach packets) after a client-PASS fence click.
+     */
+    private const val TIE_OFF_VERIFY_MS = 600L
 
     fun register(bridge: HttpBridge) {
         bridge.addRoute("POST", "/use") { ex -> handle(ex) }
@@ -95,7 +117,7 @@ object UseRoute {
         data class Ok(
             /** "block" (a block consumed the click) or "item" (fell through to use). */
             val dispatch: String,
-            /** Did anything actually happen? Block-accept or item-accept. */
+            /** Did anything actually happen? Block-accept, item-accept, or a verified tie-off. */
             val accepted: Boolean,
             val item: String,
             val aimed: Vec3d?,
@@ -103,6 +125,8 @@ object UseRoute {
             val holdMs: Long,
             val openedScreen: String?,
             val invDelta: Map<String, Int>,
+            /** Mob ids verified re-leashed to a knot at the clicked fence (world-state check). */
+            val tied: List<Int> = emptyList(),
         ) : Outcome
     }
 
@@ -146,6 +170,7 @@ object UseRoute {
         val dispatch = TickThread.submitAndWait(timeoutMs = 2_000) {
             val mc = MinecraftClient.getInstance()
             val player = mc.player ?: return@submitAndWait Dispatch.Error("no player — not connected to a world")
+            val world = mc.world ?: return@submitAndWait Dispatch.Error("no world")
             val mgr = mc.interactionManager ?: return@submitAndWait Dispatch.Error("no interaction manager")
             WorldHelpers.ensureNoScreenOpen(player)
 
@@ -157,6 +182,18 @@ object UseRoute {
                 val hr = player.raycast(WorldHelpers.BLOCK_REACH, 1.0f, /*includeFluids=*/ false)
                 if (hr.type == HitResult.Type.BLOCK) hit = hr as BlockHitResult
             }
+
+            // Leash tie-off pre-state: clicking a fence ties any mobs leashed
+            // to the player, but the client-side ActionResult is always PASS
+            // for that path — snapshot who's leashed now (same tick as the
+            // click) so the post-click verification can prove the tie-off.
+            val preLeashed: List<Int> = if (hit != null &&
+                world.getBlockState(hit.blockPos).isIn(BlockTags.FENCES)
+            ) {
+                world.entities.mapNotNull { e ->
+                    if (e is Leashable && e.leashHolder?.id == player.id) e.id else null
+                }
+            } else emptyList()
 
             // Block-first dispatch (vanilla order).
             if (hit != null) {
@@ -175,7 +212,7 @@ object UseRoute {
             val holdNow = accepted && holdMs > 0
             if (holdNow) mc.options.useKey.setPressed(true)
             player.swingHand(Hand.MAIN_HAND)
-            Dispatch.Item(hit, accepted, holdNow)
+            Dispatch.Item(hit, accepted, holdNow, preLeashed)
         }
 
         if (dispatch is Dispatch.Error) return Outcome.Err(dispatch.message)
@@ -204,6 +241,24 @@ object UseRoute {
         Thread.sleep(POST_CLICK_SETTLE_MS)
         val openedScreen = closeAnyScreen()
 
+        // Leash tie-off ground truth: a fence click that came back
+        // not-accepted may still have tied the player's leashed mobs (the
+        // client ActionResult is blind to it — see the class kdoc). Poll the
+        // client-synced leash state briefly: any pre-click mob now held by a
+        // knot at the clicked pos proves the tie-off.
+        var tied: List<Int> = emptyList()
+        if (dispatch is Dispatch.Item && !dispatch.accepted &&
+            dispatch.preLeashed.isNotEmpty() && dispatch.hit != null
+        ) {
+            val fencePos = dispatch.hit.blockPos
+            val deadline = System.currentTimeMillis() + TIE_OFF_VERIFY_MS
+            while (true) {
+                tied = checkTieOff(fencePos, dispatch.preLeashed)
+                if (tied.isNotEmpty() || System.currentTimeMillis() >= deadline) break
+                Thread.sleep(100)
+            }
+        }
+
         val after = snapshotCounts()
         val invDelta = computeDelta(before, after)
 
@@ -213,19 +268,41 @@ object UseRoute {
                 hit = hitInfo(dispatch.hit), holdMs = 0, openedScreen = openedScreen, invDelta = invDelta,
             )
             is Dispatch.Item -> Outcome.Ok(
-                dispatch = "item", accepted = dispatch.accepted, item = heldName, aimed = lookAt,
+                dispatch = "item", accepted = dispatch.accepted || tied.isNotEmpty(),
+                item = heldName, aimed = lookAt,
                 hit = dispatch.hit?.let { hitInfo(it) },
                 holdMs = if (dispatch.holdNow) holdMs else 0,
-                openedScreen = openedScreen, invDelta = invDelta,
+                openedScreen = openedScreen, invDelta = invDelta, tied = tied,
             )
             is Dispatch.Error -> Outcome.Err(dispatch.message) // unreachable; satisfies exhaustiveness
         }
     }
 
+    /**
+     * Tick-thread read of the subset of [preLeashed] mobs whose leash holder
+     * is now a [LeashKnotEntity] attached at [fencePos]. Keying on the mobs
+     * (not mere knot existence) keeps the second-mob case honest — the knot
+     * may have pre-existed from an earlier tie-off.
+     */
+    private fun checkTieOff(fencePos: BlockPos, preLeashed: List<Int>): List<Int> =
+        TickThread.submitAndWait(timeoutMs = 1_000) {
+            val world = MinecraftClient.getInstance().world ?: return@submitAndWait emptyList()
+            preLeashed.filter { id ->
+                val holder = (world.getEntityById(id) as? Leashable)?.leashHolder
+                holder is LeashKnotEntity && holder.attachedBlockPos == fencePos
+            }
+        }
+
     private sealed interface Dispatch {
         data class Error(val message: String) : Dispatch
         data class Block(val hit: BlockHitResult) : Dispatch
-        data class Item(val hit: BlockHitResult?, val accepted: Boolean, val holdNow: Boolean) : Dispatch
+        data class Item(
+            val hit: BlockHitResult?,
+            val accepted: Boolean,
+            val holdNow: Boolean,
+            /** Ids of mobs leashed to the player pre-click, when the hit was a fence. */
+            val preLeashed: List<Int> = emptyList(),
+        ) : Dispatch
     }
 
     private fun hitInfo(hit: BlockHitResult): HitInfo =
@@ -247,6 +324,10 @@ object UseRoute {
                 )
             }
             if (invDelta.isNotEmpty()) data["inventory_delta"] = invDelta
+            if (tied.isNotEmpty()) {
+                data["tied"] = tied
+                hit?.let { data["leash_knot"] = mapOf("x" to it.pos.x, "y" to it.pos.y, "z" to it.pos.z) }
+            }
             val deltaStr = if (invDelta.isNotEmpty()) {
                 " (" + invDelta.entries.joinToString(", ") { "${if (it.value > 0) "+" else ""}${it.value} ${it.key}" } + ")"
             } else ""
@@ -259,6 +340,11 @@ object UseRoute {
                             "(/chest/*, /furnace/*, /craft) if that was the goal",
                     )
                 }
+                tied.isNotEmpty() -> HttpBridge.ok(
+                    data,
+                    "Tied ${tied.size} leashed mob(s) (ids ${tied.joinToString(", ")}) to the " +
+                        "${hit?.block ?: "fence"} at (${hit?.pos?.x}, ${hit?.pos?.y}, ${hit?.pos?.z})$deltaStr",
+                )
                 dispatch == "block" -> HttpBridge.ok(data, "Used $item on ${hit?.block ?: "block"}$deltaStr")
                 accepted -> HttpBridge.ok(data, "Used $item$deltaStr")
                 else -> HttpBridge.ok(

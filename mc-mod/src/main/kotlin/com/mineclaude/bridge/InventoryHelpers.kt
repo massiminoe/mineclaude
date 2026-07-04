@@ -54,7 +54,7 @@ internal object InventoryHelpers {
     )
 
     /** PSH offset for the hotbar (PI 0..8 → PSH 36..44). */
-    private const val PSH_HOTBAR_BASE = 36
+    const val PSH_HOTBAR_BASE = 36
 
     /**
      * Where in the inventory we found a matching stack. PSH slot is what

@@ -163,6 +163,64 @@ object EquipRoute {
         return null
     }
 
+    /**
+     * Guarantee the mainhand is EMPTY after this returns null — the bare
+     * `/use_on_entity` form means "empty-hand click", not "whatever a prior
+     * action left in hand" (a leftover bone from taming would feed the wolf
+     * the agent meant to sit). Fast path: select an empty hotbar slot.
+     * Fallback (hotbar full): QUICK_MOVE the held stack into the main
+     * inventory — the /unequip gesture, so nothing is ever dropped. Returns
+     * an error message when both the hotbar and the inventory are full.
+     */
+    fun ensureMainhandEmpty(): String? {
+        val plan = TickThread.submitAndWait(timeoutMs = 1_000) {
+            val player = MinecraftClient.getInstance().player ?: return@submitAndWait null
+            val inv = player.inventory
+            when {
+                player.mainHandStack.isEmpty -> EmptyPlan.AlreadyEmpty
+                else -> (0 until InventoryHelpers.HOTBAR_SIZE)
+                    .firstOrNull { inv.getStack(it).isEmpty }
+                    ?.let { EmptyPlan.SelectSlot(it) }
+                    ?: EmptyPlan.StowHeld(InventoryHelpers.PSH_HOTBAR_BASE + inv.selectedSlot)
+            }
+        } ?: return "no player — not connected to a world"
+
+        when (plan) {
+            is EmptyPlan.AlreadyEmpty -> return null
+            is EmptyPlan.SelectSlot -> TickThread.submitAndWait(timeoutMs = 1_000) {
+                val player = MinecraftClient.getInstance().player ?: return@submitAndWait Unit
+                selectHotbar(player, plan.slot)
+                Unit
+            }
+            is EmptyPlan.StowHeld -> {
+                val clickErr = TickThread.submitAndWait(timeoutMs = 2_000) {
+                    val player = MinecraftClient.getInstance().player
+                        ?: return@submitAndWait "no player"
+                    InventoryHelpers.ensurePlayerScreenOpen(player)?.let { return@submitAndWait it }
+                    InventoryHelpers.click(player, plan.pshSlot, 0, SlotActionType.QUICK_MOVE)
+                    null
+                }
+                if (clickErr != null) return "couldn't empty the mainhand: $clickErr"
+            }
+        }
+
+        Thread.sleep(POST_EQUIP_SETTLE_MS)
+        val empty = TickThread.submitAndWait(timeoutMs = 1_000) {
+            MinecraftClient.getInstance().player?.mainHandStack?.isEmpty ?: false
+        }
+        if (!empty) {
+            return "couldn't empty the mainhand — hotbar and inventory are both full; " +
+                "pass item= explicitly or discard something first"
+        }
+        return null
+    }
+
+    private sealed interface EmptyPlan {
+        data object AlreadyEmpty : EmptyPlan
+        data class SelectSlot(val slot: Int) : EmptyPlan
+        data class StowHeld(val pshSlot: Int) : EmptyPlan
+    }
+
     private fun handleOffhand(item: String): BridgeResponse {
         val err = ensureOffhand(item)
         return if (err != null) HttpBridge.err(err)

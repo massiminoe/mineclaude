@@ -14,7 +14,11 @@ import org.slf4j.LoggerFactory
  * whole animal-husbandry branch. Feeding (wheat on a cow), breeding (feed
  * two), leads, shears, milking (bucket on a cow), taming (bone on a wolf),
  * saddling, name tags, dyeing sheep — all the same click with a different
- * held item.
+ * held item. The bare form (no `item`) is a guaranteed EMPTY-hand click
+ * ([EquipRoute.ensureMainhandEmpty] stows whatever's held first) — the item
+ * in hand changes what the click *means* (bone in hand feeds; empty hand
+ * toggles sit), so it must be what the agent asked for, never what a prior
+ * action left behind.
  *
  * Like `attackEntity`, `interactEntity` hits the explicit entity — no
  * crosshair raycast — which is why this route exists at all: `/use`'s
@@ -83,6 +87,11 @@ object UseOnEntityRoute {
 
         if (item != null) {
             UseRoute.ensureMainhandHolds(item)?.let { return HttpBridge.err(it) }
+        } else {
+            // The bare form is a true empty-hand click, not "whatever a prior
+            // action left in hand" — a leftover bone would feed the wolf the
+            // agent meant to sit. Stows the held item, never drops it.
+            EquipRoute.ensureMainhandEmpty()?.let { return HttpBridge.err(it) }
         }
 
         // Walk within reach, re-resolving between attempts (the target moves).
