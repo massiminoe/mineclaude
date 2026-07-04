@@ -7,8 +7,12 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * `POST /goto {x, y, z, timeout?}` — drive Baritone to a coordinate and
- * block until arrival, stuck, or timeout.
+ * `POST /goto {x, z, y?, timeout?, allow_break?}` — drive Baritone to a
+ * coordinate and block until arrival, stuck, or timeout. `allow_break`
+ * (default false) gates Baritone's freedom to mine blocks en route: false
+ * pins `#set allowBreak false` for the walk (restored to Baritone's default
+ * true on every exit path), so a target that would require digging fails as
+ * Stuck instead of Baritone quietly tunnelling its own route.
  *
  * Mirrors `bridge.minescript_api.goto_and_wait` bit-for-bit so the agent
  * sees an identical response shape between bridges:
@@ -53,6 +57,10 @@ object GotoRoute {
         val z = (body["z"] as? Number)?.toDouble() ?: 0.0
         val yParam = (body["y"] as? Number)?.toDouble()
         val timeoutS = (body["timeout"] as? Number)?.toDouble() ?: DEFAULT_TIMEOUT_S
+        // Default false: a plain goto walks existing terrain only. Baritone
+        // digging its own route is opt-in (`allow_break: true`) so a wrong
+        // target fails as Stuck instead of being tunnelled to.
+        val allowBreak = (body["allow_break"] as? Boolean) ?: false
 
         // Auto-resolve y from the heightmap when caller omitted it. Lets the
         // agent say "walk to (x, z)" without first probing the surface — the
@@ -62,7 +70,27 @@ object GotoRoute {
             is YResolve.Err -> return HttpBridge.err(resolved.message)
         }
 
-        return runGoto(x, y, z, timeoutS)
+        // Baritone can't compute a path into a chunk the client hasn't
+        // loaded — without this check that fails silently as the generic
+        // 5s "Stuck" stall (the player never moves because Baritone never
+        // starts), which reads identically to a walled-off target. Fail
+        // fast with a distinct, actionable reason instead.
+        if (!isChunkLoaded(x.toInt(), z.toInt())) {
+            return HttpBridge.err(
+                "Target (${x.toInt()}, ${z.toInt()}) is in an unloaded chunk — Baritone can't " +
+                    "path to terrain the client hasn't loaded yet. Walk toward it in stages " +
+                    "(goto an intermediate point within render distance first) so the chunk " +
+                    "loads, then retry."
+            )
+        }
+
+        return runGoto(x, y, z, timeoutS, allowBreak)
+    }
+
+    private fun isChunkLoaded(x: Int, z: Int): Boolean {
+        return TickThread.submitAndWait(timeoutMs = 1_000) {
+            MinecraftClient.getInstance().world?.isChunkLoaded(x shr 4, z shr 4) ?: false
+        }
     }
 
     private sealed interface YResolve {
@@ -84,13 +112,20 @@ object GotoRoute {
         }
     }
 
-    private fun runGoto(x: Double, y: Double, z: Double, timeoutS: Double): BridgeResponse {
+    private fun runGoto(x: Double, y: Double, z: Double, timeoutS: Double, allowBreak: Boolean): BridgeResponse {
         val savedSlot = TickThread.submitAndWait(timeoutMs = 1_000) {
             MinecraftClient.getInstance().player?.inventory?.selectedSlot ?: 0
         }
         // Snapshot the entry position so the arrival response can report
         // whether the bot actually relocated (vs. a target already in reach).
         val startPos = playerPosition()
+
+        // Baritone's allowBreak is a GLOBAL setting, not a per-command flag —
+        // assert the requested value before pathing and restore Baritone's
+        // default (true) in the finally below, so a no-dig walk can't leak
+        // into Navigation.navigateNear (which relies on digging to reach
+        // buried break/place targets).
+        sendBaritoneCommand("#set allowBreak $allowBreak")
 
         val cmd = "#goto ${x.toInt()} ${y.toInt()} ${z.toInt()}"
         sendBaritoneCommand(cmd)
@@ -117,8 +152,13 @@ object GotoRoute {
                 if (rounded == lastRoundedPos) {
                     staleCount += 1
                     if (staleCount >= STUCK_POLLS) {
-                        log.warn("goto: stuck at ({},{},{}), dist={}", px.toInt(), py.toInt(), pz.toInt(), round1(dist))
-                        return HttpBridge.err("Stuck at distance ${round1(dist)} from target")
+                        log.warn("goto: stuck at ({},{},{}), dist={}, allowBreak={}", px.toInt(), py.toInt(), pz.toInt(), round1(dist), allowBreak)
+                        val hint = if (allowBreak) {
+                            "no path found — target may be walled off, submerged, or beside fluid (Baritone won't mine next to lava/water)"
+                        } else {
+                            "no dig-free path (allow_break=false) — retry with allow_break=true to let Baritone mine through, or pick coordinates reachable over open terrain"
+                        }
+                        return HttpBridge.err("Stuck at distance ${round1(dist)} from target: $hint")
                     }
                 } else {
                     staleCount = 0
@@ -140,6 +180,11 @@ object GotoRoute {
             // Baritone process. Mirrors goto_and_wait's exit pattern.
             try { sendBaritoneCommand("#stop") } catch (t: Throwable) {
                 log.warn("goto: failed to send #stop on exit: {}", t.message)
+            }
+            // Restore Baritone's allowBreak default unconditionally — also
+            // heals a leaked `false` from any earlier crashed request.
+            try { sendBaritoneCommand("#set allowBreak true") } catch (t: Throwable) {
+                log.warn("goto: failed to restore allowBreak on exit: {}", t.message)
             }
             // Stop attributing new door-opens to this walk. Doors already
             // tracked still get closed by the tick reflex as the bot clears them.
