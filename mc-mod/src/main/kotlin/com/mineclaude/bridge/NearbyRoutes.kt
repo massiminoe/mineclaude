@@ -170,18 +170,18 @@ object NearbyRoutes {
             val type = Registries.ENTITY_TYPE.getId(entity.type).path
             val name = entity.name.string.ifEmpty { type }
             val health = if (entity is net.minecraft.entity.LivingEntity) entity.health.toDouble() else 0.0
-            out.add(
-                mapOf(
-                    "id" to entity.id,
-                    "name" to name,
-                    "type" to type,
-                    "x" to entity.x,
-                    "y" to entity.y,
-                    "z" to entity.z,
-                    "distance" to roundDistance(sqrt(distSq)),
-                    "health" to health,
-                )
+            val entry = mutableMapOf<String, Any>(
+                "id" to entity.id,
+                "name" to name,
+                "type" to type,
+                "x" to entity.x,
+                "y" to entity.y,
+                "z" to entity.z,
+                "distance" to roundDistance(sqrt(distSq)),
+                "health" to health,
             )
+            EntityHelpers.babyStateOf(entity)?.let { entry["baby"] = it }
+            out.add(entry)
         }
         // Match the legacy WorldCache.query_entities path agents normally see.
         out.sortBy { (it["distance"] as Double) }

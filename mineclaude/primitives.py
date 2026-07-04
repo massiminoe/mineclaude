@@ -684,7 +684,10 @@ def make_primitives(
 
     async def getNearbyEntities(range_: int = 32) -> list[dict]:
         """Return entities within `range_` as {id, name, type, x, y, z, health, distance}.
-        Pass an entity's `id` to attack()."""
+        Adds `baby` (bool) for entity types with a baby/adult state (animals,
+        zombies/husks/drowned/zombie_villagers/zombified_piglins, piglins,
+        hoglins, zoglins) — omitted entirely for types with no such concept
+        (skeletons, players, items, ...). Pass an entity's `id` to attack()."""
         resp = await bridge.get_nearby_entities(range_)
         return resp.data.get("entities", [])
 

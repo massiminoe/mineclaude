@@ -1,6 +1,10 @@
 package com.mineclaude.bridge
 
 import net.minecraft.entity.Entity
+import net.minecraft.entity.mob.PiglinEntity
+import net.minecraft.entity.mob.ZoglinEntity
+import net.minecraft.entity.mob.ZombieEntity
+import net.minecraft.entity.passive.PassiveEntity
 import net.minecraft.registry.Registries
 
 /**
@@ -39,4 +43,21 @@ internal object EntityHelpers {
 
     /** Entity type id with the `minecraft:` namespace stripped (e.g. `"cow"`). */
     fun typeId(entity: Entity): String = Registries.ENTITY_TYPE.getId(entity.type).path
+
+    /**
+     * Baby/adult state, or `null` if [entity]'s type has no such concept
+     * (skeletons, items, players, ...). `isBaby()` isn't declared on a common
+     * supertype/interface in 1.21.5 — it's independently defined on
+     * [PassiveEntity] (animals + hoglins), [ZombieEntity] (zombie/husk/
+     * drowned/zombie_villager/zombified_piglin, all subclasses), [PiglinEntity],
+     * and [ZoglinEntity] — so this checks each explicitly rather than reaching
+     * for a cast that doesn't exist.
+     */
+    fun babyStateOf(entity: Entity): Boolean? = when (entity) {
+        is PassiveEntity -> entity.isBaby
+        is ZombieEntity -> entity.isBaby
+        is PiglinEntity -> entity.isBaby
+        is ZoglinEntity -> entity.isBaby
+        else -> null
+    }
 }
