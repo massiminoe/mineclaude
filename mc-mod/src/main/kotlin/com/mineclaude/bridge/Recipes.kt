@@ -258,6 +258,10 @@ internal object Recipes {
         put("lapis_block", Recipe("lapis_block", 1, listOf("###", "###", "###"), mapOf('#' to "lapis_lazuli"), true))
         put("coal_block", Recipe("coal_block", 1, listOf("###", "###", "###"), mapOf('#' to "coal"), true))
 
+        // --- Nugget compression (9 → 1) ---
+        put("gold_ingot", Recipe("gold_ingot", 1, listOf("###", "###", "###"), mapOf('#' to "gold_nugget"), true))
+        put("iron_ingot", Recipe("iron_ingot", 1, listOf("###", "###", "###"), mapOf('#' to "iron_nugget"), true))
+
         // --- Survival essentials ---
         // Bed: alias `bed` → white_bed. Other wool colors yield other-colored beds; only white is stocked here for now.
         put("bed", Recipe("white_bed", 1, listOf("WWW", "###"), mapOf('W' to "white_wool", '#' to "any_planks"), true))
@@ -269,6 +273,10 @@ internal object Recipes {
         put("bow", Recipe("bow", 1, listOf(" #X", "# X", " #X"), mapOf('#' to "stick", 'X' to "string"), true))
         put("arrow", Recipe("arrow", 4, listOf("F", "S", "T"), mapOf('F' to "flint", 'S' to "stick", 'T' to "feather"), true))
         put("cake", Recipe("cake", 1, listOf("MMM", "SES", "WWW"), mapOf('M' to "milk_bucket", 'S' to "sugar", 'E' to "egg", 'W' to "wheat"), true))
+        // Shapeless, 1:1 — the sugar_cane → sugar conversion cake (and fermented_spider_eye) depend on.
+        put("sugar", Recipe("sugar", 1, listOf("#"), mapOf('#' to "sugar_cane"), false))
+        // Shapeless in vanilla (4 string + 1 slimeball → 2 lead); 5 filled cells don't fit the 2x2 crafter.
+        put("lead", Recipe("lead", 2, listOf("S S", " B ", "S S"), mapOf('S' to "string", 'B' to "slimeball"), true))
 
         // --- Wool & decoration ---
         put("white_wool", Recipe("white_wool", 1, listOf("##", "##"), mapOf('#' to "string"), false))
@@ -313,6 +321,18 @@ internal object Recipes {
         put("bucket", Recipe("bucket", 1, listOf("# #", " # "), mapOf('#' to "iron_ingot"), true))
         put("ladder", Recipe("ladder", 3, listOf("# #", "###", "# #"), mapOf('#' to "stick"), true))
         put("bowl", Recipe("bowl", 4, listOf("# #", " # "), mapOf('#' to "any_planks"), true))
+        put("shears", Recipe("shears", 1, listOf(" #", "# "), mapOf('#' to "iron_ingot"), false))
+
+        // --- Brewing chain (station + fuel + containers + common ingredients) ---
+        put("brewing_stand", Recipe("brewing_stand", 1, listOf(" B ", "###"), mapOf('B' to "blaze_rod", '#' to "cobblestone"), true))
+        // Shapeless: 1 blaze_rod → 2 blaze_powder. Brewing-stand fuel.
+        put("blaze_powder", Recipe("blaze_powder", 2, listOf("B"), mapOf('B' to "blaze_rod"), false))
+        put("glass_bottle", Recipe("glass_bottle", 3, listOf("G G", " G "), mapOf('G' to "glass"), true))
+        put("cauldron", Recipe("cauldron", 1, listOf("I I", "I I", "III"), mapOf('I' to "iron_ingot"), true))
+        // Shapeless: fire_resistance potion ingredient.
+        put("magma_cream", Recipe("magma_cream", 1, listOf("BS"), mapOf('B' to "blaze_powder", 'S' to "slimeball"), false))
+        // Shapeless: inverts potions (e.g. harming from poison, weakness for splash potions).
+        put("fermented_spider_eye", Recipe("fermented_spider_eye", 1, listOf("ES", "M "), mapOf('E' to "spider_eye", 'S' to "sugar", 'M' to "brown_mushroom"), false))
     }
 
     fun matchesIngredient(required: String, available: String): Boolean {
