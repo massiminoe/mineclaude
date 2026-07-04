@@ -39,7 +39,11 @@ class BridgeClient(Protocol):
     async def attack(self, entity_id: str) -> BridgeResponse: ...
     async def attack_ranged(self, entity_id: str) -> BridgeResponse: ...
     async def attack_stop(self) -> BridgeResponse: ...
-    async def fish(self, wait_s: float | None = None) -> BridgeResponse: ...
+    async def fish(
+        self,
+        wait_s: float | None = None,
+        look_at: tuple[float, float, float] | None = None,
+    ) -> BridgeResponse: ...
     async def fish_stop(self) -> BridgeResponse: ...
     async def craft(self, item: str, count: int = 1) -> BridgeResponse: ...
     async def furnace_load(
@@ -244,10 +248,16 @@ class RealBridgeClient:
     async def attack_stop(self) -> BridgeResponse:
         return self._parse(await self._http.post("/attack/stop", timeout=_HALT_TIMEOUT_S))
 
-    async def fish(self, wait_s: float | None = None) -> BridgeResponse:
+    async def fish(
+        self,
+        wait_s: float | None = None,
+        look_at: tuple[float, float, float] | None = None,
+    ) -> BridgeResponse:
         body: dict[str, Any] = {}
         if wait_s is not None:
             body["wait_s"] = wait_s
+        if look_at is not None:
+            body["look_at_x"], body["look_at_y"], body["look_at_z"] = look_at
         return self._parse(await self._http.post("/fish", json=body))
 
     async def fish_stop(self) -> BridgeResponse:
@@ -835,23 +845,40 @@ class MockBridgeClient:
     # mirrors the fixed per-swing damage the mock attack loop uses.
     _FISH_BITE_TICKS = 3
 
-    async def fish(self, wait_s: float | None = None) -> BridgeResponse:
+    async def fish(
+        self,
+        wait_s: float | None = None,
+        look_at: tuple[float, float, float] | None = None,
+    ) -> BridgeResponse:
         """Mock /fish: needs a fishing_rod, loops a fixed number of ticks then
         catches deterministically (unless cancelled) — mirrors the real
         bridge's cast/wait/reel loop closely enough for MOCK_BRIDGE=1 to
-        exercise the same agent contract."""
+        exercise the same agent contract. If `look_at` is given and doesn't
+        resolve to a `water` block in `_nearby_blocks`, mocks the real
+        bridge's `bad_cast` fast-fail instead of pretending it landed."""
         if not any(e["name"] == "fishing_rod" for e in self._inventory):
             return BridgeResponse(
                 "error", "No fishing_rod in inventory",
-                {"caught": False, "reason": "error", "method": "simulated"},
+                {"caught": False, "reason": "error", "inventory_delta": {}, "method": "simulated"},
             )
+        if look_at is not None:
+            bx, by, bz = (math.floor(look_at[0]), math.floor(look_at[1]), math.floor(look_at[2]))
+            target = next(
+                (b for b in self._nearby_blocks if b["x"] == bx and b["y"] == by and b["z"] == bz),
+                None,
+            )
+            if target is None or target["name"] != "water":
+                return BridgeResponse(
+                    "error", "the hook didn't land in open water — aim at a water block",
+                    {"caught": False, "reason": "bad_cast", "inventory_delta": {}, "method": "simulated"},
+                )
         self._fish_cancelled = False
         for _ in range(self._FISH_BITE_TICKS):
             await asyncio.sleep(0)
             if self._fish_cancelled:
                 return BridgeResponse(
                     "success", "Fishing cancelled",
-                    {"caught": False, "reason": "cancelled", "method": "simulated"},
+                    {"caught": False, "reason": "cancelled", "inventory_delta": {}, "method": "simulated"},
                 )
         catch = "cod"
         self._add_to_inventory(catch, 1)

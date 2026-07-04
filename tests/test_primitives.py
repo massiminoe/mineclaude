@@ -685,6 +685,48 @@ async def test_fish_stop_cancels_in_flight(bridge):
     assert resp.data["caught"] is False
 
 
+@pytest.mark.asyncio
+async def test_fish_rod_look_at_water_succeeds(bridge, prims):
+    bridge._add_to_inventory("fishing_rod", 1)
+    bridge._nearby_blocks.append({"name": "water", "x": 5, "y": 63, "z": 5, "distance": 3.0})
+    result = await prims["fishRod"](look_at=(5, 63, 5))
+    assert result["caught"] is True
+
+
+@pytest.mark.asyncio
+async def test_fish_rod_bad_cast_raises(bridge, prims):
+    """look_at that doesn't resolve to water mirrors the real bridge's
+    fast-fail (a bobber that never lands in open water) instead of silently
+    burning the full wait budget."""
+    bridge._add_to_inventory("fishing_rod", 1)
+    with pytest.raises(RuntimeError, match="water"):
+        await prims["fishRod"](look_at=(50, 64, 50))
+
+
+@pytest.mark.asyncio
+async def test_fish_rod_reports_partial_when_catch_not_collected():
+    """A bite reeled in but the toss missed the player (long-range cast) —
+    the primitive must surface dropped_at/item with a [partial] message
+    rather than a bare 'caught' that hides the miss."""
+    class _StubBridge:
+        async def fish(self, wait_s=None, look_at=None):
+            return BridgeResponse(
+                "partial",
+                "Bit and reeled in a cod, but it landed 4.2 blocks away instead of your inventory",
+                {
+                    "caught": True, "reason": "caught", "inventory_delta": {},
+                    "dropped_at": [10, 64, 10], "item": "cod", "method": "real",
+                },
+            )
+
+    prims = make_primitives(_StubBridge())
+    result = await prims["fishRod"]()
+    assert result["caught"] is True
+    assert result["inventory_delta"] == {}
+    assert result["dropped_at"] == [10, 64, 10]
+    assert result["message"].startswith("[partial]")
+
+
 # --- unified use() primitive ------------------------------------------------
 
 @pytest.mark.asyncio

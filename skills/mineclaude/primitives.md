@@ -151,26 +151,44 @@ out_of_ammo / out_of_reach / no_line_of_sight if it can't keep shooting.
 Reach for this over attack() to fight from a distance (skeletons,
 creepers you don't want to melee) or when you can't safely close in.
 
-### `await fishRod(wait_s: 'float | None' = None) -> 'dict'`
+### `await fishRod(wait_s: 'float | None' = None, *, look_at: 'tuple[float, float, float] | None' = None) -> 'dict'`
 
 Cast a fishing rod, wait for a bite, reel in, and report the catch.
 One call owns the whole lifecycle — cast, wait, reel — the same shape
 as sleepInBed owns bed/wake.
 
-Equips a `fishing_rod` first (raises if you don't have one). Waits up
-to `wait_s` (default 40s, capped at 60s server-side — vanilla's
-un-Lure'd bite window is 5-30s) for the bobber's bite signal, reels in
-the instant it fires (the catch window is only a couple of seconds),
-and verifies the catch via an inventory-count diff — the same
-truth-in-return pattern as fillBucket/emptyBucket.
+STAND CLOSE to the water (a few blocks from the edge) and pass
+`look_at=(x,y,z)` aimed at a water block — vanilla tosses a caught
+item toward you as a real thrown entity, not a teleport into your
+inventory, so a long-range cast makes the catch land short of pickup
+range even when everything else goes right (see the `partial` case
+below). Without `look_at` the cast goes wherever you're already
+facing, which is how bad casts happen (bobber bounces off an
+obstacle, lands on dry ground).
 
-Returns {caught, reason, position, inventory_delta}. `reason` is one
-of `caught | no_bite | lost`. Raises on `no_bite` (no bite within the
-window — try a different spot: open water, clear sky above) and
-`lost` (the hook vanished before biting; just cast again) so a bare
-`await fishRod()` in a loop is the natural "fish until something
-bites" idiom. Needing a longer wait than the per-call cap? Loop this
-call rather than expecting one call to block indefinitely.
+Equips a `fishing_rod` first (raises if you don't have one). After
+casting it checks within ~2s that the hook actually landed in open
+water — if not, it fails FAST as `bad_cast` instead of silently
+burning the whole wait budget on a doomed cast. Otherwise waits up to
+`wait_s` (default 40s, capped at 60s server-side — vanilla's
+un-Lure'd bite window is 5-30s) for the bobber's bite signal, reels
+in the instant it fires (the catch window is only a couple of
+seconds), and verifies the catch via an inventory-count diff — the
+same truth-in-return pattern as fillBucket/emptyBucket.
+
+Returns {caught, reason, position, inventory_delta} — inventory_delta
+is always present (empty dict if nothing changed). `reason` is one of
+`caught | no_bite | lost | bad_cast`. If a bite was reeled in but
+nothing landed in your inventory (the toss missed — cast too far),
+this returns rather than raises with a `[partial]`-prefixed message
+and `dropped_at`/`item` fields naming where it actually landed — call
+collectItems() to grab it. Raises on `no_bite` (no bite within the
+window — try a different spot), `lost` (the hook vanished before
+biting; just cast again), and `bad_cast` (recast closer to / aimed at
+open water) so a bare `await fishRod(...)` in a loop is the natural
+"fish until something bites" idiom. Needing a longer wait than the
+per-call cap? Loop this call rather than expecting one call to block
+indefinitely.
 
 ### `await block(duration_s: 'float' = 2.0, *, look_at: 'tuple[float, float, float] | None' = None, item: 'str' = 'shield') -> 'dict'`
 

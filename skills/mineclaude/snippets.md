@@ -150,21 +150,43 @@ return f"{'Baby bred!' if after > before else 'No baby yet'} ({before} -> {after
 ## Fish until something bites
 
 ```python
-# fishRod() owns cast -> wait -> reel in one call; it raises on no_bite/lost,
-# so a bare loop is the "keep fishing" idiom. Stand at the water's edge with
-# open sky above first (indoor/covered fishing spots roll no catches).
+# fishRod() owns cast -> wait -> reel in one call; it raises on
+# no_bite/lost/bad_cast, so a bare loop is the "keep fishing" idiom.
+#
+# STAND CLOSE to the water (a few blocks from the edge) and pass look_at
+# aimed at a water block. Two separate reasons this matters:
+#   1. Without look_at, the cast goes wherever you already face — that's how
+#      bad_cast happens (bobber bounces off an obstacle, lands on dry ground).
+#   2. Even a clean bite doesn't teleport the catch into your inventory —
+#      vanilla tosses it toward you as a real thrown item. Cast far away and
+#      the toss can land short of pickup range: fishRod still reports
+#      caught:True but as a [partial] with inventory_delta EMPTY and a
+#      dropped_at position — check for that, don't assume caught means "in
+#      my inventory".
 rods = await getInventory()
 if not any(i["name"] == "fishing_rod" for i in rods):
     return "No fishing_rod — craft one (3 stick + 2 string)"
 
+water = await findBlocks("water", 8, 1)
+if not water:
+    return "No water within 8 blocks — move to a shoreline first"
+w = water[0]
+spot = (w["x"] + 0.5, w["y"], w["z"] + 0.5)
+
 caught = []
 for _ in range(5):                    # cap the loop, re-observe after
     try:
-        r = await fishRod()           # default wait_s=40, capped at 60 server-side
-        caught.append(r["inventory_delta"])
-        log(f"caught: {r['inventory_delta']}")
+        r = await fishRod(look_at=spot)   # default wait_s=40, capped at 60 server-side
+        if r["inventory_delta"]:
+            caught.append(r["inventory_delta"])
+            log(f"caught: {r['inventory_delta']}")
+        else:
+            # [partial]: bit and reeled in, but it landed at r["dropped_at"]
+            # instead of your inventory — go grab it.
+            log(f"missed the catch: {r['message']}")
+            await collectItems(radius=6)
     except RuntimeError as e:
-        log(f"no catch this cast: {e}")   # no_bite or lost — just recast
+        log(f"no catch this cast: {e}")   # no_bite, lost, or bad_cast — just recast
 return f"Caught {len(caught)} thing(s): {caught}"
 ```
 
