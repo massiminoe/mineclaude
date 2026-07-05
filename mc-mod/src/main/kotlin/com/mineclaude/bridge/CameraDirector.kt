@@ -15,26 +15,34 @@ import kotlin.math.atan2
 import kotlin.math.sqrt
 
 /**
- * Idle "look at the nearest entity" cosmetic camera — pure stream charm.
+ * Cosmetic camera director — pure stream charm. Two behaviours, both only
+ * about how the POV reads on screen, never about what the bot physically does:
  *
- * When the bot is doing nothing — no functional aim in flight, not walking,
- * no GUI open, alive — it slowly slews its head to face the nearest
- * interesting entity. The instant any real work touches rotation it yields
- * and stays out of the way.
+ *   - IDLE (env MINECLAUDE_IDLE_CAMERA): when the bot is standing still it
+ *     slowly slews its head to face the nearest interesting entity.
+ *   - TRAVEL (env MINECLAUDE_TRAVEL_CAMERA): while the body is walking it
+ *     faces the direction of motion (from the per-tick position delta) with
+ *     the pitch eased to a level horizon, so the camera looks where it's
+ *     going instead of at the ground / backwards.
+ *
+ * Why TRAVEL is cosmetic, not a steering input: Baritone paths with freeLook
+ * on, so movement is decoupled from head yaw — it walks the path regardless
+ * of where the head points, and only grabs yaw itself when it has to mine /
+ * interact en route (which stamps [noteFunctionalAim] and makes us yield).
+ * Writing yaw during a plain walk therefore changes only what's rendered.
  *
  * Safety model — the director NEVER fights meaningful work:
  *   - every functional aim (break / place / attack / interact / aimed
  *     screenshot) stamps [noteFunctionalAim]; the director stays dormant for
  *     [HOLD_MS] afterwards.
- *   - it does nothing while the body is moving (Baritone owns yaw then),
- *     while a screen is open, or while dead.
+ *   - it does nothing while a screen is open or while dead.
  *
  * It only ever nudges yaw/pitch by a small per-tick step, so MC's render
  * lerp (prevYaw -> yaw across frames) turns it into smooth motion for free.
  *
  * Runs on the client tick thread (its own END_CLIENT_TICK hook), the same
- * thread every other rotation write uses, so it races nothing. Disable with
- * env MINECLAUDE_IDLE_CAMERA=0.
+ * thread every other rotation write uses, so it races nothing. Disable
+ * either behaviour with MINECLAUDE_IDLE_CAMERA=0 / MINECLAUDE_TRAVEL_CAMERA=0.
  */
 object CameraDirector {
     private val log = LoggerFactory.getLogger("mineclaude-bridge.camera")!!
@@ -60,7 +68,8 @@ object CameraDirector {
     /** Stop nudging once within this many degrees of target (anti-jitter). */
     private const val DEADZONE_DEG = 1.0f
 
-    @Volatile private var enabled = true
+    @Volatile private var idleEnabled = true
+    @Volatile private var travelEnabled = true
 
     /** Wall-clock of the last real rotation set by a route. */
     @Volatile private var lastFunctionalAimMs = 0L
@@ -80,30 +89,33 @@ object CameraDirector {
     }
 
     fun register() {
-        if (System.getenv("MINECLAUDE_IDLE_CAMERA") == "0") {
-            enabled = false
-            log.info("CameraDirector: disabled via MINECLAUDE_IDLE_CAMERA=0")
+        idleEnabled = System.getenv("MINECLAUDE_IDLE_CAMERA") != "0"
+        travelEnabled = System.getenv("MINECLAUDE_TRAVEL_CAMERA") != "0"
+        if (!idleEnabled && !travelEnabled) {
+            log.info("CameraDirector: disabled via MINECLAUDE_IDLE_CAMERA=0 + MINECLAUDE_TRAVEL_CAMERA=0")
             return
         }
         ClientTickEvents.END_CLIENT_TICK.register(
             ClientTickEvents.EndTick { client -> tick(client.player) }
         )
-        log.info("CameraDirector: idle look-at-nearest-entity active")
+        log.info("CameraDirector: active (idle=$idleEnabled travel=$travelEnabled)")
     }
 
     private fun tick(player: ClientPlayerEntity?) {
-        if (!enabled) return
         if (player == null) {
             hasLastPos = false
             return
         }
 
         // Track body movement every tick, even when we bail early below, so
-        // the first idle tick after walking has a fresh baseline.
+        // the first idle tick after walking has a fresh baseline. Keep the
+        // signed delta, not just its magnitude — TRAVEL faces along it.
+        var moveDx = 0.0
+        var moveDz = 0.0
         val moved = if (hasLastPos) {
-            val dx = player.x - lastX
-            val dz = player.z - lastZ
-            sqrt(dx * dx + dz * dz)
+            moveDx = player.x - lastX
+            moveDz = player.z - lastZ
+            sqrt(moveDx * moveDx + moveDz * moveDz)
         } else {
             0.0
         }
@@ -116,9 +128,20 @@ object CameraDirector {
         // --- gates: never intrude on meaningful work ---
         if (mc.currentScreen != null) return                                    // GUI open
         if (player.isDead || player.health <= 0f) return                        // dead
-        if (moved > MOVE_THRESHOLD) return                                       // walking (Baritone owns yaw)
         if (System.currentTimeMillis() - lastFunctionalAimMs < HOLD_MS) return  // recent real aim
 
+        if (moved > MOVE_THRESHOLD) {
+            // TRAVEL: face the direction of motion, pitch level. Cosmetic —
+            // Baritone's freeLook walk ignores head yaw (see class doc).
+            if (!travelEnabled) return
+            val targetYaw = (-Math.toDegrees(atan2(moveDx, moveDz))).toFloat()
+            player.yaw = slew(player.yaw, targetYaw)
+            player.pitch = slew(player.pitch, 0f)  // ease to a level horizon
+            return
+        }
+
+        // IDLE: slew toward the nearest interesting entity.
+        if (!idleEnabled) return
         val target = nearestInteresting(player) ?: return
 
         // Target angles — same atan2 math as WorldHelpers.lookAtPosition, but
