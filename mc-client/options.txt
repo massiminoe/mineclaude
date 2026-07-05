@@ -1,5 +1,5 @@
-renderDistance:8
-simulationDistance:8
+renderDistance:12
+simulationDistance:12
 graphicsMode:1
 ao:true
 enableVsync:false
@@ -9,6 +9,7 @@ fullscreen:false
 overrideWidth:854
 overrideHeight:480
 particles:1
+chatVisibility:2
 renderClouds:fast
 entityShadows:true
 biomeBlendRadius:2

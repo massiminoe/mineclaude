@@ -34,6 +34,15 @@ if [ -f /tmp/options.txt ]; then
     echo "MC options.txt installed"
 fi
 
+# Pre-seed Baritone settings (path/goal/selection rendering off) so the
+# render feed stays clean from Baritone's first init. Baritone reads
+# run/baritone/settings.txt on startup and preserves what it loads.
+if [ -f /tmp/baritone-settings.txt ]; then
+    mkdir -p "$GAME_DIR/baritone"
+    cp /tmp/baritone-settings.txt "$GAME_DIR/baritone/settings.txt"
+    echo "Baritone settings.txt installed"
+fi
+
 # Start virtual framebuffer for real rendering.
 # Remove any stale X lock/socket from a previous run first. On a container
 # *restart* (as opposed to a fresh recreate) /tmp persists, and a leftover

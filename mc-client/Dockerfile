@@ -59,6 +59,11 @@ RUN pip3 install --break-system-packages mcrcon
 # Copy MC render options
 COPY mc-client/options.txt /tmp/options.txt
 
+# Baritone settings — pre-seeded into run/baritone/settings.txt by the
+# entrypoint so path/goal/selection rendering is off from Baritone's first
+# init (no in-world path traces or highlights on the render feed).
+COPY mc-client/baritone-settings.txt /tmp/baritone-settings.txt
+
 # Startup script that:
 # 1. Copies mods into the correct mods folder
 # 2. Launches the headless client

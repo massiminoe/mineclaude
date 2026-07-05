@@ -63,6 +63,15 @@ ls -la "$MODS_DIR/"
 
 [ -f /tmp/options.txt ] && cp /tmp/options.txt "$GAME_DIR/options.txt" && echo "MC options.txt installed"
 
+# Pre-seed Baritone settings (path/goal/selection rendering off) so the render
+# feed stays clean from Baritone's first init. Baritone reads
+# run/baritone/settings.txt on startup and preserves what it loads.
+if [ -f /tmp/baritone-settings.txt ]; then
+    mkdir -p "$GAME_DIR/baritone"
+    cp /tmp/baritone-settings.txt "$GAME_DIR/baritone/settings.txt"
+    echo "Baritone settings.txt installed"
+fi
+
 # --- Virtual framebuffer (kept up across both launches) --------------------
 echo "Clearing any stale X locks..."
 rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true

@@ -1,0 +1,8 @@
+renderPath false
+renderGoal false
+renderGoalAnimated false
+renderGoalXZBeacon false
+renderSelectionBoxes false
+renderSelection false
+renderCachedChunks false
+echoCommands false
