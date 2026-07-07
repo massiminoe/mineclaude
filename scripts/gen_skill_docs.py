@@ -128,6 +128,15 @@ def gen_events() -> str:
             "wait_for_action(action_id) to await it (level-triggered, no missable "
             "race); wait_for_event(['action_done']) also fires but is future-only"
         ),
+        "auto_shield": (
+            "the bridge's autonomic auto-shield raised the offhand guard against "
+            "incoming hostile fire (skeleton arrows, blaze fireballs) — a tick-thread "
+            "reflex that never takes the action slot or interrupts you. Record-only "
+            "(surfaced for awareness/eval). Payload `{action:'raised', threat, facing}`. "
+            "It engages only when a shield is already in your offhand, stands down "
+            "while you move or fight (attack()/block() run their own shield), and is "
+            "on by default — toggle with setAutoShield(enabled) or AUTO_SHIELD=0"
+        ),
     }
     for et, preempts in _DEFAULT_EVENT_POLICY.items():
         out.append(f"| `{et}` | {preempts} | {other_notes.get(et, '')} |")

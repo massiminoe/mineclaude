@@ -123,6 +123,7 @@ class BridgeClient(Protocol):
         look_at: tuple[float, float, float] | None = None,
         item: str = "shield",
     ) -> BridgeResponse: ...
+    async def set_auto_shield(self, enabled: bool) -> BridgeResponse: ...
     async def use(
         self,
         item: str | None = None,
@@ -448,6 +449,9 @@ class RealBridgeClient:
         if look_at is not None:
             body["look_at_x"], body["look_at_y"], body["look_at_z"] = look_at
         return self._parse(await self._http.post("/block", json=body))
+
+    async def set_auto_shield(self, enabled: bool) -> BridgeResponse:
+        return self._parse(await self._http.post("/autoshield", json={"enabled": enabled}))
 
     async def heightmap(
         self,
@@ -1575,6 +1579,12 @@ class MockBridgeClient:
         return BridgeResponse(
             "success", f"Blocked with {item} for {held_ms}ms",
             {"blocking": True, "held_ms": held_ms, "item": item, "method": "simulated"},
+        )
+
+    async def set_auto_shield(self, enabled: bool) -> BridgeResponse:
+        self._auto_shield = enabled
+        return BridgeResponse(
+            "success", f"auto-shield {'on' if enabled else 'off'}", {"enabled": enabled},
         )
 
     async def heightmap(

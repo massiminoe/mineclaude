@@ -302,6 +302,7 @@ object EventBus {
                     lastHeldRemaining = Int.MAX_VALUE
                     nearbyHostiles = emptySet()
                     hostileScanCounter = 0
+                    AutoShield.reset()
                     DoorTrail.reset()
                     return@EndTick
                 }
@@ -333,6 +334,10 @@ object EventBus {
                         },
                     )
                     pushEvent("damage_taken", data.filterValues { it != null }.mapValues { it.value!! })
+                    // Reactive auto-shield: if this hit came from a ranged
+                    // hostile, guard against the rest of the volley (the first
+                    // arrow is already spent by the time health drops).
+                    AutoShield.onRangedDamage(pending?.source, pending?.attackerKind, pending?.attackerPos)
                     pendingDamage = null
                     pendingDamageAge = 0
                 }
@@ -472,6 +477,12 @@ object EventBus {
                         nearbyHostiles = current
                     }
                 }
+
+                // 6b. Auto-shield — raise the offhand guard against incoming
+                // hostile projectiles (reactive off damage_taken in Phase 1),
+                // autonomically and without touching the action slot. Yields to
+                // any deliberate use-key owner (combat / standalone /block).
+                AutoShield.tick(client)
 
                 // 7. Door-trail — close doors Baritone auto-opened along the
                 // bot's path once it has stepped clear of them.

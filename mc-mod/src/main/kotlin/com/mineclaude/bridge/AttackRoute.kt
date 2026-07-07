@@ -184,6 +184,13 @@ object AttackRoute {
         )
     }
 
+    /**
+     * True while a melee or ranged combat session holds the combat slot. Both
+     * drive the use-key (the block-rhythm / the bow draw), so [AutoShield]
+     * yields to an active session via [UseKeyArbiter].
+     */
+    fun hasActiveSession(): Boolean = current.get() != null
+
     /** Returns true if a session was cancelled. */
     private fun cancelCurrent(): Boolean {
         val s = current.getAndSet(null) ?: return false

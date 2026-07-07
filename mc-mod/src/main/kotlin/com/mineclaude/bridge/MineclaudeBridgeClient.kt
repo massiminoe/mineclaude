@@ -112,6 +112,12 @@ class MineclaudeBridgeClient : ClientModInitializer {
         // block pose for a window, then lower it. Owns the use-key hold +
         // isBlocking confirmation; a held shield is inert without it.
         ShieldRoute.register(bridge)
+        // Autonomic shield-vs-projectile reflex — raises the offhand guard
+        // against incoming hostile fire on the tick thread (no action slot, no
+        // preempt), yielding to any deliberate use-key owner. Default on
+        // (AUTO_SHIELD=0 opts out); POST /autoshield {enabled} toggles it. The
+        // detection + guard lifecycle ride EventBus's END_CLIENT_TICK.
+        AutoShield.register(bridge)
         // Fishing — cast, poll the bobber's (mixin-exposed) caughtFish flag
         // for a bite, reel in, verify the catch via inventory delta. Owns the
         // full cast/wait/reel lifecycle like /sleep owns bed/wake.

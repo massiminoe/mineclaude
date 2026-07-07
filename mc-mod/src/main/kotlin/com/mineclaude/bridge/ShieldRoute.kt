@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import net.minecraft.client.MinecraftClient
 import net.minecraft.util.Hand
 import org.slf4j.LoggerFactory
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * `POST /block {duration_s?, item?, look_at_x/y/z?}` — raise a shield and
@@ -51,6 +52,13 @@ object ShieldRoute {
     private const val MAX_DURATION_S = 30.0
 
     private const val POLL_MS = 50L
+
+    /** True while a `/block` hold is in flight. [AutoShield] yields to it (via
+     *  [UseKeyArbiter]) so the autonomic guard never clobbers a deliberate
+     *  block. Set around the hold window, cleared in the release `finally`. */
+    private val active = AtomicBoolean(false)
+
+    fun isBlocking(): Boolean = active.get()
 
     fun register(bridge: HttpBridge) {
         bridge.addRoute("POST", "/block") { ex -> handle(ex) }
@@ -103,6 +111,7 @@ object ShieldRoute {
         }
         if (!started) return HttpBridge.err("no player — not connected to a world")
 
+        active.set(true)
         var everBlocked = false
         val deadline = System.currentTimeMillis() + holdMs
         try {
@@ -123,6 +132,7 @@ object ShieldRoute {
                 mc.player?.let { mc.interactionManager?.stopUsingItem(it) }
                 Unit
             }
+            active.set(false)
         }
 
         val data = mapOf(

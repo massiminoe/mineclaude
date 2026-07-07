@@ -749,6 +749,22 @@ def make_primitives(
         data["message"] = resp.message
         return data
 
+    async def setAutoShield(enabled: bool = True) -> bool:
+        """Toggle the bridge's autonomic auto-shield (default ON).
+
+        When on, the bridge raises the offhand shield on its own against
+        incoming hostile fire (skeleton arrows, blaze fireballs) — a tick-thread
+        reflex that never takes the action slot or interrupts what you're doing.
+        It only engages when a shield is ALREADY in your offhand, stands down
+        while you're moving or already in a fight (attack()/block() run their own
+        shield), and faces the threat for you. Turn it OFF for stretches where a
+        raised guard is counterproductive — precise building, or deliberately
+        taking a hit. Returns the resulting enabled state."""
+        resp = await bridge.set_auto_shield(enabled)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return bool(resp.data.get("enabled", enabled))
+
     async def getStats() -> dict:
         """Return {health, hunger, position:{x,y,z}, biome, time}. Position is a
         NESTED dict — use stats['position']['x']."""
@@ -846,6 +862,7 @@ def make_primitives(
         "attackRanged": attackRanged,
         "fishRod": fishRod,
         "block": block,
+        "setAutoShield": setAutoShield,
         "craft": craft,
         "furnaceLoad": furnaceLoad,
         "furnaceInspect": furnaceInspect,

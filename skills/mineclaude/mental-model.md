@@ -186,6 +186,17 @@ and `attack` at once — use `block` to tank a skeleton's volley or a creeper's
 approach (where you *don't* want to charge in), then `attack`. Check the
 returned `blocking`.
 
+On top of that, the bridge runs an **autonomic auto-shield** (on by default):
+whenever a ranged hostile hits you (skeleton arrow, blaze fireball) and a shield
+is *already in your offhand*, it raises the guard on its own for the rest of the
+volley and lowers it after — a tick-thread reflex that never takes the action
+slot, so it doesn't interrupt whatever you're doing. It stands down while you're
+moving or already in a fight (`attack`/`block` run their own shield), so it only
+fills the gap: getting plinked while mining, walking, or idle. You'll see an
+`auto_shield` event when it fires. Keep a shield in the offhand and you get this
+for free; `setAutoShield(False)` turns it off for stretches where a raised guard
+would get in the way (precise building, or deliberately taking a hit).
+
 ## Animals and entities
 
 `useOnEntity(entity_id, item?)` is the right-click on a mob — the use-key twin

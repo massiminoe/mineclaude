@@ -210,6 +210,19 @@ absorbs hits during it) and confirms the pose engaged. Returns a dict:
 only if there's no shield to equip; a held-but-never-engaged block
 returns `blocking: False` rather than raising — check it.
 
+### `await setAutoShield(enabled: 'bool' = True) -> 'bool'`
+
+Toggle the bridge's autonomic auto-shield (default ON).
+
+When on, the bridge raises the offhand shield on its own against
+incoming hostile fire (skeleton arrows, blaze fireballs) — a tick-thread
+reflex that never takes the action slot or interrupts what you're doing.
+It only engages when a shield is ALREADY in your offhand, stands down
+while you're moving or already in a fight (attack()/block() run their own
+shield), and faces the threat for you. Turn it OFF for stretches where a
+raised guard is counterproductive — precise building, or deliberately
+taking a hit. Returns the resulting enabled state.
+
 ### `await craft(item: 'str', count: 'int' = 1) -> 'str'`
 
 Craft `count` of the OUTPUT item (not iterations/inputs); returns the

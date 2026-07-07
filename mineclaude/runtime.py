@@ -99,13 +99,17 @@ _DEFAULT_EVENT_POLICY = {
     # status="running" handle) terminates. Never preempts — it's a completion
     # signal for wait_for_event(["action_done"]).
     "action_done": False,
+    # The bridge's autonomic auto-shield raised the offhand guard against
+    # incoming hostile fire. Record-only — it's a bridge-side reflex that never
+    # touches the action slot; this just surfaces it for observability/eval.
+    "auto_shield": False,
 }
 
 # Non-hazard event types surfaced on the monitor's Events rail (alongside the
 # hazard reflex fires, which broadcast via `reflex:fired`). Curated: the
 # user-facing world events, NOT the internal completion signals (action_done,
 # reflex_done) that also pass through `_record_event`.
-MONITOR_EVENT_TYPES = frozenset({"chat", "death", "respawn", "advancement"})
+MONITOR_EVENT_TYPES = frozenset({"chat", "death", "respawn", "advancement", "auto_shield"})
 
 
 def _normalize_mod_event(raw: dict) -> dict[str, Any]:
