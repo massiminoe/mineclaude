@@ -86,6 +86,9 @@ fi
 
 # --- harness token -> SSM SecureString ---
 TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-$(grep -E '^CLAUDE_CODE_OAUTH_TOKEN=' .env 2>/dev/null | cut -d= -f2- || true)}"
+# .env values may be quoted (compose strips quotes at interpolation; a raw grep
+# doesn't) — strip one layer of surrounding quotes so SSM stores the bare token.
+TOKEN="${TOKEN#[\"\']}"; TOKEN="${TOKEN%[\"\']}"
 if [[ -n "$TOKEN" ]]; then
     aws ssm put-parameter --region "$REGION" \
         --name /mineclaude-bench/claude-code-oauth-token \

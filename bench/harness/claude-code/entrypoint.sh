@@ -66,8 +66,20 @@ while :; do
             >> "$ART/claude-${i}.jsonl" 2>> "$ART/claude-${i}.err"
     rc=$?
     log "invocation $i exited rc=$rc"
-    # Small backoff so a fast-crashing CLI can't spin the loop.
-    (( rc != 0 )) && sleep 10
+    # Small backoff so a fast-crashing CLI can't spin the loop — and a hard
+    # abort if it keeps dying: a systemic failure (bad auth, dead MCP) would
+    # otherwise burn the whole budget in a silent retry loop. rc=124 is the
+    # timeout kill at the deadline, i.e. normal end-of-budget, not a failure.
+    if (( rc != 0 && rc != 124 )); then
+        fails=$(( ${fails:-0} + 1 ))
+        if (( fails >= 5 )); then
+            log "FATAL: $fails consecutive failed invocations — aborting run"
+            exit 1
+        fi
+        sleep 10
+    else
+        fails=0
+    fi
 done
 
 log "budget exhausted after $i invocation(s)"

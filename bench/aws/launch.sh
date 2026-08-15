@@ -77,7 +77,7 @@ IID=$(aws ec2 run-instances --region "$REGION" \
     --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=60,VolumeType=gp3,DeleteOnTermination=true}' \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=mineclaude-bench-${RUN_ID}},{Key=bench-run,Value=${RUN_ID}}]" \
     --user-data "file://$UD" \
-    "${MARKET_ARGS[@]}" \
+    ${MARKET_ARGS[@]+"${MARKET_ARGS[@]}"} \
     --query 'Instances[0].InstanceId' --output text)
 rm -f "$UD"
 
@@ -107,7 +107,7 @@ for e in d['breakdown']:
         exit 0
     fi
     state=$(aws ec2 describe-instances --region "$REGION" --instance-ids "$IID" \
-        --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo unknown)
+        --query 'Reservations[0].Instances[0].State.Name' --output text || echo unknown)
     echo "  [$(date +%H:%M:%S)] instance=$state, no score yet"
     if [[ "$state" == "terminated" ]]; then
         echo "instance terminated without score.json — check s3://$BUCKET/runs/$RUN_ID/ for bench-userdata.log"
