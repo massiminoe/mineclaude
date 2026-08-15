@@ -105,7 +105,17 @@ cat > "$BENCH_RUN_DIR/metadata.json" <<EOF
 EOF
 
 log "starting harness — clock running"
-COMPOSE_PROFILES=harness "${COMPOSE[@]}" up -d harness
+# --no-deps is load-bearing: without it, `up harness` re-evaluates the
+# dependency chain and (on some compose versions) RECREATES mc-server —
+# wiping the world mid-run and orphaning the client. The world stack is
+# already up and gated healthy; the harness must touch nothing but itself.
+server_cid=$("${COMPOSE[@]}" ps -q mc-server)
+COMPOSE_PROFILES=harness "${COMPOSE[@]}" up -d --no-deps harness
+if [[ "$("${COMPOSE[@]}" ps -q mc-server)" != "$server_cid" ]]; then
+    log "FATAL: mc-server container was recreated at harness start — world lost, aborting"
+    "${COMPOSE[@]}" --profile harness down -v --remove-orphans
+    exit 1
+fi
 
 hard_stop=$(( T0 + SECONDS_BUDGET + 180 ))  # grace for the last claude invocation to wind down
 while :; do
