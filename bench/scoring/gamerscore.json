@@ -1,0 +1,617 @@
+{
+  "version": 1,
+  "game_version": "1.21.5",
+  "total_points": 3375,
+  "advancements": {
+    "minecraft:story/cure_zombie_villager": {
+      "title": "Zombie Doctor",
+      "points": 40,
+      "source": "bedrock:Zombie Doctor"
+    },
+    "minecraft:story/deflect_arrow": {
+      "title": "Not Today, Thank You",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:story/enchant_item": {
+      "title": "Enchanter",
+      "points": 20,
+      "source": "bedrock:Enchanter"
+    },
+    "minecraft:story/enter_the_end": {
+      "title": "The End?",
+      "points": 20,
+      "source": "bedrock:The End?"
+    },
+    "minecraft:story/enter_the_nether": {
+      "title": "We Need to Go Deeper",
+      "points": 30,
+      "source": "bedrock:Into The Nether"
+    },
+    "minecraft:story/follow_ender_eye": {
+      "title": "Eye Spy",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:story/form_obsidian": {
+      "title": "Ice Bucket Challenge",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:story/iron_tools": {
+      "title": "Isn't It Iron Pick",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:story/lava_bucket": {
+      "title": "Hot Stuff",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:story/mine_diamond": {
+      "title": "Diamonds!",
+      "points": 20,
+      "source": "bedrock:DIAMONDS!"
+    },
+    "minecraft:story/mine_stone": {
+      "title": "Stone Age",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:story/obtain_armor": {
+      "title": "Suit Up",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:story/root": {
+      "title": "Minecraft",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:story/shiny_gear": {
+      "title": "Cover Me with Diamonds",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:story/smelt_iron": {
+      "title": "Acquire Hardware",
+      "points": 15,
+      "source": "bedrock:Acquire Hardware"
+    },
+    "minecraft:story/upgrade_tools": {
+      "title": "Getting an Upgrade",
+      "points": 15,
+      "source": "bedrock:Getting an Upgrade"
+    },
+    "minecraft:nether/all_effects": {
+      "title": "How Did We Get Here?",
+      "points": 100,
+      "source": "custom"
+    },
+    "minecraft:nether/all_potions": {
+      "title": "A Furious Cocktail",
+      "points": 60,
+      "source": "custom"
+    },
+    "minecraft:nether/brew_potion": {
+      "title": "Local Brewery",
+      "points": 15,
+      "source": "bedrock:Local Brewery"
+    },
+    "minecraft:nether/charge_respawn_anchor": {
+      "title": "Not Quite \"Nine\" Lives",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:nether/create_beacon": {
+      "title": "Bring Home the Beacon",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:nether/create_full_beacon": {
+      "title": "Beaconator",
+      "points": 60,
+      "source": "bedrock:The Beaconator"
+    },
+    "minecraft:nether/distract_piglin": {
+      "title": "Oh Shiny",
+      "points": 30,
+      "source": "bedrock:Oooh, shiny!"
+    },
+    "minecraft:nether/explore_nether": {
+      "title": "Hot Tourist Destinations",
+      "points": 30,
+      "source": "bedrock:Hot tourist destination"
+    },
+    "minecraft:nether/fast_travel": {
+      "title": "Subspace Bubble",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:nether/find_bastion": {
+      "title": "Those Were the Days",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:nether/find_fortress": {
+      "title": "A Terrible Fortress",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:nether/get_wither_skull": {
+      "title": "Spooky Scary Skeleton",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:nether/loot_bastion": {
+      "title": "War Pigs",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:nether/netherite_armor": {
+      "title": "Cover Me in Debris",
+      "points": 50,
+      "source": "bedrock:Cover me in debris"
+    },
+    "minecraft:nether/obtain_ancient_debris": {
+      "title": "Hidden in the Depths",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:nether/obtain_blaze_rod": {
+      "title": "Into Fire",
+      "points": 20,
+      "source": "bedrock:Into Fire"
+    },
+    "minecraft:nether/obtain_crying_obsidian": {
+      "title": "Who is Cutting Onions?",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:nether/return_to_sender": {
+      "title": "Return to Sender",
+      "points": 30,
+      "source": "bedrock:Return to Sender"
+    },
+    "minecraft:nether/ride_strider": {
+      "title": "This Boat Has Legs",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:nether/ride_strider_in_overworld_lava": {
+      "title": "Feels Like Home",
+      "points": 20,
+      "source": "bedrock:Feels Like Home"
+    },
+    "minecraft:nether/root": {
+      "title": "Nether",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:nether/summon_wither": {
+      "title": "Withering Heights",
+      "points": 20,
+      "source": "bedrock:The Beginning?"
+    },
+    "minecraft:nether/uneasy_alliance": {
+      "title": "Uneasy Alliance",
+      "points": 60,
+      "source": "custom"
+    },
+    "minecraft:end/dragon_breath": {
+      "title": "You Need a Mint",
+      "points": 30,
+      "source": "bedrock:You Need a Mint"
+    },
+    "minecraft:end/dragon_egg": {
+      "title": "The Next Generation",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:end/elytra": {
+      "title": "Sky's the Limit",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:end/enter_end_gateway": {
+      "title": "Remote Getaway",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:end/find_end_city": {
+      "title": "The City at the End of the Game",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:end/kill_dragon": {
+      "title": "Free the End",
+      "points": 40,
+      "source": "bedrock:The End"
+    },
+    "minecraft:end/levitate": {
+      "title": "Great View From Up Here",
+      "points": 20,
+      "source": "bedrock:Great View From Up Here"
+    },
+    "minecraft:end/respawn_dragon": {
+      "title": "The End... Again...",
+      "points": 30,
+      "source": "bedrock:The End... Again..."
+    },
+    "minecraft:end/root": {
+      "title": "The End",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:adventure/adventuring_time": {
+      "title": "Adventuring Time",
+      "points": 60,
+      "source": "custom"
+    },
+    "minecraft:adventure/arbalistic": {
+      "title": "Arbalistic",
+      "points": 80,
+      "source": "custom"
+    },
+    "minecraft:adventure/avoid_vibration": {
+      "title": "Sneak 100",
+      "points": 10,
+      "source": "bedrock:Sneak 100"
+    },
+    "minecraft:adventure/blowback": {
+      "title": "Blowback",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:adventure/brush_armadillo": {
+      "title": "Isn't It Scute?",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:adventure/bullseye": {
+      "title": "Bullseye",
+      "points": 15,
+      "source": "bedrock:Bullseye"
+    },
+    "minecraft:adventure/craft_decorated_pot_using_only_sherds": {
+      "title": "Careful Restoration",
+      "points": 10,
+      "source": "bedrock:Careful restoration"
+    },
+    "minecraft:adventure/crafters_crafting_crafters": {
+      "title": "Crafters Crafting Crafters",
+      "points": 10,
+      "source": "bedrock:Crafters Crafting Crafters"
+    },
+    "minecraft:adventure/fall_from_world_height": {
+      "title": "Caves & Cliffs",
+      "points": 30,
+      "source": "bedrock:Caves and Cliffs"
+    },
+    "minecraft:adventure/hero_of_the_village": {
+      "title": "Hero of the Village",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:adventure/honey_block_slide": {
+      "title": "Sticky Situation",
+      "points": 30,
+      "source": "bedrock:Sticky Situation"
+    },
+    "minecraft:adventure/kill_a_mob": {
+      "title": "Monster Hunter",
+      "points": 15,
+      "source": "bedrock:Monster Hunter"
+    },
+    "minecraft:adventure/kill_all_mobs": {
+      "title": "Monsters Hunted",
+      "points": 100,
+      "source": "custom"
+    },
+    "minecraft:adventure/kill_mob_near_sculk_catalyst": {
+      "title": "It Spreads",
+      "points": 10,
+      "source": "bedrock:It Spreads"
+    },
+    "minecraft:adventure/lighten_up": {
+      "title": "Lighten Up",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/lightning_rod_with_villager_no_fire": {
+      "title": "Surge Protector",
+      "points": 50,
+      "source": "custom"
+    },
+    "minecraft:adventure/minecraft_trials_edition": {
+      "title": "Minecraft: Trial(s) Edition",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/ol_betsy": {
+      "title": "Ol' Betsy",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:adventure/overoverkill": {
+      "title": "Over-Overkill",
+      "points": 20,
+      "source": "bedrock:Over-Overkill"
+    },
+    "minecraft:adventure/play_jukebox_in_meadows": {
+      "title": "Sound of Music",
+      "points": 10,
+      "source": "bedrock:Sound of Music"
+    },
+    "minecraft:adventure/read_power_of_chiseled_bookshelf": {
+      "title": "The Power of Books",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/revaulting": {
+      "title": "Revaulting",
+      "points": 20,
+      "source": "bedrock:Revaulting"
+    },
+    "minecraft:adventure/root": {
+      "title": "Adventure",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:adventure/salvage_sherd": {
+      "title": "Respecting the Remnants",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/shoot_arrow": {
+      "title": "Take Aim",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:adventure/sleep_in_bed": {
+      "title": "Sweet Dreams",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:adventure/sniper_duel": {
+      "title": "Sniper Duel",
+      "points": 30,
+      "source": "bedrock:Sniper Duel"
+    },
+    "minecraft:adventure/spyglass_at_dragon": {
+      "title": "Is It a Plane?",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:adventure/spyglass_at_ghast": {
+      "title": "Is It a Balloon?",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/spyglass_at_parrot": {
+      "title": "Is It a Bird?",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/summon_iron_golem": {
+      "title": "Hired Help",
+      "points": 20,
+      "source": "bedrock:Body Guard"
+    },
+    "minecraft:adventure/throw_trident": {
+      "title": "A Throwaway Joke",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/totem_of_undying": {
+      "title": "Postmortal",
+      "points": 30,
+      "source": "bedrock:Cheating Death"
+    },
+    "minecraft:adventure/trade": {
+      "title": "What a Deal!",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:adventure/trade_at_world_height": {
+      "title": "Star Trader",
+      "points": 20,
+      "source": "bedrock:Star trader"
+    },
+    "minecraft:adventure/trim_with_all_exclusive_armor_patterns": {
+      "title": "Smithing with Style",
+      "points": 30,
+      "source": "bedrock:Smithing with style"
+    },
+    "minecraft:adventure/trim_with_any_armor_pattern": {
+      "title": "Crafting a New Look",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/two_birds_one_arrow": {
+      "title": "Two Birds, One Arrow",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:adventure/under_lock_and_key": {
+      "title": "Under Lock and Key",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:adventure/use_lodestone": {
+      "title": "Country Lode, Take Me Home",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:adventure/very_very_frightening": {
+      "title": "Very Very Frightening",
+      "points": 50,
+      "source": "custom"
+    },
+    "minecraft:adventure/voluntary_exile": {
+      "title": "Voluntary Exile",
+      "points": 20,
+      "source": "bedrock:I've got a bad feeling about this"
+    },
+    "minecraft:adventure/walk_on_powder_snow_with_leather_boots": {
+      "title": "Light as a Rabbit",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:adventure/who_needs_rockets": {
+      "title": "Who Needs Rockets?",
+      "points": 10,
+      "source": "bedrock:Who Needs Rockets?"
+    },
+    "minecraft:adventure/whos_the_pillager_now": {
+      "title": "Who's the Pillager Now?",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:husbandry/allay_deliver_cake_to_note_block": {
+      "title": "Birthday Song",
+      "points": 10,
+      "source": "bedrock:Birthday Song"
+    },
+    "minecraft:husbandry/allay_deliver_item_to_player": {
+      "title": "You've Got a Friend in Me",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:husbandry/axolotl_in_a_bucket": {
+      "title": "The Cutest Predator",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:husbandry/balanced_diet": {
+      "title": "A Balanced Diet",
+      "points": 60,
+      "source": "custom"
+    },
+    "minecraft:husbandry/bred_all_animals": {
+      "title": "Two by Two",
+      "points": 80,
+      "source": "custom"
+    },
+    "minecraft:husbandry/breed_an_animal": {
+      "title": "The Parrots and the Bats",
+      "points": 15,
+      "source": "bedrock:Repopulation"
+    },
+    "minecraft:husbandry/complete_catalogue": {
+      "title": "A Complete Catalogue",
+      "points": 60,
+      "source": "custom"
+    },
+    "minecraft:husbandry/feed_snifflet": {
+      "title": "Little Sniffs",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:husbandry/fishy_business": {
+      "title": "Fishy Business",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:husbandry/froglights": {
+      "title": "With Our Powers Combined!",
+      "points": 30,
+      "source": "bedrock:With Our Powers Combined!"
+    },
+    "minecraft:husbandry/kill_axolotl_target": {
+      "title": "The Healing Power of Friendship!",
+      "points": 30,
+      "source": "bedrock:The Healing Power of Friendship!"
+    },
+    "minecraft:husbandry/leash_all_frog_variants": {
+      "title": "When the Squad Hops into Town",
+      "points": 40,
+      "source": "custom"
+    },
+    "minecraft:husbandry/make_a_sign_glow": {
+      "title": "Glow and Behold!",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:husbandry/obtain_netherite_hoe": {
+      "title": "Serious Dedication",
+      "points": 50,
+      "source": "custom"
+    },
+    "minecraft:husbandry/obtain_sniffer_egg": {
+      "title": "Smells Interesting",
+      "points": 30,
+      "source": "custom"
+    },
+    "minecraft:husbandry/plant_any_sniffer_seed": {
+      "title": "Planting the Past",
+      "points": 10,
+      "source": "bedrock:Planting the past"
+    },
+    "minecraft:husbandry/plant_seed": {
+      "title": "A Seedy Place",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:husbandry/remove_wolf_armor": {
+      "title": "Shear Brilliance",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:husbandry/repair_wolf_armor": {
+      "title": "Good as New",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:husbandry/ride_a_boat_with_a_goat": {
+      "title": "Whatever Floats Your Goat!",
+      "points": 20,
+      "source": "bedrock:Whatever Floats Your Goat"
+    },
+    "minecraft:husbandry/root": {
+      "title": "Husbandry",
+      "points": 10,
+      "source": "custom"
+    },
+    "minecraft:husbandry/safely_harvest_honey": {
+      "title": "Bee Our Guest",
+      "points": 15,
+      "source": "bedrock:Bee our guest"
+    },
+    "minecraft:husbandry/silk_touch_nest": {
+      "title": "Total Beelocation",
+      "points": 30,
+      "source": "bedrock:Total Beelocation"
+    },
+    "minecraft:husbandry/tactical_fishing": {
+      "title": "Tactical Fishing",
+      "points": 20,
+      "source": "bedrock:I am a Marine Biologist"
+    },
+    "minecraft:husbandry/tadpole_in_a_bucket": {
+      "title": "Bukkit Bukkit",
+      "points": 20,
+      "source": "custom"
+    },
+    "minecraft:husbandry/tame_an_animal": {
+      "title": "Best Friends Forever",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:husbandry/wax_off": {
+      "title": "Wax Off",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:husbandry/wax_on": {
+      "title": "Wax On",
+      "points": 15,
+      "source": "custom"
+    },
+    "minecraft:husbandry/whole_pack": {
+      "title": "The Whole Pack",
+      "points": 60,
+      "source": "custom"
+    }
+  }
+}

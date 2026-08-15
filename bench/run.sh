@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Run ONE scored benchmark trial end-to-end on this machine:
+#   world up (fixed seed) -> wait until the bot is in-world -> start the
+#   harness (clock starts) -> harness self-exits at the budget -> snapshot the
+#   advancement ledger -> score -> collect artifacts -> tear down.
+#
+# Usage:
+#   bench/run.sh [--seconds 1800] [--model <id>] [--run-id <id>] [--seed <s>]
+#                [--local] [--keep]
+#   --local  use the native arm64 mc-client (Apple Silicon dev)
+#   --keep   leave the stack up after the run (debugging)
+#
+# Auth for the harness comes from the environment (or repo .env, which compose
+# reads): CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+SECONDS_BUDGET=1800
+MODEL="claude-haiku-4-5-20251001"
+RUN_ID="$(date +%Y%m%d-%H%M%S)"
+SEED="mineclaude-bench-1"
+LOCAL=0
+KEEP=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --seconds) SECONDS_BUDGET="$2"; shift 2 ;;
+        --model)   MODEL="$2"; shift 2 ;;
+        --run-id)  RUN_ID="$2"; shift 2 ;;
+        --seed)    SEED="$2"; shift 2 ;;
+        --local)   LOCAL=1; shift ;;
+        --keep)    KEEP=1; shift ;;
+        *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]] \
+   && ! grep -qE '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=.+' .env 2>/dev/null; then
+    echo "bench: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in env or .env" >&2
+    exit 2
+fi
+
+export BENCH_RUN_DIR="./state/bench/${RUN_ID}"
+export BENCH_RUN_SECONDS="$SECONDS_BUDGET"
+export BENCH_MODEL="$MODEL"
+export BENCH_SEED="$SEED"
+mkdir -p "$BENCH_RUN_DIR"/{video,sessions,harness}
+chmod -R a+rwX "$BENCH_RUN_DIR" 2>/dev/null || true
+
+COMPOSE=(docker compose -f docker-compose.yml -f bench/compose.bench.yml)
+[[ $LOCAL -eq 1 ]] && COMPOSE=("${COMPOSE[@]}" -f docker-compose.arm64.yml)
+
+log() { echo "[bench $(date +%H:%M:%S)] $*"; }
+
+log "run=$RUN_ID model=$MODEL budget=${SECONDS_BUDGET}s seed=$SEED artifacts=$BENCH_RUN_DIR"
+
+log "building images"
+"${COMPOSE[@]}" --profile harness build
+
+log "starting world stack"
+"${COMPOSE[@]}" up -d mc-server mc-client mineclaude
+
+log "waiting for the bot to be in-world (bridge /status.health)"
+in_world=0
+for _ in $(seq 1 180); do  # up to 15 min: server gen + client join is slow
+    if curl -sf --max-time 3 localhost:8081/status 2>/dev/null \
+        | python3 -c "import json,sys; d=json.load(sys.stdin); d=d.get('data',d); sys.exit(0 if d.get('health') is not None else 1)" 2>/dev/null; then
+        in_world=1; break
+    fi
+    sleep 5
+done
+if [[ $in_world -ne 1 ]]; then
+    log "FAIL: bot never reached the world; dumping logs"
+    "${COMPOSE[@]}" logs --tail 100 > "$BENCH_RUN_DIR/logs-failure.txt" || true
+    [[ $KEEP -eq 1 ]] || "${COMPOSE[@]}" down -v --remove-orphans
+    exit 1
+fi
+
+log "waiting for the MCP server (mineclaude :5556)"
+mcp_up=0
+for _ in $(seq 1 24); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 localhost:5556/mcp 2>/dev/null || echo 000)
+    [[ "$code" != "000" ]] && { mcp_up=1; break; }
+    sleep 5
+done
+if [[ $mcp_up -ne 1 ]]; then
+    log "FAIL: mineclaude MCP server never answered on :5556 (container crash-looping?)"
+    "${COMPOSE[@]}" logs --tail 100 mineclaude > "$BENCH_RUN_DIR/logs-failure.txt" || true
+    [[ $KEEP -eq 1 ]] || "${COMPOSE[@]}" down -v --remove-orphans
+    exit 1
+fi
+
+T0=$(date +%s)
+GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+cat > "$BENCH_RUN_DIR/metadata.json" <<EOF
+{
+  "run_id": "$RUN_ID",
+  "harness": "claude-code",
+  "model": "$MODEL",
+  "budget_seconds": $SECONDS_BUDGET,
+  "seed": "$SEED",
+  "git_sha": "$GIT_SHA",
+  "t0_epoch": $T0,
+  "started_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+
+log "starting harness — clock running"
+COMPOSE_PROFILES=harness "${COMPOSE[@]}" up -d harness
+
+hard_stop=$(( T0 + SECONDS_BUDGET + 180 ))  # grace for the last claude invocation to wind down
+while :; do
+    cid=$(COMPOSE_PROFILES=harness "${COMPOSE[@]}" ps -q harness)
+    running=$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo false)
+    [[ "$running" != "true" ]] && { log "harness exited"; break; }
+    if (( $(date +%s) > hard_stop )); then
+        log "harness overran grace period; stopping it"
+        docker stop -t 20 "$cid" >/dev/null || true
+        break
+    fi
+    sleep 15
+done
+
+log "collecting artifacts"
+curl -sf --max-time 10 localhost:8081/advancements > "$BENCH_RUN_DIR/advancements.json" \
+    || log "WARN: advancements snapshot failed"
+curl -sf --max-time 10 -X POST localhost:8081/record/stop >/dev/null 2>&1 || true
+"${COMPOSE[@]}" logs --no-color > "$BENCH_RUN_DIR/logs.txt" 2>&1 || true
+docker logs "$(COMPOSE_PROFILES=harness "${COMPOSE[@]}" ps -aq harness)" \
+    > "$BENCH_RUN_DIR/harness/container.log" 2>&1 || true
+
+if [[ -s "$BENCH_RUN_DIR/advancements.json" ]]; then
+    python3 bench/score.py \
+        --advancements "$BENCH_RUN_DIR/advancements.json" \
+        --scoring bench/scoring/gamerscore.json \
+        --sessions "$BENCH_RUN_DIR/sessions" \
+        --t0 "$T0" \
+        --out "$BENCH_RUN_DIR/score.json"
+else
+    log "WARN: no advancements snapshot — no score computed"
+fi
+
+if [[ $KEEP -eq 1 ]]; then
+    log "leaving stack up (--keep)"
+else
+    log "tearing down"
+    "${COMPOSE[@]}" --profile harness down -v --remove-orphans
+fi
+
+log "done — artifacts in $BENCH_RUN_DIR"
+[[ -f "$BENCH_RUN_DIR/score.json" ]] && python3 -c "
+import json
+d = json.load(open('$BENCH_RUN_DIR/score.json'))
+print(f\"SCORE: {d['total_points']} points ({d['earned_count']} advancements)\")
+for e in d['breakdown']:
+    off = f\"+{e['offset_s']:.0f}s\" if e['offset_s'] is not None else '     '
+    print(f\"  {off:>8}  {e['points']:>3}G  {e['title'] or e['id']}\")
+"

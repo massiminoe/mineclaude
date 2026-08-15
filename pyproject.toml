@@ -7,7 +7,9 @@ dependencies = [
     "aiohttp",
     "httpx",
     "websockets",
-    "mcp",
+    # mcp 2.0 removed mcp.server.fastmcp (mcp_server.py imports FastMCP from
+    # there); .venv runs 1.27.x. Pin <2 so container builds match.
+    "mcp>=1.27,<2",
     "uvicorn",
 ]
 

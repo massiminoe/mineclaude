@@ -1,0 +1,63 @@
+# Bench overlay: merged on top of the base docker-compose.yml to turn the dev
+# stack into one scored benchmark run.
+#
+#   docker compose -f docker-compose.yml -f bench/compose.bench.yml [-f docker-compose.arm64.yml] ...
+#
+# Driven by bench/run.sh — don't `up` this by hand unless debugging. It
+# (a) pins the world seed + difficulty on mc-server, (b) redirects recordings
+# and session logs into a per-run artifacts dir (BENCH_RUN_DIR), and (c) adds
+# the two bench-only services: the containerized mineclaude runtime and the
+# harness. The harness sits behind a compose profile so the runner can bring
+# the world up first and start the clock precisely when the agent starts.
+services:
+  mc-server:
+    environment:
+      # Fixed seed: every benchmark run generates the identical world, so no
+      # score variance is attributable to world luck. Bump the default only
+      # with a scoring-table version bump — cross-seed scores don't compare.
+      SEED: "${BENCH_SEED:-mineclaude-bench-1}"
+      # The dev stack runs peaceful; the bench needs hostile mobs for the
+      # combat/adventure advancement tree to be earnable.
+      DIFFICULTY: "${BENCH_DIFFICULTY:-normal}"
+
+  mc-client:
+    volumes:
+      # Same container target as the base file's ./state/video mapping, so
+      # this *replaces* it: recordings land in the per-run artifacts dir.
+      - "${BENCH_RUN_DIR:-./state/bench/dev}/video:/recordings"
+
+  mineclaude:
+    build:
+      context: .
+      dockerfile: bench/mineclaude.Dockerfile
+    depends_on:
+      - mc-client
+    environment:
+      BRIDGE_URL: http://mc-client:8081
+      BRIDGE_WS_URL: ws://mc-client:8082/events
+      MCP_HOST: "0.0.0.0"
+    ports:
+      - "5555:5555" # monitor (watch a live run from the host)
+      - "5556:5556" # MCP (debug against the same server the harness drives)
+    volumes:
+      - "${BENCH_RUN_DIR:-./state/bench/dev}/sessions:/app/state/sessions"
+
+  harness:
+    profiles: ["harness"]
+    build:
+      context: bench/harness/claude-code
+      args:
+        CLAUDE_CODE_VERSION: "${BENCH_CLAUDE_CODE_VERSION:-latest}"
+    depends_on:
+      - mineclaude
+    environment:
+      MCP_URL: http://mineclaude:5556/mcp
+      BENCH_MODEL: "${BENCH_MODEL:-claude-haiku-4-5-20251001}"
+      BENCH_RUN_SECONDS: "${BENCH_RUN_SECONDS:-1800}"
+      # Subscription token (claude setup-token) or API key — either works.
+      CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    volumes:
+      - ./skills:/skills:ro
+      - ./bench/scoring:/scoring:ro
+      - "${BENCH_RUN_DIR:-./state/bench/dev}/harness:/artifacts"
