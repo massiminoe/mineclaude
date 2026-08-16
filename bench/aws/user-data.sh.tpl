@@ -33,6 +33,7 @@ export RECORD_FPS="__RECORD_FPS__"
 # ffmpeg's own share. A score is only meaningful if the VM wasn't starved, and
 # this is the only place that's observable after the instance is gone.
 (
+    set +x  # this whole script runs under `set -x`; without this the log is 3x trace noise
     while :; do
         stats=$(docker stats --no-stream --format '{{.Name}}={{.CPUPerc}}' 2>/dev/null | tr '\n' ' ')
         rec=$(ps -eo pcpu,args --no-headers 2>/dev/null | grep '[x]11grab' | grep /recordings | awk '{print $1}' | tr '\n' ',')
