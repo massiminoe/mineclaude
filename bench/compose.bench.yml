@@ -21,6 +21,17 @@ services:
       DIFFICULTY: "${BENCH_DIFFICULTY:-normal}"
 
   mc-client:
+    environment:
+      # The dev stack records at 5 fps; the bench records at 15. Measured on a
+      # c7i.2xlarge (bench/aws): 5 fps captures ~3.6 visually-distinct frames a
+      # second and 15 fps captures ~7.3 — i.e. 5 fps samples BELOW what the
+      # software renderer paints and throws motion away, which matters when the
+      # video is being read to explain what a model did. The cost is 5 points of
+      # one core (10.9% vs 5.9%) against an MC client already burning 250-440%,
+      # and bytes are a wash since duplicate frames compress to nothing.
+      # Override with RECORD_FPS in the environment; keep it low on an emulated
+      # (Apple Silicon) client, where the headroom isn't there.
+      RECORD_FPS: "${RECORD_FPS:-15}"
     volumes:
       # Same container target as the base file's ./state/video mapping, so
       # this *replaces* it: recordings land in the per-run artifacts dir.

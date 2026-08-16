@@ -32,8 +32,9 @@ collect everything into `state/bench/<run-id>/`:
     advancements.json  raw ledger snapshot (ground truth)
     harness/           Claude Code stream-json transcripts + harness log
     sessions/          mineclaude session log (advancement receipt timestamps)
-    video/             full gameplay recording (~25-50 MB per 30 min)
+    video/             full gameplay recording (15 fps, ~70-90 MB per 30 min)
     logs.txt           compose logs
+    bench-perf.log     15s samples of VM load / container CPU (cloud runs only)
 
 The harness container (`harness/claude-code/`) holds the harness *contract*:
 it gets `MCP_URL`, `BENCH_MODEL`, `BENCH_RUN_SECONDS`, auth env, read-only

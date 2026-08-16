@@ -3,7 +3,7 @@
 #
 #   bench/aws/launch.sh [--seconds 1800] [--model <id>] [--run-id <id>]
 #                       [--seed <s>] [--type c7i.2xlarge] [--spot]
-#                       [--git-ref <sha|branch>] [--record-fps 5] [--no-wait]
+#                       [--git-ref <sha|branch>] [--record-fps 15] [--no-wait]
 #
 # The VM clones the repo at --git-ref (default: current HEAD — push first!),
 # runs bench/run.sh, uploads state/bench/<run-id>/ to S3, and self-terminates.
@@ -19,7 +19,7 @@ SEED="mineclaude-bench-1"
 ITYPE="c7i.2xlarge"
 SPOT=0
 GIT_REF="$(git rev-parse HEAD)"
-RECORD_FPS=5
+RECORD_FPS=15
 WAIT=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
