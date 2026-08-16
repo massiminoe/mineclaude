@@ -3,7 +3,7 @@
 #
 #   bench/aws/launch.sh [--seconds 1800] [--model <id>] [--run-id <id>]
 #                       [--seed <s>] [--type c7i.2xlarge] [--spot]
-#                       [--git-ref <sha|branch>] [--no-wait]
+#                       [--git-ref <sha|branch>] [--record-fps 5] [--no-wait]
 #
 # The VM clones the repo at --git-ref (default: current HEAD — push first!),
 # runs bench/run.sh, uploads state/bench/<run-id>/ to S3, and self-terminates.
@@ -19,6 +19,7 @@ SEED="mineclaude-bench-1"
 ITYPE="c7i.2xlarge"
 SPOT=0
 GIT_REF="$(git rev-parse HEAD)"
+RECORD_FPS=5
 WAIT=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -28,6 +29,7 @@ while [[ $# -gt 0 ]]; do
         --seed)    SEED="$2"; shift 2 ;;
         --type)    ITYPE="$2"; shift 2 ;;
         --git-ref) GIT_REF="$2"; shift 2 ;;
+        --record-fps) RECORD_FPS="$2"; shift 2 ;;
         --spot)    SPOT=1; shift ;;
         --no-wait) WAIT=0; shift ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -59,6 +61,7 @@ sed -e "s|__REGION__|$REGION|g" \
     -e "s|__MODEL__|$MODEL|g" \
     -e "s|__SEED__|$SEED|g" \
     -e "s|__GIT_REF__|$GIT_REF|g" \
+    -e "s|__RECORD_FPS__|$RECORD_FPS|g" \
     -e "s|__MAX_MINUTES__|$MAX_MINUTES|g" \
     bench/aws/user-data.sh.tpl > "$UD"
 

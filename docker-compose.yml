@@ -83,13 +83,18 @@ services:
       # Gameplay recorder (bridge mod's RecordRoute): when "1", an ffmpeg taps
       # the same :99 framebuffer (x11grab is a read-only grab, so it doesn't
       # conflict with /screenshot or /video/stream) and writes ONE continuous
-      # 5 fps / CRF 28 H.264 .mp4 per run to /recordings — bind-mounted to
+      # CRF 28 H.264 .mp4 per run to /recordings — bind-mounted to
       # ./state/video on the host (plays natively in QuickTime; a clean
       # stop/roll/shutdown finalizes it, an abrupt kill can spoil the open
       # file). POST /record/roll cuts a fresh file without a restart.
       # Reuses MONITOR_VIDEO_FILTER for the same cave-brightening. Set to "0"
-      # to disable. ~170 MB/hr.
+      # to disable. ~170 MB/hr at 5 fps.
       RECORD_VIDEO: "1"
+      # Capture rate, 1..30 (the game's own maxFps cap — grabbing faster than
+      # the framebuffer is repainted just writes duplicate frames). 5 is enough
+      # to follow the run; raise it when the video is being read for behaviour
+      # (combat, falls, mob approaches) and the host has the CPU to spare.
+      RECORD_FPS: "${RECORD_FPS:-5}"
     ports:
       # Native Fabric mod bridge — HTTP on 8081, events WS on 8082
       # (separate listener because JDK HttpServer doesn't speak WS
