@@ -22,9 +22,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * trailing moov atom to lose: a file killed mid-write (hard crash, or a
  * `docker compose down` that SIGKILLs the container before the JVM's
  * CLIENT_STOPPING hook can stop us cleanly) stays playable up to the last
- * completed fragment. Encoder settings (5 fps, libx264 CRF 28, keyframe every
- * 5 s, `MONITOR_VIDEO_FILTER` brighten) match the old recorder so the only
+ * completed fragment. Encoder settings (libx264 CRF 28, keyframe every 5 s,
+ * `MONITOR_VIDEO_FILTER` brighten) match the old recorder so the only
  * behavioural change from it is "one file instead of many".
+ *
+ * Capture rate defaults to [DEFAULT_FPS] and is set by `RECORD_FPS`, or per
+ * call via `{fps}` on start/roll (a bare roll keeps the live rate). The ceiling
+ * is [MAX_FPS] — options.txt pins the game to `maxFps:30`, and x11grab can only
+ * sample what the framebuffer actually holds, so a higher ask buys duplicates.
  *
  * Lifecycle:
  *   - **Auto-start:** when `RECORD_VIDEO=1`, the recorder kicks off the first
@@ -54,13 +59,20 @@ object RecordRoute {
 
     private const val DISPLAY = ":99"
     private const val SIZE = "854x480"
-    private const val FPS = 5
+    private const val DEFAULT_FPS = 5
+    // Ceiling is what the game actually paints: options.txt pins `maxFps:30`,
+    // so asking x11grab for more than that just duplicates frames.
+    private const val MAX_FPS = 30
     private const val CRF = 28
     private const val DEFAULT_FILTER = "eq=gamma=2.0:brightness=0.08:contrast=1.15"
     private const val STOP_GRACE_S = 5L
 
     private val recordDir: String =
         System.getenv("RECORD_DIR")?.takeIf { it.isNotBlank() } ?: "/recordings"
+
+    /** `RECORD_FPS` sets the default capture rate; start/roll can override per call. */
+    private val envFps: Int =
+        (System.getenv("RECORD_FPS")?.trim()?.toIntOrNull() ?: DEFAULT_FPS).coerceIn(1, MAX_FPS)
     private val tsFormat = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
 
     // All process-state mutation goes through `lock`. The HTTP worker pool and
@@ -68,6 +80,7 @@ object RecordRoute {
     private val lock = Any()
     private var proc: Process? = null
     private var currentFile: String? = null
+    private var currentFps: Int = envFps
     private var startedAtMs: Long = 0
     private val autoStarted = AtomicBoolean(false)
 
@@ -90,7 +103,7 @@ object RecordRoute {
                                 synchronized(lock) {
                                     if (proc?.isAlive != true) {
                                         try {
-                                            startRecording(null)
+                                            startRecording(null, envFps)
                                             log.info("recorder auto-started (RECORD_VIDEO=1)")
                                         } catch (e: Exception) {
                                             log.error("recorder auto-start failed", e)
@@ -111,14 +124,16 @@ object RecordRoute {
     }
 
     private fun handleStart(ex: HttpExchange): BridgeResponse {
-        val name = try { nameParam(ex) } catch (e: BodyParseException) {
+        val body = try { ex.jsonBody() } catch (e: BodyParseException) {
             return HttpBridge.err(e.message ?: "bad body", status = 400)
         }
+        val name = nameParam(body)
+        val fps = fpsParam(body)
         return synchronized(lock) {
             if (proc?.isAlive == true) {
                 HttpBridge.ok(statusData(), "already recording")
             } else try {
-                startRecording(name)
+                startRecording(name, fps ?: envFps)
                 HttpBridge.ok(statusData(), "recording started")
             } catch (e: Exception) {
                 log.error("record start failed", e)
@@ -138,9 +153,11 @@ object RecordRoute {
     }
 
     private fun handleRoll(ex: HttpExchange): BridgeResponse {
-        val name = try { nameParam(ex) } catch (e: BodyParseException) {
+        val body = try { ex.jsonBody() } catch (e: BodyParseException) {
             return HttpBridge.err(e.message ?: "bad body", status = 400)
         }
+        val name = nameParam(body)
+        val fps = fpsParam(body)
         return synchronized(lock) {
             if (proc?.isAlive != true) {
                 // Roll rotates an *active* recording; it won't cold-start one
@@ -150,9 +167,11 @@ object RecordRoute {
                 HttpBridge.ok(statusData(), "not recording")
             } else {
                 val prev = currentFile
+                // A bare roll keeps the live rate; `{fps}` re-opens at a new one.
+                val next = fps ?: currentFps
                 stopRecording()
                 try {
-                    startRecording(name)
+                    startRecording(name, next)
                     HttpBridge.ok(statusData() + mapOf("previous_file" to prev), "rolled to new file")
                 } catch (e: Exception) {
                     log.error("record roll failed", e)
@@ -168,7 +187,7 @@ object RecordRoute {
 
     // --- internals; callers hold `lock` (except the self-contained launch) ---
 
-    private fun startRecording(name: String?) {
+    private fun startRecording(name: String?, fps: Int) {
         File(recordDir).mkdirs()
         val ts = LocalDateTime.now().format(tsFormat)
         val label = name?.let { sanitize(it) }
@@ -178,13 +197,15 @@ object RecordRoute {
         val filter = System.getenv("MONITOR_VIDEO_FILTER") ?: DEFAULT_FILTER
         val cmd = mutableListOf(
             "ffmpeg", "-nostdin", "-loglevel", "warning", "-y",
-            "-f", "x11grab", "-r", FPS.toString(), "-video_size", SIZE, "-i", DISPLAY,
+            "-f", "x11grab", "-r", fps.toString(), "-video_size", SIZE, "-i", DISPLAY,
         )
         if (filter.isNotEmpty()) cmd.addAll(listOf("-vf", filter))
         cmd.addAll(
             listOf(
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", CRF.toString(),
-                "-pix_fmt", "yuv420p", "-g", "25", "-an",
+                // Keyframe every 5s at any rate — that's also the fragment size,
+                // so it sets how much a SIGKILLed file loses at the tail.
+                "-pix_fmt", "yuv420p", "-g", (fps * 5).toString(), "-an",
                 // Fragmented mp4: a small moov is written up front and each GOP is
                 // flushed as a self-contained fragment, so there's NO trailing moov
                 // atom to lose. A SIGKILLed file (hard crash / `docker compose down`
@@ -203,8 +224,9 @@ object RecordRoute {
             .start()
         proc = p
         currentFile = path
+        currentFps = fps
         startedAtMs = System.currentTimeMillis()
-        log.info("recorder started -> {} (ffmpeg pid {})", path, p.pid())
+        log.info("recorder started -> {} @{}fps (ffmpeg pid {})", path, fps, p.pid())
     }
 
     private fun stopRecording() {
@@ -226,14 +248,20 @@ object RecordRoute {
         return mapOf(
             "recording" to alive,
             "file" to currentFile,
+            "fps" to (if (alive) currentFps else null),
+            "default_fps" to envFps,
             "started_at_ms" to (if (alive) startedAtMs else null),
             "duration_s" to (if (alive) (System.currentTimeMillis() - startedAtMs) / 1000 else null),
             "dir" to recordDir,
         )
     }
 
-    private fun nameParam(ex: HttpExchange): String? =
-        (ex.jsonBody()["name"] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+    private fun nameParam(body: Map<String, Any?>): String? =
+        (body["name"] as? String)?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** Null when absent — the caller decides whether that means env or "keep current". */
+    private fun fpsParam(body: Map<String, Any?>): Int? =
+        (body["fps"] as? Number)?.toInt()?.coerceIn(1, MAX_FPS)
 
     /** Append `-2`, `-3`, … if a same-second roll would collide. */
     private fun uniquePath(base: String): String {
