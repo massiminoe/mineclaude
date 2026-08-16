@@ -7,7 +7,7 @@ set -uo pipefail
 
 MCP_URL="${MCP_URL:-http://mineclaude:5556/mcp}"
 MODEL="${BENCH_MODEL:-claude-haiku-4-5-20251001}"
-RUN_SECONDS="${BENCH_RUN_SECONDS:-1800}"
+RUN_SECONDS="${BENCH_RUN_SECONDS:-3600}"
 ART="${ARTIFACTS_DIR:-/artifacts}"
 
 mkdir -p "$ART"
@@ -33,7 +33,10 @@ fi
 # --- workspace: skill + scoring table + MCP config ---
 mkdir -p /workspace/.claude/skills
 cp -r /skills/mineclaude /workspace/.claude/skills/mineclaude
-[ -f /scoring/gamerscore.json ] && cp /scoring/gamerscore.json /workspace/gamerscore.json
+# Gamerscore weighting is disabled — the metric is the raw advancement count,
+# so the scoring table is deliberately NOT surfaced to the agent (it would
+# imply some advancements are worth more than others). The /scoring mount stays
+# for when weighted scoring is re-enabled.
 cat > /workspace/.mcp.json <<EOF
 {"mcpServers": {"mineclaude": {"type": "http", "url": "${MCP_URL}"}}}
 EOF

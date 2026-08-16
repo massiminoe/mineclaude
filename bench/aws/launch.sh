@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch ONE ephemeral bench VM on EC2, wait for its score, pull the results.
 #
-#   bench/aws/launch.sh [--seconds 1800] [--model <id>] [--run-id <id>]
+#   bench/aws/launch.sh [--seconds 3600] [--model <id>] [--run-id <id>]
 #                       [--seed <s>] [--type c7i.2xlarge] [--spot]
 #                       [--git-ref <sha|branch>] [--record-fps 15] [--no-wait]
 #
@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 REGION="${AWS_REGION:-us-east-1}"
-SECONDS_BUDGET=1800
+SECONDS_BUDGET=3600
 MODEL="claude-haiku-4-5-20251001"
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 SEED="mineclaude-bench-1"
@@ -101,10 +101,10 @@ for (( i = 0; i < MAX_MINUTES + 10; i++ )); do
         echo; python3 -c "
 import json
 d = json.load(open('$DEST/score.json'))
-print(f\"SCORE: {d['total_points']} points ({d['earned_count']} advancements)\")
+print(f\"SCORE: {d['earned_count']} advancements\")
 for e in d['breakdown']:
     off = f\"+{e['offset_s']:.0f}s\" if e['offset_s'] is not None else '     '
-    print(f\"  {off:>8}  {e['points']:>3}G  {e['title'] or e['id']}\")
+    print(f\"  {off:>8}  {e['title'] or e['id']}\")
 "
         echo "full artifacts: aws s3 cp --recursive s3://$BUCKET/runs/$RUN_ID/ $DEST/"
         exit 0

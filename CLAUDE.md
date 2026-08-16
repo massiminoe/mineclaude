@@ -16,7 +16,7 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 
 ## Bench (LLM/harness benchmark)
 
-`bench/` turns the stack into a benchmark: how much Xbox-style gamerscore (advancement points, `bench/scoring/gamerscore.json`, 122 advancements / 3,375 max) can a (harness, model) pair earn in a fixed wall-clock budget on a fixed-seed world. `bench/run.sh` runs one local/on-VM trial (compose overlay `bench/compose.bench.yml`: fixed seed, difficulty normal, containerized mineclaude + a Claude Code harness container behind a compose profile); `bench/aws/launch.sh` runs it on an ephemeral self-terminating EC2 VM and uploads artifacts (score, transcripts, session log, video) to S3. See `bench/README.md`.
+`bench/` turns the stack into a benchmark: how many **advancements** can a (harness, model) pair earn in a fixed wall-clock budget (default 1 hour) on a fixed-seed world. Every advancement counts 1; the weighted Xbox-style gamerscore (`bench/scoring/gamerscore.json`, 122 advancements / 3,375 max) is currently **disabled** but kept — re-score any run offline with `bench/score.py --gamerscore --scoring …`. `bench/run.sh` runs one local/on-VM trial (compose overlay `bench/compose.bench.yml`: fixed seed, difficulty normal, containerized mineclaude + a Claude Code harness container behind a compose profile); `bench/aws/launch.sh` runs it on an ephemeral self-terminating EC2 VM and uploads artifacts (score, transcripts, session log, video) to S3. See `bench/README.md`.
 
 ## Project Structure
 

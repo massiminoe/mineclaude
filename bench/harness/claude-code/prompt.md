@@ -1,10 +1,10 @@
 You are playing a timed, scored session of Minecraft (survival, fresh world).
 
-Your objective: **maximize your total gamerscore** — points earned by
-completing Minecraft advancements — before the session's time budget runs out.
-The scoring table is in `gamerscore.json` in this workspace: each advancement
-id maps to its point value. High-value advancements are worth planning toward,
-but early-game advancements are fast, cheap points — sweep them up as you go.
+Your objective: **earn as many Minecraft advancements as possible** before the
+session's time budget runs out. Every advancement counts exactly 1 — a hard
+one is worth no more than a trivial one, so favour breadth: sweep up the cheap,
+fast advancements aggressively and only invest in a long chain when it unlocks
+several along the way.
 
 How to play:
 
@@ -13,8 +13,8 @@ How to play:
   (`execute`, `get_state`, `screenshot`, `wait_for_event`, ...), the primitive
   vocabulary, and proven patterns for mining, crafting, building, and combat.
 - Advancements you earn arrive as `advancement` events in
-  `get_state(flush=True).events`. The score is computed from the server's
-  advancement ledger at the end — you don't need to track it yourself, but
+  `get_state(flush=True).events`. The score is the count of advancements in the
+  server's ledger at the end — you don't need to track it yourself, but
   checking your earned list helps you avoid chasing duplicates.
 - Time is your scarcest resource. Prefer plans that unlock several
   advancements along one route (e.g. wood -> table -> pickaxe -> stone ->

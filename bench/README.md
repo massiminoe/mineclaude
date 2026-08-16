@@ -1,15 +1,21 @@
 # Mineclaude Bench
 
-A benchmark for LLM agents + harnesses: **how much Xbox-style gamerscore can an
-agent earn in a fixed wall-clock budget**, driving the mineclaude bot in a
+A benchmark for LLM agents + harnesses: **how many Minecraft advancements can
+an agent earn in a fixed wall-clock budget**, driving the mineclaude bot in a
 fresh, fixed-seed survival world?
 
-- **Metric**: sum of points for advancements earned within the budget.
-  `scoring/gamerscore.json` maps all 122 Java 1.21.5 display advancements to
-  points (Bedrock-edition gamerscore where an equivalent achievement exists —
-  47 of them — gamerscore-convention values for the rest; 3,375 points max).
+- **Metric**: the **count** of advancements earned within the budget (default
+  budget: 3600s / 1 hour). Every advancement counts 1.
   Per-advancement timestamps are captured too, so time-based metrics (AUC,
   time-to-milestone) can be derived later from the same artifacts.
+- **Gamerscore (weighted points) is currently DISABLED**, but the logic is
+  kept: `scoring/gamerscore.json` maps all 122 Java 1.21.5 display
+  advancements to points (Bedrock gamerscore where an equivalent achievement
+  exists — 47 of them — gamerscore-convention values for the rest; 3,375 max),
+  and any run can be re-scored offline from its artifacts:
+
+      python3 bench/score.py --advancements <run>/advancements.json \
+          --gamerscore --scoring bench/scoring/gamerscore.json
 - **A benchmark entry** is (harness, model): e.g. `claude-code` +
   `claude-haiku-4-5` and `claude-code` + `claude-sonnet-5` are two entries.
 - **Determinism**: fixed world seed (`BENCH_SEED`, default
@@ -28,11 +34,12 @@ at the budget, snapshot `GET /advancements`, score with `bench/score.py`, and
 collect everything into `state/bench/<run-id>/`:
 
     metadata.json      run id, harness, model, seed, git sha, t0
-    score.json         total points + chronological breakdown
+    score.json         earned count + chronological breakdown
     advancements.json  raw ledger snapshot (ground truth)
     harness/           Claude Code stream-json transcripts + harness log
     sessions/          mineclaude session log (advancement receipt timestamps)
-    video/             full gameplay recording (15 fps, ~70-90 MB per 30 min)
+    video/             full gameplay recording (15 fps, ~70-90 MB per 30 min,
+                       so ~150-180 MB for the 1h default budget)
     logs.txt           compose logs
     bench-perf.log     15s samples of VM load / container CPU (cloud runs only)
 
@@ -70,7 +77,7 @@ One-time: `aws configure`, then
 
 Per run (push your branch first — the VM clones from GitHub):
 
-    bench/aws/launch.sh --seconds 1800 --model claude-haiku-4-5-20251001 [--spot]
+    bench/aws/launch.sh --seconds 3600 --model claude-sonnet-5 [--spot]
 
 This boots a c7i.2xlarge (8 vCPU/16 GB, ~$0.36/hr on-demand, ~$0.14 spot; the
 whole stack runs native amd64 — no emulation), executes the run, uploads
@@ -83,5 +90,8 @@ live VM with the printed ssh command; boot log is `/var/log/bench-userdata.log`.
 
 - Parallelism: N ≤ 4 independent runs = N `launch.sh` invocations (fully
   independent VMs already); a small sweep driver + results table comes next.
-- Scoring is v1 — bump `scoring/gamerscore.json`'s `version` on any change;
-  scores only compare within (seed, scoring version, budget).
+- Weighted gamerscore is parked, not deleted — re-enable by passing
+  `--gamerscore --scoring …` in `run.sh` and re-surfacing the table to the
+  agent in `harness/claude-code/entrypoint.sh` + `prompt.md`. Bump
+  `scoring/gamerscore.json`'s `version` on any change; scores only compare
+  within (seed, metric, budget).

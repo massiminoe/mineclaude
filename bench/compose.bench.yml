@@ -64,7 +64,7 @@ services:
     environment:
       MCP_URL: http://mineclaude:5556/mcp
       BENCH_MODEL: "${BENCH_MODEL:-claude-haiku-4-5-20251001}"
-      BENCH_RUN_SECONDS: "${BENCH_RUN_SECONDS:-1800}"
+      BENCH_RUN_SECONDS: "${BENCH_RUN_SECONDS:-3600}"
       # Subscription token (claude setup-token) or API key — either works.
       CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"

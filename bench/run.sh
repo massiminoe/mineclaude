@@ -5,7 +5,7 @@
 #   advancement ledger -> score -> collect artifacts -> tear down.
 #
 # Usage:
-#   bench/run.sh [--seconds 1800] [--model <id>] [--run-id <id>] [--seed <s>]
+#   bench/run.sh [--seconds 3600] [--model <id>] [--run-id <id>] [--seed <s>]
 #                [--local] [--keep]
 #   --local  use the native arm64 mc-client (Apple Silicon dev)
 #   --keep   leave the stack up after the run (debugging)
@@ -15,7 +15,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SECONDS_BUDGET=1800
+SECONDS_BUDGET=3600
 MODEL="claude-haiku-4-5-20251001"
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 SEED="mineclaude-bench-1"
@@ -139,9 +139,10 @@ docker logs "$(COMPOSE_PROFILES=harness "${COMPOSE[@]}" ps -aq harness)" \
     > "$BENCH_RUN_DIR/harness/container.log" 2>&1 || true
 
 if [[ -s "$BENCH_RUN_DIR/advancements.json" ]]; then
+    # Metric is the advancement COUNT; weighted gamerscore is disabled (pass
+    # --gamerscore --scoring bench/scoring/gamerscore.json to re-score offline).
     python3 bench/score.py \
         --advancements "$BENCH_RUN_DIR/advancements.json" \
-        --scoring bench/scoring/gamerscore.json \
         --sessions "$BENCH_RUN_DIR/sessions" \
         --t0 "$T0" \
         --out "$BENCH_RUN_DIR/score.json"
@@ -160,8 +161,8 @@ log "done — artifacts in $BENCH_RUN_DIR"
 [[ -f "$BENCH_RUN_DIR/score.json" ]] && python3 -c "
 import json
 d = json.load(open('$BENCH_RUN_DIR/score.json'))
-print(f\"SCORE: {d['total_points']} points ({d['earned_count']} advancements)\")
+print(f\"SCORE: {d['earned_count']} advancements\")
 for e in d['breakdown']:
     off = f\"+{e['offset_s']:.0f}s\" if e['offset_s'] is not None else '     '
-    print(f\"  {off:>8}  {e['points']:>3}G  {e['title'] or e['id']}\")
+    print(f\"  {off:>8}  {e['title'] or e['id']}\")
 "
