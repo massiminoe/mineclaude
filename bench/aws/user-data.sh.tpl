@@ -20,9 +20,19 @@ git clone https://github.com/massiminoe/mineclaude.git /opt/mineclaude
 cd /opt/mineclaude
 git checkout --quiet __GIT_REF__
 
-export CLAUDE_CODE_OAUTH_TOKEN=$(aws ssm get-parameter --region __REGION__ \
-    --name /mineclaude-bench/claude-code-oauth-token \
+# Harness credential: each harness authenticates differently, so pull only the
+# one this run needs. A missing parameter is fatal — bench/run.sh would refuse
+# to start the agent anyway, and failing here keeps the reason in the boot log.
+HARNESS="__HARNESS__"
+case "$HARNESS" in
+    claude-code) SSM_PARAM=/mineclaude-bench/claude-code-oauth-token; CRED_VAR=CLAUDE_CODE_OAUTH_TOKEN ;;
+    opencode)    SSM_PARAM=/mineclaude-bench/opencode-api-key;        CRED_VAR=OPENCODE_API_KEY ;;
+    cursor)      SSM_PARAM=/mineclaude-bench/cursor-api-key;          CRED_VAR=CURSOR_API_KEY ;;
+    *) echo "unknown harness $HARNESS"; shutdown -h now "bad harness" ;;
+esac
+CRED=$(aws ssm get-parameter --region __REGION__ --name "$SSM_PARAM" \
     --with-decryption --query Parameter.Value --output text)
+export "$CRED_VAR=$CRED"
 
 RUN_ID="__RUN_ID__"
 
@@ -45,6 +55,7 @@ PERF_PID=$!
 
 bench/run.sh \
     --seconds __RUN_SECONDS__ \
+    --harness "$HARNESS" \
     --model "__MODEL__" \
     --seed "__SEED__" \
     --run-id "$RUN_ID" \

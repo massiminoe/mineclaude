@@ -2,16 +2,20 @@
 # Run N bench trials of the SAME (harness, model, seed) on ephemeral EC2 VMs
 # and aggregate the scores — the variance driver for a benchmark entry.
 #
-#   bench/aws/sweep.sh [--trials 2] [--concurrency 2] [--model <id>]
-#                      [--seconds 3600] [--seed <s>] [--git-ref <sha|branch>]
-#                      [--type c7i.2xlarge] [--spot] [--sweep-id <id>]
+#   bench/aws/sweep.sh [--trials 2] [--concurrency 2] [--harness <name>]
+#                      [--model <id>] [--seconds 3600] [--seed <s>]
+#                      [--git-ref <sha|branch>] [--type c7i.2xlarge] [--spot]
+#                      [--sweep-id <id>]
 #
 # Each trial is a fully independent VM (own world, own bot, own harness), so
 # --concurrency is bounded by two things OUTSIDE AWS as much as inside it:
-#   1. Anthropic rate limits — every harness authenticates with the SAME
-#      subscription token from SSM. A throttled harness scores low for reasons
-#      that have nothing to do with the model, which silently corrupts the
-#      result. Keep concurrency low on a subscription token.
+#   1. Provider rate limits — every trial authenticates with the SAME
+#      subscription credential from SSM. A throttled harness scores low for
+#      reasons that have nothing to do with the model, which silently corrupts
+#      the result. Keep concurrency low on a subscription. This bites hardest on
+#      the dollar-metered plans: opencode Go caps at $12 per 5h and $30 a week,
+#      and Cursor Pro's monthly pool is $20 — a wave of concurrent trials can
+#      exhaust either mid-sweep.
 #   2. EC2 vCPU quota — c7i.2xlarge is 8 vCPU each; the common default
 #      on-demand standard quota (32) caps you at 4 concurrent.
 # Trials run in waves of --concurrency: a wave is launched, waited out, then
@@ -22,6 +26,7 @@ cd "$(dirname "$0")/../.."
 REGION="${AWS_REGION:-us-east-1}"
 TRIALS=2
 CONCURRENCY=2
+HARNESS="claude-code"
 MODEL="claude-sonnet-5"
 SECONDS_BUDGET=3600
 SEED="mineclaude-bench-1"
@@ -33,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --trials)      TRIALS="$2"; shift 2 ;;
         --concurrency) CONCURRENCY="$2"; shift 2 ;;
+        --harness)     HARNESS="$2"; shift 2 ;;
         --model)       MODEL="$2"; shift 2 ;;
         --seconds)     SECONDS_BUDGET="$2"; shift 2 ;;
         --seed)        SEED="$2"; shift 2 ;;
@@ -54,15 +60,16 @@ MAX_MINUTES=$(( SECONDS_BUDGET / 60 + 55 ))
 
 log() { echo "[sweep $(date +%H:%M:%S)] $*"; }
 
-log "sweep=$SWEEP_ID trials=$TRIALS concurrency=$CONCURRENCY model=$MODEL budget=${SECONDS_BUDGET}s seed=$SEED ref=${GIT_REF:0:12}"
+log "sweep=$SWEEP_ID trials=$TRIALS concurrency=$CONCURRENCY harness=$HARNESS model=$MODEL budget=${SECONDS_BUDGET}s seed=$SEED ref=${GIT_REF:0:12}"
 log "artifacts -> $DEST | s3://$BUCKET/runs/"
 
 RUN_IDS=()
 launch_one() {  # $1 = trial index
     local n="$1" run_id out iid
     run_id="${SWEEP_ID}-t${n}"
-    local args=(--seconds "$SECONDS_BUDGET" --model "$MODEL" --seed "$SEED"
-                --run-id "$run_id" --type "$ITYPE" --git-ref "$GIT_REF" --no-wait)
+    local args=(--seconds "$SECONDS_BUDGET" --harness "$HARNESS" --model "$MODEL"
+                --seed "$SEED" --run-id "$run_id" --type "$ITYPE" --git-ref "$GIT_REF"
+                --no-wait)
     [[ $SPOT -eq 1 ]] && args+=(--spot)
     out=$(bench/aws/launch.sh "${args[@]}" 2>&1) || { log "trial $n FAILED to launch:"; echo "$out" >&2; return 1; }
     iid=$(sed -n 's/^launched \(i-[a-z0-9]*\).*/\1/p' <<<"$out" | head -1)
@@ -90,7 +97,8 @@ wait_wave() {
                 note=$(python3 -c "
 import json
 u = json.load(open('$DEST/$run_id/usage.json'))
-print(f\", \${u['cost_usd']:.2f}\" + (' THROTTLED' if u['health']['throttled'] else ''))
+c = u.get('cost_usd')
+print((f\", \${c:.2f}\" if c is not None else ', cost n/a') + (' THROTTLED' if u['health']['throttled'] else ''))
 " 2>/dev/null || echo '')
                 log "  $run_id DONE — $n advancements$note"
                 continue
@@ -126,12 +134,12 @@ while (( trial <= TRIALS )); do
 done
 
 log "sweep complete — aggregating"
-python3 - "$DEST" "$MODEL" "$SEED" "$SECONDS_BUDGET" <<'PY'
+python3 - "$DEST" "$MODEL" "$SEED" "$SECONDS_BUDGET" "$HARNESS" <<'PY'
 import json, sys, statistics
 from collections import Counter
 from pathlib import Path
 
-dest, model, seed, budget = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+dest, model, seed, budget, harness = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 runs = sorted(p for p in dest.glob("*/score.json"))
 if not runs:
     print("no score.json files collected"); sys.exit(1)
@@ -144,7 +152,10 @@ for p in runs:
     usage_path = p.parent / "usage.json"
     if usage_path.exists():
         u = json.loads(usage_path.read_text())
-        cost[run_id] = u["cost_usd"]
+        # None when the harness could not report cost (e.g. Cursor's billed
+        # figure had not landed yet) — absent, not zero.
+        if u.get("cost_usd") is not None:
+            cost[run_id] = u["cost_usd"]
         # A throttled trial measured the rate limiter, not the model. Reported,
         # but held out of the mean and the hit-rate rather than silently averaged.
         if u["health"]["throttled"]:
@@ -155,7 +166,7 @@ for p in runs:
 
 valid = [r for r in counts if r not in throttled]
 n = len(valid)
-print(f"\n=== sweep: {model} | seed={seed} | budget={budget}s | {n} valid trial(s) ===")
+print(f"\n=== sweep: {harness} + {model} | seed={seed} | budget={budget}s | {n} valid trial(s) ===")
 for run_id, c in counts.items():
     tags = f"  ${cost[run_id]:6.2f}" if run_id in cost else ""
     tags += "  THROTTLED — held out" if run_id in throttled else ""

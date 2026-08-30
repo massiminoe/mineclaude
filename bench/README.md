@@ -18,6 +18,8 @@ fresh, fixed-seed survival world?
           --gamerscore --scoring bench/scoring/gamerscore.json
 - **A benchmark entry** is (harness, model): e.g. `claude-code` +
   `claude-haiku-4-5` and `claude-code` + `claude-sonnet-5` are two entries.
+  Three harnesses ship today — `claude-code`, `opencode`, `cursor` — selected
+  with `--harness` on `run.sh` / `aws/launch.sh` / `aws/sweep.sh`.
 - **Determinism**: fixed world seed (`BENCH_SEED`, default
   `mineclaude-bench-1`), fixed MC version (1.21.5), difficulty `normal`,
   pristine world per run. Mob/weather RNG remains; average over trials.
@@ -26,7 +28,7 @@ fresh, fixed-seed survival world?
 
 `bench/compose.bench.yml` overlays the base docker-compose stack:
 
-    mc-server (fixed seed) <- mc-client (bridge mod) <- mineclaude (MCP) <- harness (Claude Code)
+    mc-server (fixed seed) <- mc-client (bridge mod) <- mineclaude (MCP) <- harness
 
 `bench/run.sh` orchestrates one trial: build, world up, wait until the bot is
 in-world, start the harness (the clock starts here), let the harness self-exit
@@ -37,7 +39,7 @@ collect everything into `state/bench/<run-id>/`:
     score.json         earned count + chronological breakdown
     usage.json         token ledger + cost + rate-limit health (bench/usage.py)
     advancements.json  raw ledger snapshot (ground truth)
-    harness/           Claude Code stream-json transcripts + harness log
+    harness/           the harness's own transcripts + harness log
     sessions/          mineclaude session log (advancement receipt timestamps)
     video/             full gameplay recording (15 fps, ~70-90 MB per 30 min,
                        so ~150-180 MB for the 1h default budget)
@@ -47,12 +49,23 @@ collect everything into `state/bench/<run-id>/`:
 ## Token cost and throttled trials
 
 `bench/usage.py` folds the harness transcripts into `usage.json` so cost analysis never
-has to re-download hundreds of MB of `claude-*.jsonl`. It records input / output /
+has to re-download hundreds of MB of transcript. It records input / output /
 thinking / cache-write (split 1h vs 5m) / cache-read tokens, turns, per-model
-`modelUsage`, and `cost_usd`.
+`modelUsage`, and `cost_usd`. One schema, one parser per harness — picked from the
+run's `metadata.json`, so every pre-existing run parses exactly as before — and
+`cost_basis` names what the cost figure actually is (`list_price_estimate`,
+`gateway_metered`, `cursor_raw_cost`, or `unavailable` when the harness cannot
+report one — in which case `tokens` and `cost_usd` are `null` rather than zero,
+so a run with no ledger is never mistaken for a free one).
 
-Two things about the source format that the code depends on, both verified rather than
-assumed:
+Rate-limit detection for the two new harnesses is scoped to **error payloads and
+stderr only**, never the transcript body. A transcript carries every tool result
+the agent saw, and a loose pattern quarantines valid trials: the first pilot was
+wrongly flagged `THROTTLED` because the mineclaude skill has a line numbered 429
+and because epoch timestamps like `1788054294` contain those digits.
+
+Two things about the Claude Code source format that the code depends on, both verified
+rather than assumed:
 
 - **Only the `result` event is authoritative.** The per-message `usage` blocks on
   `assistant` events are mid-stream snapshots — summing them overcounted cache reads by
@@ -72,7 +85,8 @@ model. `sweep.sh` prints such a trial but holds it out of the mean and the hit-r
 quarantine, don't delete. (Backfilled onto the Aug 2026 runs: one fable-5 trial,
 `20260817-080733-t3`, is throttled.)
 
-Re-derive it for any run from its artifacts:
+Re-derive it for any run from its artifacts (`--kind` only when there is no
+metadata.json to read it from):
 
     python3 bench/usage.py --harness <run>/harness --out <run>/usage.json
 
@@ -83,13 +97,94 @@ mean + min/max spread, pacing (how much is banked by the halfway mark, how long 
 ran silent), and cost per advancement. Reads `state/bench/sweep-*/` directly; no live
 stack needed. Run it with the repo venv: `.venv/bin/jupyter lab`.
 
-The harness container (`harness/claude-code/`) holds the harness *contract*:
-it gets `MCP_URL`, `BENCH_MODEL`, `BENCH_RUN_SECONDS`, auth env, read-only
-`/skills` + `/scoring` mounts and an `/artifacts` mount, and must exit by
-itself when the budget ends. Any future harness (other CLIs, raw API loops)
-is a new image honoring the same contract.
+## Harnesses
 
-## Auth (Claude Code harness)
+`bench/harness/` holds one image per harness plus the shared contract they all
+implement (`common.sh`, `prompt.md` — the build context is `bench/harness/`, so
+every image gets the same task text and the same MCP-readiness gate). A harness
+gets `MCP_URL`, `BENCH_MODEL`, `BENCH_RUN_SECONDS`, its auth env, read-only
+`/skills` + `/scoring` mounts and an `/artifacts` mount, and must exit by itself
+when the budget ends.
+
+| harness | driver | skill path | auth | usage source |
+|---|---|---|---|---|
+| `claude-code` | `claude -p --continue`, stream-json | `.claude/skills/` | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | `result` events (list price) |
+| `opencode` | `opencode run --format json --auto` | `.claude/skills/` (native Claude-compatible path) | `OPENCODE_API_KEY` | `step_finish` events (Zen metered) |
+| `cursor` | `@cursor/sdk` local agent (`driver.mjs`) | `.cursor/skills/` | `CURSOR_API_KEY` | none on a Pro plan — **see below** |
+
+Model ids carry their provider where the CLI expects it:
+
+    bench/run.sh --harness opencode --model opencode-go/qwen3.8-flash
+    bench/run.sh --harness cursor   --model composer-2.5
+
+The five opencode Go models the matrix targets — `deepseek-v4-flash-vision-exp`,
+`glm-5.3-flash`, `gpt-5.6-luna`, `qwen3.8-flash`, `qwen3.8-max` — all support
+tool calls *and* image attachments, which the `screenshot` MCP tool needs. On
+Cursor, `composer-2.5` and `grok-4.6`; the run dumps the account's live
+catalogue to `harness/cursor-models.json` so a renamed id is visible rather than
+mysterious.
+
+**Cursor runs have no token or cost ledger.** Measured, not assumed. The CLI's
+stream-json result event carries only `duration_ms`. `@cursor/sdk` declares
+`agent.getUsage()` (returning `rawCostCents` / `chargedCents` plus full token
+counts), which is why the harness drives the SDK — but that call is
+**entitlement-gated**: on an individual Pro account it returns
+`[feature_unavailable] This feature is not available for your account`, and the
+event stream carries no `usage` events either (only `status`, `thinking`,
+`assistant`, `tool_call`). On Pro there is no programmatic per-run usage from
+Cursor by any route.
+
+`usage.py` reports that honestly — `tokens: null`, `cost_usd: null`,
+`cost_basis: "unavailable"`, and `health.usage_error` naming the reason. It must
+never be zeros: a run with 100+ tool calls reporting `total_tokens: 0` reads as a
+free run and drags any mean toward zero. `turns` (assistant messages) and
+`tool_calls` still land, so Cursor entries compare on advancements and activity
+and drop out of cost-per-advancement charts.
+
+The SDK remains the better driver on its own merits — MCP servers passed inline
+(no config file to go missing), a structured event stream, programmatic
+deadline/cancel — and if `getUsage()` ever becomes available (a Teams seat is the
+likely unlock) the ledger populates with no code change. The CLI stays the
+fallback: same entrypoint contract.
+
+**Adding a harness** is a directory: `bench/harness/<name>/Dockerfile` +
+`entrypoint.sh` that sources `/opt/bench/common.sh`, writes transcripts to
+`/artifacts`, and self-exits at the deadline; a parser in `bench/usage.py`; and
+a credential case in `run.sh`, `aws/setup.sh`, and `aws/user-data.sh.tpl`.
+
+### Budget and quota, before you run a sweep
+
+A measured 1h Claude Code trial burns 16–48M tokens, overwhelmingly cache reads.
+Both new subscriptions meter in dollars, so that shape matters more than the
+model's sticker price:
+
+- **opencode Go** — $12 per 5h, $30/week, $60/month at Zen list prices. The
+  flash-tier models are cheap even at that volume; `qwen3.8-max` ($2/$6 per Mtok)
+  is only viable if prompt caching is active through the gateway, which is
+  exactly what `usage.json`'s `cache_read` column tells you.
+- **Cursor Pro** — a $20/month credit pool, i.e. roughly one to two hour-long
+  runs at frontier prices. Run `composer-2.5` first. This cannot be tracked from
+  the artifacts (see above) — watch the dashboard.
+
+Measured on the first 10-minute pilots (local, arm64): `qwen3.8-flash` spent
+**$0.031**, with caching confirmed active through the gateway (867k cache-read
+against 156 raw input tokens) — roughly $0.20 for a 1h trial. The flash tier is
+nowhere near the Go caps; only `qwen3.8-max` (~15x the cache-read rate) is worth
+watching. opencode's `step_finish` token counts were verified per-step, not
+cumulative, against a real transcript.
+
+Pilot each new (harness, model) at `--seconds 600` and read `usage.json` before
+committing to 1h trials.
+
+### MCP tool timeout
+
+opencode and Cursor both drive MCP through the TypeScript SDK, whose tool-call
+timeout defaults to 60s. `execute`'s inline wait is 50s, so `run.sh` drops it to
+40s (`BENCH_EXECUTE_WAIT_S` -> the mineclaude service's
+`MINECLAUDE_EXECUTE_WAIT_S`) for non-Claude harnesses: a long action then
+backgrounds as `status:"running"` instead of failing client-side.
+
+## Auth
 
 The harness authenticates with a long-lived subscription token:
 
@@ -99,9 +194,20 @@ The harness authenticates with a long-lived subscription token:
 
 An `ANTHROPIC_API_KEY` works too (per-token billing instead).
 
+The other harnesses take a single key each, also from the repo `.env`:
+
+    OPENCODE_API_KEY=...   # opencode Zen -> subscribe to Go -> copy the key
+    CURSOR_API_KEY=...     # Cursor dashboard -> API Keys
+
+`bench/run.sh` checks only the credential its `--harness` needs, before world-gen
+burns ten minutes. `bench/aws/setup.sh` uploads whichever are present to SSM
+(`/mineclaude-bench/{claude-code-oauth-token,opencode-api-key,cursor-api-key}`),
+and each VM pulls only its own.
+
 ## Local run (dev)
 
     bench/run.sh --local --seconds 600 --model claude-haiku-4-5-20251001
+    bench/run.sh --local --seconds 600 --harness opencode --model opencode-go/qwen3.8-flash
 
 `--local` swaps in the native arm64 mc-client (Apple Silicon). `--keep` leaves
 the stack up afterwards; the monitor stays at http://localhost:5555 during a
@@ -118,6 +224,7 @@ One-time: `aws configure`, then
 Per run (push your branch first — the VM clones from GitHub):
 
     bench/aws/launch.sh --seconds 3600 --model claude-sonnet-5 [--spot]
+    bench/aws/launch.sh --seconds 3600 --harness cursor --model composer-2.5
 
 This boots a c7i.2xlarge (8 vCPU/16 GB, ~$0.36/hr on-demand, ~$0.14 spot; the
 whole stack runs native amd64 — no emulation), executes the run, uploads

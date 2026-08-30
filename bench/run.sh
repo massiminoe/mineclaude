@@ -5,17 +5,24 @@
 #   advancement ledger -> score -> collect artifacts -> tear down.
 #
 # Usage:
-#   bench/run.sh [--seconds 3600] [--model <id>] [--run-id <id>] [--seed <s>]
-#                [--local] [--keep]
-#   --local  use the native arm64 mc-client (Apple Silicon dev)
-#   --keep   leave the stack up after the run (debugging)
+#   bench/run.sh [--seconds 3600] [--harness <name>] [--model <id>]
+#                [--run-id <id>] [--seed <s>] [--local] [--keep]
+#   --harness  which bench/harness/<name> image drives the run
+#              (claude-code | opencode | cursor); default claude-code
+#   --local    use the native arm64 mc-client (Apple Silicon dev)
+#   --keep     leave the stack up after the run (debugging)
 #
+# A benchmark entry is (harness, model) — e.g. opencode + opencode-go/qwen3.8-max.
 # Auth for the harness comes from the environment (or repo .env, which compose
-# reads): CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY.
+# reads); which variable is required depends on --harness:
+#   claude-code  CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) or ANTHROPIC_API_KEY
+#   opencode     OPENCODE_API_KEY  (opencode Zen / Go)
+#   cursor       CURSOR_API_KEY    (Cursor dashboard -> API Keys)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SECONDS_BUDGET=3600
+HARNESS="claude-code"
 MODEL="claude-haiku-4-5-20251001"
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 SEED="mineclaude-bench-1"
@@ -24,6 +31,7 @@ KEEP=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --seconds) SECONDS_BUDGET="$2"; shift 2 ;;
+        --harness) HARNESS="$2"; shift 2 ;;
         --model)   MODEL="$2"; shift 2 ;;
         --run-id)  RUN_ID="$2"; shift 2 ;;
         --seed)    SEED="$2"; shift 2 ;;
@@ -33,16 +41,43 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]] \
-   && ! grep -qE '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=.+' .env 2>/dev/null; then
-    echo "bench: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in env or .env" >&2
+if [[ ! -f "bench/harness/${HARNESS}/Dockerfile" ]]; then
+    echo "bench: unknown harness '$HARNESS' (no bench/harness/$HARNESS/Dockerfile)" >&2
+    echo "       available: $(ls -d bench/harness/*/ | xargs -n1 basename | tr '\n' ' ')" >&2
     exit 2
+fi
+
+# Each harness authenticates differently; check its own credential up front
+# rather than discovering the gap after world-gen has burned ten minutes.
+case "$HARNESS" in
+    claude-code) AUTH_VARS="CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY" ;;
+    opencode)    AUTH_VARS="OPENCODE_API_KEY" ;;
+    cursor)      AUTH_VARS="CURSOR_API_KEY" ;;
+    *)           AUTH_VARS="" ;;
+esac
+if [[ -n "$AUTH_VARS" ]]; then
+    have_auth=0
+    for v in ${AUTH_VARS//|/ }; do
+        [[ -n "${!v:-}" ]] && have_auth=1
+    done
+    grep -qE "^(${AUTH_VARS})=.+" .env 2>/dev/null && have_auth=1
+    if [[ $have_auth -ne 1 ]]; then
+        echo "bench: harness '$HARNESS' needs ${AUTH_VARS//|/ or } in env or .env" >&2
+        exit 2
+    fi
 fi
 
 export BENCH_RUN_DIR="./state/bench/${RUN_ID}"
 export BENCH_RUN_SECONDS="$SECONDS_BUDGET"
+export BENCH_HARNESS="$HARNESS"
 export BENCH_MODEL="$MODEL"
 export BENCH_SEED="$SEED"
+# opencode and Cursor drive MCP through the TypeScript SDK, whose tool-call
+# timeout defaults to 60s; keep the inline `execute` wait clear of it so a long
+# action gets backgrounded (status:"running") instead of failing client-side.
+if [[ -z "${BENCH_EXECUTE_WAIT_S:-}" && "$HARNESS" != "claude-code" ]]; then
+    export BENCH_EXECUTE_WAIT_S=40
+fi
 mkdir -p "$BENCH_RUN_DIR"/{video,sessions,harness}
 chmod -R a+rwX "$BENCH_RUN_DIR" 2>/dev/null || true
 
@@ -51,7 +86,7 @@ COMPOSE=(docker compose -f docker-compose.yml -f bench/compose.bench.yml)
 
 log() { echo "[bench $(date +%H:%M:%S)] $*"; }
 
-log "run=$RUN_ID model=$MODEL budget=${SECONDS_BUDGET}s seed=$SEED artifacts=$BENCH_RUN_DIR"
+log "run=$RUN_ID harness=$HARNESS model=$MODEL budget=${SECONDS_BUDGET}s seed=$SEED artifacts=$BENCH_RUN_DIR"
 
 log "building images"
 "${COMPOSE[@]}" --profile harness build
@@ -94,7 +129,7 @@ GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 cat > "$BENCH_RUN_DIR/metadata.json" <<EOF
 {
   "run_id": "$RUN_ID",
-  "harness": "claude-code",
+  "harness": "$HARNESS",
   "model": "$MODEL",
   "budget_seconds": $SECONDS_BUDGET,
   "seed": "$SEED",
@@ -155,6 +190,7 @@ fi
 # throttled trial.
 python3 bench/usage.py \
     --harness "$BENCH_RUN_DIR/harness" \
+    --kind "$HARNESS" \
     --out "$BENCH_RUN_DIR/usage.json" || log "WARN: usage summary failed"
 
 if [[ $KEEP -eq 1 ]]; then

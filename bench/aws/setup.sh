@@ -4,11 +4,16 @@
 #   - IAM role+instance profile  mineclaude-bench-ec2 (S3 write, SSM token read)
 #   - Security group             mineclaude-bench (inbound: SSH from your IP)
 #   - Key pair                   mineclaude-bench (-> ~/.ssh/mineclaude-bench.pem)
-#   - SSM SecureString           /mineclaude-bench/claude-code-oauth-token
+#   - SSM SecureStrings          one per harness credential:
+#       /mineclaude-bench/claude-code-oauth-token  (claude-code)
+#       /mineclaude-bench/opencode-api-key         (opencode)
+#       /mineclaude-bench/cursor-api-key           (cursor)
 #
-# Prereqs: `aws configure` done; CLAUDE_CODE_OAUTH_TOKEN in env or repo .env.
-# Re-run any time — everything is create-if-missing, and the token parameter is
-# overwritten (so re-run after rotating the token).
+# Prereqs: `aws configure` done; the harness credentials you intend to run in
+# env or repo .env. Only the ones you have are uploaded — a missing one warns
+# and skips, so you can add a harness later by re-running.
+# Re-run any time — everything is create-if-missing, and token parameters are
+# overwritten (so re-run after rotating a credential).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -84,18 +89,28 @@ else
     echo "key pair $KEY exists (pem expected at $PEM)"
 fi
 
-# --- harness token -> SSM SecureString ---
-TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-$(grep -E '^CLAUDE_CODE_OAUTH_TOKEN=' .env 2>/dev/null | cut -d= -f2- || true)}"
-# .env values may be quoted (compose strips quotes at interpolation; a raw grep
-# doesn't) — strip one layer of surrounding quotes so SSM stores the bare token.
-TOKEN="${TOKEN#[\"\']}"; TOKEN="${TOKEN%[\"\']}"
-if [[ -n "$TOKEN" ]]; then
-    aws ssm put-parameter --region "$REGION" \
-        --name /mineclaude-bench/claude-code-oauth-token \
-        --type SecureString --value "$TOKEN" --overwrite >/dev/null
-    echo "stored harness token in SSM"
-else
-    echo "WARN: CLAUDE_CODE_OAUTH_TOKEN not found in env or .env — run again after 'claude setup-token'"
-fi
+# --- harness credentials -> SSM SecureStrings ---
+# One per harness; the VM pulls only the one its --harness needs.
+put_secret() {  # $1 = env var name, $2 = SSM parameter name, $3 = how to get it
+    local value="${!1:-$(grep -E "^$1=" .env 2>/dev/null | cut -d= -f2- || true)}"
+    # .env values may be quoted (compose strips quotes at interpolation; a raw
+    # grep doesn't) — strip one layer of surrounding quotes so SSM stores the
+    # bare credential.
+    value="${value#[\"\']}"; value="${value%[\"\']}"
+    if [[ -n "$value" ]]; then
+        aws ssm put-parameter --region "$REGION" --name "$2" \
+            --type SecureString --value "$value" --overwrite >/dev/null
+        echo "stored $1 in SSM ($2)"
+    else
+        echo "WARN: $1 not found in env or .env — $3"
+    fi
+}
+
+put_secret CLAUDE_CODE_OAUTH_TOKEN /mineclaude-bench/claude-code-oauth-token \
+    "run 'claude setup-token' and re-run (needed for --harness claude-code)"
+put_secret OPENCODE_API_KEY /mineclaude-bench/opencode-api-key \
+    "get a key from opencode Zen (Go plan) and re-run (needed for --harness opencode)"
+put_secret CURSOR_API_KEY /mineclaude-bench/cursor-api-key \
+    "create one at Cursor dashboard -> API Keys and re-run (needed for --harness cursor)"
 
 echo "setup complete"

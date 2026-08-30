@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Launch ONE ephemeral bench VM on EC2, wait for its score, pull the results.
 #
-#   bench/aws/launch.sh [--seconds 3600] [--model <id>] [--run-id <id>]
-#                       [--seed <s>] [--type c7i.2xlarge] [--spot]
+#   bench/aws/launch.sh [--seconds 3600] [--harness <name>] [--model <id>]
+#                       [--run-id <id>] [--seed <s>] [--type c7i.2xlarge] [--spot]
 #                       [--git-ref <sha|branch>] [--record-fps 15] [--no-wait]
+#
+# --harness picks the driver image (claude-code | opencode | cursor); the VM
+# pulls that harness's credential from SSM (see bench/aws/setup.sh).
 #
 # The VM clones the repo at --git-ref (default: current HEAD — push first!),
 # runs bench/run.sh, uploads state/bench/<run-id>/ to S3, and self-terminates.
@@ -13,6 +16,7 @@ cd "$(dirname "$0")/../.."
 
 REGION="${AWS_REGION:-us-east-1}"
 SECONDS_BUDGET=3600
+HARNESS="claude-code"
 MODEL="claude-haiku-4-5-20251001"
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 SEED="mineclaude-bench-1"
@@ -24,6 +28,7 @@ WAIT=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --seconds) SECONDS_BUDGET="$2"; shift 2 ;;
+        --harness) HARNESS="$2"; shift 2 ;;
         --model)   MODEL="$2"; shift 2 ;;
         --run-id)  RUN_ID="$2"; shift 2 ;;
         --seed)    SEED="$2"; shift 2 ;;
@@ -38,6 +43,11 @@ done
 
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 BUCKET="mineclaude-bench-${ACCOUNT}"
+
+if [[ ! -f "bench/harness/${HARNESS}/Dockerfile" ]]; then
+    echo "launch: unknown harness '$HARNESS' (no bench/harness/$HARNESS/Dockerfile)" >&2
+    exit 2
+fi
 
 if [[ -z "$(git branch -r --contains "$GIT_REF" 2>/dev/null)" ]]; then
     echo "WARN: $GIT_REF is not on any remote branch — the VM clones from GitHub. Push first." >&2
@@ -58,6 +68,7 @@ sed -e "s|__REGION__|$REGION|g" \
     -e "s|__BUCKET__|$BUCKET|g" \
     -e "s|__RUN_ID__|$RUN_ID|g" \
     -e "s|__RUN_SECONDS__|$SECONDS_BUDGET|g" \
+    -e "s|__HARNESS__|$HARNESS|g" \
     -e "s|__MODEL__|$MODEL|g" \
     -e "s|__SEED__|$SEED|g" \
     -e "s|__GIT_REF__|$GIT_REF|g" \
@@ -84,7 +95,7 @@ IID=$(aws ec2 run-instances --region "$REGION" \
     --query 'Instances[0].InstanceId' --output text)
 rm -f "$UD"
 
-echo "launched $IID ($ITYPE$( [[ $SPOT -eq 1 ]] && echo ', spot')) run=$RUN_ID model=$MODEL budget=${SECONDS_BUDGET}s"
+echo "launched $IID ($ITYPE$( [[ $SPOT -eq 1 ]] && echo ', spot')) run=$RUN_ID harness=$HARNESS model=$MODEL budget=${SECONDS_BUDGET}s"
 echo "  ssh: ssh -i ~/.ssh/mineclaude-bench.pem ubuntu@\$(aws ec2 describe-instances --region $REGION --instance-ids $IID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
 echo "  s3:  s3://$BUCKET/runs/$RUN_ID/"
 

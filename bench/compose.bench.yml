@@ -47,27 +47,48 @@ services:
       BRIDGE_URL: http://mc-client:8081
       BRIDGE_WS_URL: ws://mc-client:8082/events
       MCP_HOST: "0.0.0.0"
+      # How long `execute` blocks inline before handing back status:"running".
+      # It must stay UNDER the harness's MCP tool-call timeout or a long action
+      # is lost to the client rather than backgrounded. The MCP TypeScript SDK
+      # (what opencode and Cursor use as the client) defaults to 60s, so the
+      # 50s default has little headroom once server overhead is counted — the
+      # non-Claude harnesses lower it via BENCH_EXECUTE_WAIT_S.
+      MINECLAUDE_EXECUTE_WAIT_S: "${BENCH_EXECUTE_WAIT_S:-50}"
     ports:
       - "5555:5555" # monitor (watch a live run from the host)
       - "5556:5556" # MCP (debug against the same server the harness drives)
     volumes:
       - "${BENCH_RUN_DIR:-./state/bench/dev}/sessions:/app/state/sessions"
 
+  # One service, N harness images: BENCH_HARNESS picks which Dockerfile under
+  # bench/harness/ gets built. The build context is the shared bench/harness dir
+  # so every image gets the same prompt.md + common.sh — see bench/README.md for
+  # the contract. Keeping ONE service name is deliberate: run.sh's ps/logs/stop
+  # logic addresses `harness` and needs no per-harness branching.
   harness:
     profiles: ["harness"]
     build:
-      context: bench/harness/claude-code
+      context: bench/harness
+      dockerfile: "${BENCH_HARNESS:-claude-code}/Dockerfile"
       args:
-        CLAUDE_CODE_VERSION: "${BENCH_CLAUDE_CODE_VERSION:-latest}"
+        BENCH_HARNESS_VERSION: "${BENCH_HARNESS_VERSION:-latest}"
     depends_on:
       - mineclaude
     environment:
       MCP_URL: http://mineclaude:5556/mcp
+      BENCH_HARNESS: "${BENCH_HARNESS:-claude-code}"
       BENCH_MODEL: "${BENCH_MODEL:-claude-haiku-4-5-20251001}"
       BENCH_RUN_SECONDS: "${BENCH_RUN_SECONDS:-3600}"
-      # Subscription token (claude setup-token) or API key — either works.
+      # The superset of harness auth; each image reads only its own and fails
+      # fast if that one is empty.
+      # claude-code: subscription token (claude setup-token) or API key.
       CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # opencode: Zen / Go subscription key (the provider is part of the model
+      # id, e.g. opencode-go/qwen3.8-flash).
+      OPENCODE_API_KEY: "${OPENCODE_API_KEY:-}"
+      # cursor: dashboard -> API Keys; usage draws on the account's plan.
+      CURSOR_API_KEY: "${CURSOR_API_KEY:-}"
     volumes:
       - ./skills:/skills:ro
       - ./bench/scoring:/scoring:ro
