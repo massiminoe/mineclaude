@@ -35,6 +35,7 @@ collect everything into `state/bench/<run-id>/`:
 
     metadata.json      run id, harness, model, seed, git sha, t0
     score.json         earned count + chronological breakdown
+    usage.json         token ledger + cost + rate-limit health (bench/usage.py)
     advancements.json  raw ledger snapshot (ground truth)
     harness/           Claude Code stream-json transcripts + harness log
     sessions/          mineclaude session log (advancement receipt timestamps)
@@ -42,6 +43,45 @@ collect everything into `state/bench/<run-id>/`:
                        so ~150-180 MB for the 1h default budget)
     logs.txt           compose logs
     bench-perf.log     15s samples of VM load / container CPU (cloud runs only)
+
+## Token cost and throttled trials
+
+`bench/usage.py` folds the harness transcripts into `usage.json` so cost analysis never
+has to re-download hundreds of MB of `claude-*.jsonl`. It records input / output /
+thinking / cache-write (split 1h vs 5m) / cache-read tokens, turns, per-model
+`modelUsage`, and `cost_usd`.
+
+Two things about the source format that the code depends on, both verified rather than
+assumed:
+
+- **Only the `result` event is authoritative.** The per-message `usage` blocks on
+  `assistant` events are mid-stream snapshots — summing them overcounted cache reads by
+  60% and undercounted output by 40x on a sample run.
+- **Each invocation's `result` is its own**, not cumulative, even though the harness loop
+  re-enters with `--continue` under one session id. Summing across `claude-N.jsonl` is
+  correct.
+
+`cost_usd` is the CLI's **list-price** computation. Runs authenticate with a subscription
+token, which is not billed per token, so it is an equivalent rather than an invoice; the
+token counts are real either way.
+
+`health.throttled` is the quarantine flag: it goes true when the harness got a hard
+`rejected` rate-limit event, meaning that trial measured the rate limiter and not the
+model. `sweep.sh` prints such a trial but holds it out of the mean and the hit-rate, and
+`bench/analysis/advancement_curves.ipynb` drops it from every chart. Keep the artifacts —
+quarantine, don't delete. (Backfilled onto the Aug 2026 runs: one fable-5 trial,
+`20260817-080733-t3`, is throttled.)
+
+Re-derive it for any run from its artifacts:
+
+    python3 bench/usage.py --harness <run>/harness --out <run>/usage.json
+
+## Analysis
+
+`bench/analysis/advancement_curves.ipynb` — cumulative advancements over time per model,
+mean + min/max spread, pacing (how much is banked by the halfway mark, how long each trial
+ran silent), and cost per advancement. Reads `state/bench/sweep-*/` directly; no live
+stack needed. Run it with the repo venv: `.venv/bin/jupyter lab`.
 
 The harness container (`harness/claude-code/`) holds the harness *contract*:
 it gets `MCP_URL`, `BENCH_MODEL`, `BENCH_RUN_SECONDS`, auth env, read-only

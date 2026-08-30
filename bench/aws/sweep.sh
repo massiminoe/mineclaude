@@ -84,9 +84,15 @@ wait_wave() {
                 mkdir -p "$DEST/$run_id"
                 aws s3 cp --only-show-errors "s3://$BUCKET/runs/$run_id/score.json" "$DEST/$run_id/" --region "$REGION"
                 aws s3 cp --only-show-errors "s3://$BUCKET/runs/$run_id/metadata.json" "$DEST/$run_id/" --region "$REGION" 2>/dev/null || true
-                local n
+                aws s3 cp --only-show-errors "s3://$BUCKET/runs/$run_id/usage.json" "$DEST/$run_id/" --region "$REGION" 2>/dev/null || true
+                local n note
                 n=$(python3 -c "import json;print(json.load(open('$DEST/$run_id/score.json'))['earned_count'])" 2>/dev/null || echo '?')
-                log "  $run_id DONE — $n advancements"
+                note=$(python3 -c "
+import json
+u = json.load(open('$DEST/$run_id/usage.json'))
+print(f\", \${u['cost_usd']:.2f}\" + (' THROTTLED' if u['health']['throttled'] else ''))
+" 2>/dev/null || echo '')
+                log "  $run_id DONE — $n advancements$note"
                 continue
             fi
             local iid state
@@ -130,21 +136,40 @@ runs = sorted(p for p in dest.glob("*/score.json"))
 if not runs:
     print("no score.json files collected"); sys.exit(1)
 
-counts, freq = {}, Counter()
+counts, cost, throttled, freq = {}, {}, set(), Counter()
 for p in runs:
     d = json.loads(p.read_text())
-    counts[p.parent.name] = d["earned_count"]
-    for e in d["breakdown"]:
-        freq[e["title"] or e["id"]] += 1
+    run_id = p.parent.name
+    counts[run_id] = d["earned_count"]
+    usage_path = p.parent / "usage.json"
+    if usage_path.exists():
+        u = json.loads(usage_path.read_text())
+        cost[run_id] = u["cost_usd"]
+        # A throttled trial measured the rate limiter, not the model. Reported,
+        # but held out of the mean and the hit-rate rather than silently averaged.
+        if u["health"]["throttled"]:
+            throttled.add(run_id)
+    if run_id not in throttled:
+        for e in d["breakdown"]:
+            freq[e["title"] or e["id"]] += 1
 
-n = len(counts)
-print(f"\n=== sweep: {model} | seed={seed} | budget={budget}s | {n} trial(s) ===")
+valid = [r for r in counts if r not in throttled]
+n = len(valid)
+print(f"\n=== sweep: {model} | seed={seed} | budget={budget}s | {n} valid trial(s) ===")
 for run_id, c in counts.items():
-    print(f"  {run_id:<28} {c:>3} advancements")
-vals = list(counts.values())
+    tags = f"  ${cost[run_id]:6.2f}" if run_id in cost else ""
+    tags += "  THROTTLED — held out" if run_id in throttled else ""
+    print(f"  {run_id:<28} {c:>3} advancements{tags}")
+if not n:
+    print("  every trial was throttled — no valid mean"); sys.exit(1)
+vals = [counts[r] for r in valid]
 spread = f"  min {min(vals)}  max {max(vals)}"
 sd = f"  sd {statistics.stdev(vals):.1f}" if n > 1 else ""
 print(f"  {'MEAN':<28} {statistics.mean(vals):>5.1f}{spread}{sd}")
+spend = [cost[r] for r in valid if r in cost]
+if spend:
+    per_adv = sum(spend) / sum(vals) if sum(vals) else 0
+    print(f"  {'COST (list-price est.)':<28} ${statistics.mean(spend):>5.2f}/run   ${per_adv:.2f}/advancement")
 print(f"\n  earned in how many of {n} trial(s):")
 for title, c in freq.most_common():
     print(f"    {c}/{n}  {title}")

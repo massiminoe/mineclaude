@@ -150,6 +150,13 @@ else
     log "WARN: no advancements snapshot — no score computed"
 fi
 
+# Token ledger, folded out of the harness transcripts so cost analysis never has
+# to re-download them. Also carries the rate-limit health flag that quarantines a
+# throttled trial.
+python3 bench/usage.py \
+    --harness "$BENCH_RUN_DIR/harness" \
+    --out "$BENCH_RUN_DIR/usage.json" || log "WARN: usage summary failed"
+
 if [[ $KEEP -eq 1 ]]; then
     log "leaving stack up (--keep)"
 else
