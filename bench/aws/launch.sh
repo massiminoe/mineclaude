@@ -44,8 +44,20 @@ done
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 BUCKET="mineclaude-bench-${ACCOUNT}"
 
+if [[ "$HARNESS" == "codex" ]]; then
+    case "$MODEL" in
+        gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;
+        *) echo "Codex bench requires --model gpt-5.6-luna, gpt-5.6-terra, or gpt-5.6-sol" >&2; exit 2 ;;
+    esac
+fi
+
 if [[ ! -f "bench/harness/${HARNESS}/Dockerfile" ]]; then
     echo "launch: unknown harness '$HARNESS' (no bench/harness/$HARNESS/Dockerfile)" >&2
+    exit 2
+fi
+
+if [[ "$HARNESS" == "codex" ]] && ! git cat-file -e "$GIT_REF:bench/harness/codex/Dockerfile" 2>/dev/null; then
+    echo "launch: selected Git ref does not contain the Codex harness; commit and push it first" >&2
     exit 2
 fi
 

@@ -310,3 +310,37 @@ def test_cursor_rate_limit_error_quarantines(tmp_path: Path) -> None:
     result = bench_usage.summarize(harness_dir)
     assert result["health"]["throttled"] is True
     assert result["terminal_reasons"] == {"error": 1}
+
+
+def test_codex_turn_usage_and_cache_subset(tmp_path):
+    directory = write_run(tmp_path, 'codex', 'gpt-5.6-luna', {
+        'codex-1.jsonl': jsonl(
+            {'type': 'item.completed', 'item': {'type': 'mcp_tool_call', 'result': '429 rate limit'}},
+            {'type': 'turn.completed', 'usage': {'input_tokens': 100, 'cached_input_tokens': 80, 'output_tokens': 10, 'cache_write_input_tokens': 0}},
+        ),
+        'codex-2.jsonl': jsonl(
+            {'type': 'turn.completed', 'usage': {'input_tokens': 200, 'cached_input_tokens': 150, 'output_tokens': 20}},
+        ),
+    })
+    result = bench_usage.summarize(directory)
+    assert result['tokens']['input'] == 70
+    assert result['tokens']['cache_read'] == 230
+    assert result['total_tokens'] == 330
+    assert result['turns'] == 2
+    assert result['tool_calls'] == 1
+    assert result['cost_usd'] is None
+    assert result['tokens']['thinking'] is None
+    assert result['tokens']['cache_write'] == 0
+    assert not result['health']['throttled']
+
+
+def test_codex_interrupted_and_rate_limited(tmp_path):
+    directory = write_run(tmp_path, 'codex', 'gpt-5.6-sol', {
+        'codex-1.jsonl': jsonl({'type': 'turn.failed', 'error': {'message': '429 Too many requests'}}),
+        'codex-1.err': '',
+    })
+    result = bench_usage.summarize(directory)
+    assert result['tokens'] is None
+    assert result['total_tokens'] is None
+    assert result['health']['throttled']
+    assert result['health']['invocations_without_result'] == ['codex-1.jsonl']

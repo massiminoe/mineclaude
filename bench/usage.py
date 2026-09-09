@@ -80,7 +80,7 @@ TOKEN_KEYS = ("input", "output", "thinking", "cache_write", "cache_read")
 # because epoch timestamps like 1788054294 contain "429". Hence \b429\b (digits
 # are word characters, so a timestamp can no longer match) plus a narrow scope.
 RATE_LIMIT_RE = re.compile(
-    r"\b429\b|rate[ _-]?limit|too many requests|quota exceeded|overloaded|insufficient[ _]credit",
+    r"\b429\b|rate[ _-]?limit|too many requests|quota exceeded|usage limit|overloaded|insufficient[ _]credit",
     re.IGNORECASE,
 )
 
@@ -445,7 +445,66 @@ def summarize_cursor(harness_dir: Path, model: str | None) -> dict:
     }
 
 
+def summarize_codex(harness_dir: Path, model: str | None) -> dict:
+    """Fold completed turn usage; cached input is a subset of input_tokens."""
+    paths = sorted(harness_dir.glob("codex-*.jsonl"), key=invocation_order)
+    tokens = empty_tokens()
+    # Optional token fields stay unknown when absent from older CLI streams.
+    tokens["cache_write"] = None
+    tokens["thinking"] = None
+    health = blank_health()
+    turns = tools = 0
+    total = 0
+    invocations = []
+    reasons = Counter()
+    hits = scan_stderr_rate_limits(list(harness_dir.glob("codex-*.err")))
+    for path in paths:
+        completed = 0
+        errors = 0
+        for event in iter_events(path):
+            kind = event.get("type")
+            if kind == "turn.completed" and isinstance(event.get("usage"), dict):
+                usage = event["usage"]
+                inp = usage.get("input_tokens", 0)
+                cached = usage.get("cached_input_tokens", 0)
+                out = usage.get("output_tokens", 0)
+                tokens["input"] += inp - cached
+                tokens["cache_read"] += cached
+                tokens["output"] += out
+                if "cache_write_input_tokens" in usage:
+                    tokens["cache_write"] = (tokens["cache_write"] or 0) + usage["cache_write_input_tokens"]
+                if "reasoning_output_tokens" in usage:
+                    tokens["thinking"] = (tokens["thinking"] or 0) + usage["reasoning_output_tokens"]
+                total += inp + out
+                turns += 1
+                completed += 1
+            elif kind in ("error", "turn.failed"):
+                errors += 1
+                hits += bool(RATE_LIMIT_RE.search(json.dumps(event)))
+            elif kind == "item.completed" and (event.get("item") or {}).get("type") in (
+                "mcp_tool_call", "command_execution", "web_search", "file_change"
+            ):
+                tools += 1
+        if not completed:
+            health["invocations_without_result"].append(path.name)
+        health["errors"] += errors
+        reason = "error" if errors else "ok" if completed else "incomplete"
+        reasons[reason] += 1
+        invocations.append({"file": path.name, "turns": completed, "terminal_reason": reason})
+    health.update(rate_limit_events=hits, rejections=hits, throttled=hits > 0,
+                  usage_available=turns > 0)
+    return {
+        "invocations": len(paths), "turns": turns, "tool_calls": tools,
+        "tokens": tokens if turns else None, "total_tokens": total if turns else None,
+        "cost_usd": None, "cost_basis": "unavailable",
+        "by_model": {model or "unknown": {**tokens, "cost_usd": None}} if turns else {},
+        "terminal_reasons": dict(reasons), "health": health,
+        "per_invocation": invocations,
+    }
+
+
 PARSERS = {
+    "codex": summarize_codex,
     "claude-code": lambda d, m: summarize_claude_code(d),
     "opencode": summarize_opencode,
     "cursor": summarize_cursor,

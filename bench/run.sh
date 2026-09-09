@@ -41,6 +41,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ "$HARNESS" == "codex" ]]; then
+    case "$MODEL" in
+        gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;
+        *) echo "Codex bench requires --model gpt-5.6-luna, gpt-5.6-terra, or gpt-5.6-sol" >&2; exit 2 ;;
+    esac
+fi
+
 if [[ ! -f "bench/harness/${HARNESS}/Dockerfile" ]]; then
     echo "bench: unknown harness '$HARNESS' (no bench/harness/$HARNESS/Dockerfile)" >&2
     echo "       available: $(ls -d bench/harness/*/ | xargs -n1 basename | tr '\n' ' ')" >&2
@@ -67,6 +74,16 @@ if [[ -n "$AUTH_VARS" ]]; then
     fi
 fi
 
+if [[ "$HARNESS" == "codex" ]]; then
+    export BENCH_HARNESS_VERSION="${BENCH_HARNESS_VERSION:-0.153.4}"
+    export CODEX_AUTH_DIR="${CODEX_AUTH_DIR:-$PWD/state/codex-auth}"
+    if [[ ! -f "$CODEX_AUTH_DIR/auth.json" ]]; then
+        python3 bench/codex_auth.py "${CODEX_AUTH_FILE:-${CODEX_HOME:-$HOME/.codex}/auth.json}" --stage "$CODEX_AUTH_DIR"
+    else
+        python3 bench/codex_auth.py "$CODEX_AUTH_DIR/auth.json"
+    fi
+fi
+
 export BENCH_RUN_DIR="./state/bench/${RUN_ID}"
 export BENCH_RUN_SECONDS="$SECONDS_BUDGET"
 export BENCH_HARNESS="$HARNESS"
@@ -82,6 +99,7 @@ mkdir -p "$BENCH_RUN_DIR"/{video,sessions,harness}
 chmod -R a+rwX "$BENCH_RUN_DIR" 2>/dev/null || true
 
 COMPOSE=(docker compose -f docker-compose.yml -f bench/compose.bench.yml)
+[[ "$HARNESS" == "codex" ]] && COMPOSE+=( -f bench/compose.codex.yml )
 [[ $LOCAL -eq 1 ]] && COMPOSE=("${COMPOSE[@]}" -f docker-compose.arm64.yml)
 
 log() { echo "[bench $(date +%H:%M:%S)] $*"; }

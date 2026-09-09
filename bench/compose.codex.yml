@@ -1,0 +1,6 @@
+# Only the Codex harness receives subscription credentials. This directory is
+# writable for token refresh and is NEVER inside the uploaded run artifacts.
+services:
+  harness:
+    volumes:
+      - "${CODEX_AUTH_DIR:?set CODEX_AUTH_DIR}:/codex-auth"

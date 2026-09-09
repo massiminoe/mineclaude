@@ -24,15 +24,30 @@ git checkout --quiet __GIT_REF__
 # one this run needs. A missing parameter is fatal — bench/run.sh would refuse
 # to start the agent anyway, and failing here keeps the reason in the boot log.
 HARNESS="__HARNESS__"
-case "$HARNESS" in
-    claude-code) SSM_PARAM=/mineclaude-bench/claude-code-oauth-token; CRED_VAR=CLAUDE_CODE_OAUTH_TOKEN ;;
-    opencode)    SSM_PARAM=/mineclaude-bench/opencode-api-key;        CRED_VAR=OPENCODE_API_KEY ;;
-    cursor)      SSM_PARAM=/mineclaude-bench/cursor-api-key;          CRED_VAR=CURSOR_API_KEY ;;
-    *) echo "unknown harness $HARNESS"; shutdown -h now "bad harness" ;;
-esac
-CRED=$(aws ssm get-parameter --region __REGION__ --name "$SSM_PARAM" \
-    --with-decryption --query Parameter.Value --output text)
-export "$CRED_VAR=$CRED"
+# Disable tracing before handling ANY credentials: boot logs are uploaded.
+set +x
+if [[ "$HARNESS" == "codex" ]]; then
+    export CODEX_AUTH_DIR=/opt/codex-auth
+    install -d -m 700 "$CODEX_AUTH_DIR"
+    if ! aws ssm get-parameter --region __REGION__ --name /mineclaude-bench/codex-auth \
+        --with-decryption --query Parameter.Value --output text > "$CODEX_AUTH_DIR/auth.json"; then
+        shutdown -h now "missing Codex auth"; exit 1
+    fi
+    chmod 600 "$CODEX_AUTH_DIR/auth.json"
+    python3 bench/codex_auth.py "$CODEX_AUTH_DIR/auth.json" || { shutdown -h now "invalid Codex auth"; exit 1; }
+    chown -R 1000:1000 "$CODEX_AUTH_DIR"
+else
+    case "$HARNESS" in
+        claude-code) SSM_PARAM=/mineclaude-bench/claude-code-oauth-token; CRED_VAR=CLAUDE_CODE_OAUTH_TOKEN ;;
+        opencode) SSM_PARAM=/mineclaude-bench/opencode-api-key; CRED_VAR=OPENCODE_API_KEY ;;
+        cursor) SSM_PARAM=/mineclaude-bench/cursor-api-key; CRED_VAR=CURSOR_API_KEY ;;
+        *) shutdown -h now "bad harness"; exit 1 ;;
+    esac
+    CRED=$(aws ssm get-parameter --region __REGION__ --name "$SSM_PARAM" \
+        --with-decryption --query Parameter.Value --output text) || { shutdown -h now "missing auth"; exit 1; }
+    export "$CRED_VAR=$CRED"
+    unset CRED
+fi
 
 RUN_ID="__RUN_ID__"
 
@@ -60,6 +75,13 @@ bench/run.sh \
     --seed "__SEED__" \
     --run-id "$RUN_ID" \
     || echo "bench run exited nonzero — uploading what we have"
+
+# Persist token rotation before this ephemeral VM is destroyed. Run Codex
+# trials serially for a shared login, avoiding concurrent refresh/write races.
+if [[ "$HARNESS" == "codex" ]]; then
+    python3 bench/codex_auth.py "$CODEX_AUTH_DIR/auth.json" --upload --region __REGION__ \
+        || echo "ERROR: Codex auth refresh persistence failed; re-seed SSM before another run"
+fi
 
 kill "$PERF_PID" 2>/dev/null || true
 cp /var/log/bench-userdata.log "state/bench/$RUN_ID/" || true

@@ -18,7 +18,7 @@ fresh, fixed-seed survival world?
           --gamerscore --scoring bench/scoring/gamerscore.json
 - **A benchmark entry** is (harness, model): e.g. `claude-code` +
   `claude-haiku-4-5` and `claude-code` + `claude-sonnet-5` are two entries.
-  Three harnesses ship today — `claude-code`, `opencode`, `cursor` — selected
+  Four harnesses ship today — `claude-code`, `opencode`, `cursor`, `codex` — selected
   with `--harness` on `run.sh` / `aws/launch.sh` / `aws/sweep.sh`.
 - **Determinism**: fixed world seed (`BENCH_SEED`, default
   `mineclaude-bench-1`), fixed MC version (1.21.5), difficulty `normal`,
@@ -242,3 +242,55 @@ live VM with the printed ssh command; boot log is `/var/log/bench-userdata.log`.
   agent in `harness/claude-code/entrypoint.sh` + `prompt.md`. Bump
   `scoring/gamerscore.json`'s `version` on any change; scores only compare
   within (seed, metric, budget).
+
+## Codex on AWS (ChatGPT subscription)
+
+The `codex` harness uses pinned `@openai/codex` 0.153.4 and `codex exec --json`,
+resuming the exact session between invocations. It supports these benchmark models:
+`gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`. Pass `--model` explicitly.
+The shared skill, task prompt, world, deadline, and scoring are unchanged.
+
+Authentication is subscription-only (`forced_login_method = "chatgpt"`); API-key
+credentials are rejected. Sign in with `codex login` using file credential storage.
+Then, with an AWS profile that can write SSM:
+
+```sh
+bench/aws/setup.sh --codex-auth-only
+```
+
+This validates `${CODEX_AUTH_FILE:-${CODEX_HOME:-$HOME/.codex}/auth.json}` and
+uploads it as `/mineclaude-bench/codex-auth`, a SecureString. Token values are
+never printed or passed in command arguments. Intelligent tiering supports login
+files larger than the 4 KB standard-parameter limit.
+
+Existing AWS installations also need the EC2 role's policy updated by an admin:
+`bench/aws/setup.sh` now grants `ssm:PutParameter` on **only** the Codex auth
+parameter, so ephemeral VMs can save refreshed tokens. `--codex-auth-only` uploads
+the login but does not change IAM.
+
+Push the implementation first (the VM clones the selected Git ref), then pilot:
+
+```sh
+bench/aws/launch.sh --harness codex --model gpt-5.6-luna --seconds 600
+bench/aws/launch.sh --harness codex --model gpt-5.6-terra --seconds 600
+bench/aws/launch.sh --harness codex --model gpt-5.6-sol --seconds 600
+```
+
+Run these serially with a dedicated benchmark login. Codex refreshes the writable
+`/opt/codex-auth/auth.json`, which is saved to SSM before VM termination. Never
+launch simultaneous Codex VMs with this shared login; `sweep.sh` forces Codex
+concurrency to 1. Re-seed SSM after a failed auth-persistence step or lost VM.
+Auth files and session caches stay outside the uploaded artifact tree.
+
+Local runs use the additional `compose.codex.yml` overlay automatically and stage
+credentials into ignored `state/codex-auth` (override `CODEX_AUTH_DIR`). That copy
+is reused so refreshed tokens survive. To re-seed it, explicitly run
+`python3 bench/codex_auth.py "$HOME/.codex/auth.json" --stage state/codex-auth`.
+
+Artifacts include `codex-version.txt`, `codex-N.jsonl`, and stderr. Usage sums
+`turn.completed` events; cached input is subtracted from input before recording
+it separately. An interrupted turn without a usage event is not counted, so
+reported totals may be incomplete at the deadline. Cost is `null` / `unavailable`
+because this subscription stream reports no monetary ledger. Missing usage is
+also `null`, never a fabricated zero. Throttle detection scans errors and stderr,
+never successful tool output.

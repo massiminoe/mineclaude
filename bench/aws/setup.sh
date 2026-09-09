@@ -14,8 +14,24 @@
 # and skips, so you can add a harness later by re-running.
 # Re-run any time — everything is create-if-missing, and token parameters are
 # overwritten (so re-run after rotating a credential).
+#
+#   --creds-only   skip the infra section, upload credentials only.
+# Provisioning needs IAM/EC2 admin rights (a root or admin profile), but the
+# day-to-day `mineclaude` bench user deliberately has neither — it can read SSM
+# and run instances, nothing more. Without this flag a rotation re-run under
+# that user dies on `iam:CreateRole` (it can't even `get-role` to see that the
+# role already exists), which made the documented rotation path unrunnable.
+# Note the credential upload itself needs `ssm:PutParameter`, which the bench
+# user also lacks — so run this with an admin profile either way.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+
+if [[ "${1:-}" == "--codex-auth-only" ]]; then
+    exec python3 bench/codex_auth.py "${CODEX_AUTH_FILE:-${CODEX_HOME:-$HOME/.codex}/auth.json}" --upload
+fi
+
+CREDS_ONLY=0
+[[ "${1:-}" == "--creds-only" ]] && CREDS_ONLY=1
 
 REGION="${AWS_REGION:-us-east-1}"
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
@@ -26,6 +42,9 @@ KEY=mineclaude-bench
 
 echo "account=$ACCOUNT region=$REGION"
 
+if (( CREDS_ONLY )); then
+    echo "--creds-only: skipping bucket / IAM / security group / key pair"
+else
 # --- S3 bucket ---
 if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
     if [[ "$REGION" == "us-east-1" ]]; then
@@ -52,6 +71,7 @@ aws iam put-role-policy --role-name "$ROLE" --policy-name bench-access --policy-
   \"Statement\": [
     {\"Effect\": \"Allow\", \"Action\": [\"s3:PutObject\", \"s3:GetObject\"], \"Resource\": \"arn:aws:s3:::${BUCKET}/*\"},
     {\"Effect\": \"Allow\", \"Action\": \"s3:ListBucket\", \"Resource\": \"arn:aws:s3:::${BUCKET}\"},
+    {\"Effect\": \"Allow\", \"Action\": \"ssm:PutParameter\", \"Resource\": \"arn:aws:ssm:${REGION}:${ACCOUNT}:parameter/mineclaude-bench/codex-auth\"},
     {\"Effect\": \"Allow\", \"Action\": \"ssm:GetParameter\", \"Resource\": \"arn:aws:ssm:${REGION}:${ACCOUNT}:parameter/mineclaude-bench/*\"}
   ]
 }"
@@ -88,6 +108,8 @@ if ! aws ec2 describe-key-pairs --region "$REGION" --key-names "$KEY" >/dev/null
 else
     echo "key pair $KEY exists (pem expected at $PEM)"
 fi
+
+fi  # end infra section
 
 # --- harness credentials -> SSM SecureStrings ---
 # One per harness; the VM pulls only the one its --harness needs.

@@ -50,6 +50,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# A shared refresh token must not be rotated by concurrent ephemeral runners.
+if [[ "$HARNESS" == "codex" ]]; then
+    CONCURRENCY=1
+fi
+
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 BUCKET="mineclaude-bench-${ACCOUNT}"
 DEST="state/bench/sweep-${SWEEP_ID}"
