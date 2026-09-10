@@ -344,3 +344,32 @@ def test_codex_interrupted_and_rate_limited(tmp_path):
     assert result['total_tokens'] is None
     assert result['health']['throttled']
     assert result['health']['invocations_without_result'] == ['codex-1.jsonl']
+
+
+def test_codex_session_totals_replace_completed_turns(tmp_path):
+    directory = write_run(tmp_path, 'codex', 'gpt-5.6-luna', {
+        'codex-1.jsonl': jsonl({'type': 'turn.completed', 'usage': {'input_tokens': 100, 'output_tokens': 10}}),
+        'codex-2.jsonl': jsonl({'type': 'turn.started'}),
+        'codex-session-usage.json': json.dumps({'sessions': [{'thread_id': 'one', 'usage': {
+            'input_tokens': 500, 'cached_input_tokens': 400, 'output_tokens': 30, 'reasoning_output_tokens': 10,
+        }}]}),
+    })
+    result = bench_usage.summarize(directory)
+    assert result['total_tokens'] == 530
+    assert result['tokens']['input'] == 100
+    assert result['tokens']['thinking'] == 10
+    assert result['usage_source'] == 'session_token_count'
+    assert result['health']['usage_available']
+
+
+def test_codex_session_usage_survives_deadline(tmp_path):
+    directory = write_run(tmp_path, 'codex', 'gpt-5.6-luna', {
+        'codex-1.jsonl': jsonl({'type': 'turn.started'}),
+        'codex-session-usage.json': json.dumps({'sessions': [{'thread_id': 'one', 'usage': {
+            'input_tokens': 50, 'output_tokens': 2,
+        }}]}),
+    })
+    result = bench_usage.summarize(directory)
+    assert result['total_tokens'] == 52
+    assert result['turns'] == 0
+    assert result['health']['usage_available']

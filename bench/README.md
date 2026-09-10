@@ -287,10 +287,14 @@ credentials into ignored `state/codex-auth` (override `CODEX_AUTH_DIR`). That co
 is reused so refreshed tokens survive. To re-seed it, explicitly run
 `python3 bench/codex_auth.py "$HOME/.codex/auth.json" --stage state/codex-auth`.
 
-Artifacts include `codex-version.txt`, `codex-N.jsonl`, and stderr. Usage sums
-`turn.completed` events; cached input is subtracted from input before recording
-it separately. An interrupted turn without a usage event is not counted, so
-reported totals may be incomplete at the deadline. Cost is `null` / `unavailable`
+Artifacts include `codex-version.txt`, `codex-N.jsonl`, stderr, and
+`codex-session-usage.json`. On exit the harness exports only numeric token totals
+from the last session snapshot for each thread created by this run. These
+cumulative totals replace (never add to) the stream's `turn.completed` totals,
+so deadline interruption preserves usage and resumed sessions are not counted
+twice. The stream is a fallback for older artifacts. Cached input is subtracted
+from input before recording it separately. An in-flight request with no token
+snapshot yet remains uncounted. Cost is `null` / `unavailable`
 because this subscription stream reports no monetary ledger. Missing usage is
 also `null`, never a fabricated zero. Throttle detection scans errors and stderr,
 never successful tool output.
