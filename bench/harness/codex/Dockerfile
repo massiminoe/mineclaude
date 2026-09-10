@@ -5,6 +5,7 @@ RUN apt-get update \
 ARG BENCH_HARNESS_VERSION=0.153.4
 RUN npm install -g @openai/codex@${BENCH_HARNESS_VERSION}
 COPY prompt.md common.sh /opt/bench/
+COPY codex/collect_usage.mjs /opt/bench/collect_usage.mjs
 COPY codex/entrypoint.sh /opt/bench/entrypoint.sh
 RUN chmod +x /opt/bench/entrypoint.sh \
     && mkdir -p /workspace && chown node:node /workspace

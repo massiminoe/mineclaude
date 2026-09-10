@@ -5,6 +5,9 @@ source /opt/bench/common.sh
 # retain refreshed subscription tokens; never fall back to API billing.
 export CODEX_HOME=/codex-auth
 unset OPENAI_API_KEY CODEX_API_KEY
+# Timeout kills the CLI before turn.completed; preserve its latest cumulative
+# session usage on every exit, including failed invocations.
+trap 'node /opt/bench/collect_usage.mjs || log "WARN: session usage collection failed"' EXIT
 if ! jq -e '.auth_mode == "chatgpt" and (.tokens.refresh_token | type == "string" and length > 0) and (.OPENAI_API_KEY | not)' "$CODEX_HOME/auth.json" >/dev/null 2>&1; then
     log 'FATAL: a ChatGPT subscription auth.json is required'
     exit 1

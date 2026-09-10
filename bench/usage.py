@@ -491,13 +491,42 @@ def summarize_codex(harness_dir: Path, model: str | None) -> dict:
         reason = "error" if errors else "ok" if completed else "incomplete"
         reasons[reason] += 1
         invocations.append({"file": path.name, "turns": completed, "terminal_reason": reason})
+    usage_source = "turn_completed"
+    ledger_path = harness_dir / "codex-session-usage.json"
+    ledger = {}
+    if ledger_path.exists():
+        try:
+            ledger = json.loads(ledger_path.read_text())
+        except (OSError, ValueError):
+            pass
+    session_usage = {entry["thread_id"]: entry["usage"]
+                     for entry in ledger.get("sessions", [])
+                     if isinstance(entry.get("usage"), dict) and "input_tokens" in entry["usage"]}
+    available = turns > 0
+    if session_usage:
+        # These totals already include completed turns. Replace, NEVER add to
+        # the stream totals, or resumed sessions get counted twice.
+        usages = list(session_usage.values())
+        tokens = {
+            "input": sum(u["input_tokens"] - u.get("cached_input_tokens", 0) for u in usages),
+            "cache_read": sum(u.get("cached_input_tokens", 0) for u in usages),
+            "output": sum(u.get("output_tokens", 0) for u in usages),
+            "cache_write": sum(u.get("cache_write_input_tokens", 0) for u in usages)
+                if all("cache_write_input_tokens" in u for u in usages) else None,
+            "thinking": sum(u.get("reasoning_output_tokens", 0) for u in usages)
+                if all("reasoning_output_tokens" in u for u in usages) else None,
+        }
+        total = sum(u["input_tokens"] + u.get("output_tokens", 0) for u in usages)
+        available = True
+        usage_source = "session_token_count"
     health.update(rate_limit_events=hits, rejections=hits, throttled=hits > 0,
-                  usage_available=turns > 0)
+                  usage_available=available)
     return {
         "invocations": len(paths), "turns": turns, "tool_calls": tools,
-        "tokens": tokens if turns else None, "total_tokens": total if turns else None,
+        "tokens": tokens if available else None, "total_tokens": total if available else None,
+        "usage_source": usage_source,
         "cost_usd": None, "cost_basis": "unavailable",
-        "by_model": {model or "unknown": {**tokens, "cost_usd": None}} if turns else {},
+        "by_model": {model or "unknown": {**tokens, "cost_usd": None}} if available else {},
         "terminal_reasons": dict(reasons), "health": health,
         "per_invocation": invocations,
     }
