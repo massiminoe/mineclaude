@@ -5,9 +5,10 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from typing import Optional
 
 
-def ssm_parameter(worker: int | None = None) -> str:
+def ssm_parameter(worker: Optional[int] = None) -> str:
     """Return the isolated SSM parameter for an optional Codex worker slot."""
     if worker is None:
         return "/mineclaude-bench/codex-auth"
