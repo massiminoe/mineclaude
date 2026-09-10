@@ -276,10 +276,23 @@ bench/aws/launch.sh --harness codex --model gpt-5.6-terra --seconds 600
 bench/aws/launch.sh --harness codex --model gpt-5.6-sol --seconds 600
 ```
 
-Run these serially with a dedicated benchmark login. Codex refreshes the writable
-`/opt/codex-auth/auth.json`, which is saved to SSM before VM termination. Never
-launch simultaneous Codex VMs with this shared login; `sweep.sh` forces Codex
-concurrency to 1. Re-seed SSM after a failed auth-persistence step or lost VM.
+The default Codex credential is shared, so `sweep.sh` forces it to concurrency 1.
+For parallel Codex trials, create one independent login session per worker slot
+(these may belong to the same ChatGPT account), then upload each to a distinct
+parameter. Use a distinct `CODEX_HOME` for each interactive login, and pass the
+resulting auth file explicitly when uploading it:
+
+```sh
+CODEX_HOME=state/codex-worker-1 codex login
+CODEX_AUTH_FILE=state/codex-worker-1/auth.json bench/aws/setup.sh --codex-auth-only --worker 1
+# Repeat the two commands for workers 2, 3, and 4.
+bench/aws/sweep.sh --harness codex --model gpt-5.6-luna --trials 4 \\
+  --concurrency 4 --codex-workers 1,2,3,4 --seconds 3600
+```
+
+Each worker refreshes only its own writable `/opt/codex-auth/auth.json` and saves
+it back to its matching SSM slot before termination. Re-seed the affected worker
+slot after a failed auth-persistence step or lost VM.
 Auth files and session caches stay outside the uploaded artifact tree.
 
 Local runs use the additional `compose.codex.yml` overlay automatically and stage

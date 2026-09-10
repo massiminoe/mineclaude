@@ -7,6 +7,15 @@ import subprocess
 import tempfile
 
 
+def ssm_parameter(worker: int | None = None) -> str:
+    """Return the isolated SSM parameter for an optional Codex worker slot."""
+    if worker is None:
+        return "/mineclaude-bench/codex-auth"
+    if worker < 1:
+        raise ValueError("worker must be a positive integer")
+    return f"/mineclaude-bench/codex-auth-worker-{worker}"
+
+
 def subscription_auth(path: Path) -> dict:
     data = json.loads(path.read_text())
     if not isinstance(data, dict):
@@ -26,10 +35,13 @@ def main():
     ap.add_argument("source", type=Path)
     ap.add_argument("--stage", type=Path)
     ap.add_argument("--upload", action="store_true")
+    ap.add_argument("--worker", type=int,
+                    help="isolated Codex worker slot (defaults to the legacy shared credential)")
     ap.add_argument("--region", default=os.environ.get("AWS_REGION", "us-east-1"))
     args = ap.parse_args()
     try:
         data = subscription_auth(args.source)
+        parameter = ssm_parameter(args.worker)
     except (OSError, ValueError, TypeError):
         ap.exit(2, "Codex auth is missing or invalid; use a file-backed ChatGPT login.\n")
     payload = json.dumps(data, separators=(",", ":"))
@@ -47,11 +59,12 @@ def main():
             path.chmod(0o600)
             subprocess.run([
                 "aws", "ssm", "put-parameter", "--region", args.region,
-                "--name", "/mineclaude-bench/codex-auth", "--type", "SecureString",
+                "--name", parameter, "--type", "SecureString",
                 "--tier", "Intelligent-Tiering", "--value", f"file://{path}",
                 "--overwrite",
             ], check=True, stdout=subprocess.DEVNULL)
-        print("Stored Codex subscription login in SSM")
+        worker = f" for worker {args.worker}" if args.worker is not None else ""
+        print(f"Stored Codex subscription login in SSM{worker}")
 
 
 if __name__ == "__main__":

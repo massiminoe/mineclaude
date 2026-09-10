@@ -17,6 +17,13 @@ def test_accepts_subscription(tmp_path):
     assert auth.subscription_auth(path) == data
 
 
+def test_worker_slots_are_isolated_and_positive():
+    assert auth.ssm_parameter() == '/mineclaude-bench/codex-auth'
+    assert auth.ssm_parameter(3) == '/mineclaude-bench/codex-auth-worker-3'
+    with pytest.raises(ValueError):
+        auth.ssm_parameter(0)
+
+
 @pytest.mark.parametrize('data', [
     [],
     {'auth_mode': 'chatgpt', 'tokens': 'invalid'},

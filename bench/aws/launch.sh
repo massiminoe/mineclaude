@@ -3,7 +3,7 @@
 #
 #   bench/aws/launch.sh [--seconds 3600] [--harness <name>] [--model <id>]
 #                       [--run-id <id>] [--seed <s>] [--type c7i.2xlarge] [--spot]
-#                       [--git-ref <sha|branch>] [--record-fps 15] [--no-wait]
+#                       [--git-ref <sha|branch>] [--record-fps 15] [--codex-worker N] [--no-wait]
 #
 # --harness picks the driver image (claude-code | opencode | cursor); the VM
 # pulls that harness's credential from SSM (see bench/aws/setup.sh).
@@ -25,6 +25,7 @@ SPOT=0
 GIT_REF="$(git rev-parse HEAD)"
 RECORD_FPS=15
 WAIT=1
+CODEX_WORKER=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --seconds) SECONDS_BUDGET="$2"; shift 2 ;;
@@ -35,6 +36,7 @@ while [[ $# -gt 0 ]]; do
         --type)    ITYPE="$2"; shift 2 ;;
         --git-ref) GIT_REF="$2"; shift 2 ;;
         --record-fps) RECORD_FPS="$2"; shift 2 ;;
+        --codex-worker) CODEX_WORKER="$2"; shift 2 ;;
         --spot)    SPOT=1; shift ;;
         --no-wait) WAIT=0; shift ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -49,7 +51,17 @@ if [[ "$HARNESS" == "codex" ]]; then
         gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;
         *) echo "Codex bench requires --model gpt-5.6-luna, gpt-5.6-terra, or gpt-5.6-sol" >&2; exit 2 ;;
     esac
+    if [[ -n "$CODEX_WORKER" && ! "$CODEX_WORKER" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Codex --codex-worker must be a positive integer" >&2; exit 2
+    fi
+elif [[ -n "$CODEX_WORKER" ]]; then
+    echo "--codex-worker is only valid with --harness codex" >&2; exit 2
 fi
+
+CODEX_AUTH_PARAMETER="/mineclaude-bench/codex-auth"
+[[ -n "$CODEX_WORKER" ]] && CODEX_AUTH_PARAMETER+="-worker-${CODEX_WORKER}"
+CODEX_WORKER_ARGS=""
+[[ -n "$CODEX_WORKER" ]] && CODEX_WORKER_ARGS="--worker ${CODEX_WORKER}"
 
 if [[ ! -f "bench/harness/${HARNESS}/Dockerfile" ]]; then
     echo "launch: unknown harness '$HARNESS' (no bench/harness/$HARNESS/Dockerfile)" >&2
@@ -86,6 +98,8 @@ sed -e "s|__REGION__|$REGION|g" \
     -e "s|__GIT_REF__|$GIT_REF|g" \
     -e "s|__RECORD_FPS__|$RECORD_FPS|g" \
     -e "s|__MAX_MINUTES__|$MAX_MINUTES|g" \
+    -e "s|__CODEX_AUTH_PARAMETER__|$CODEX_AUTH_PARAMETER|g" \
+    -e "s|__CODEX_WORKER_ARGS__|$CODEX_WORKER_ARGS|g" \
     bench/aws/user-data.sh.tpl > "$UD"
 
 MARKET_ARGS=()

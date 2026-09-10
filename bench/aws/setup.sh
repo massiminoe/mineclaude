@@ -27,7 +27,15 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 if [[ "${1:-}" == "--codex-auth-only" ]]; then
-    exec python3 bench/codex_auth.py "${CODEX_AUTH_FILE:-${CODEX_HOME:-$HOME/.codex}/auth.json}" --upload
+    shift
+    CODEX_WORKER_ARGS=()
+    if [[ "${1:-}" == "--worker" ]]; then
+        [[ -n "${2:-}" ]] || { echo "--worker requires a positive integer" >&2; exit 2; }
+        CODEX_WORKER_ARGS=(--worker "$2")
+        shift 2
+    fi
+    [[ $# -eq 0 ]] || { echo "usage: $0 --codex-auth-only [--worker N]" >&2; exit 2; }
+    exec python3 bench/codex_auth.py "${CODEX_AUTH_FILE:-${CODEX_HOME:-$HOME/.codex}/auth.json}" --upload "${CODEX_WORKER_ARGS[@]}"
 fi
 
 CREDS_ONLY=0
@@ -71,7 +79,7 @@ aws iam put-role-policy --role-name "$ROLE" --policy-name bench-access --policy-
   \"Statement\": [
     {\"Effect\": \"Allow\", \"Action\": [\"s3:PutObject\", \"s3:GetObject\"], \"Resource\": \"arn:aws:s3:::${BUCKET}/*\"},
     {\"Effect\": \"Allow\", \"Action\": \"s3:ListBucket\", \"Resource\": \"arn:aws:s3:::${BUCKET}\"},
-    {\"Effect\": \"Allow\", \"Action\": \"ssm:PutParameter\", \"Resource\": \"arn:aws:ssm:${REGION}:${ACCOUNT}:parameter/mineclaude-bench/codex-auth\"},
+    {\"Effect\": \"Allow\", \"Action\": \"ssm:PutParameter\", \"Resource\": \"arn:aws:ssm:${REGION}:${ACCOUNT}:parameter/mineclaude-bench/codex-auth*\"},
     {\"Effect\": \"Allow\", \"Action\": \"ssm:GetParameter\", \"Resource\": \"arn:aws:ssm:${REGION}:${ACCOUNT}:parameter/mineclaude-bench/*\"}
   ]
 }"

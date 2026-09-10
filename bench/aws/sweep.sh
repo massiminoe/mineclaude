@@ -5,7 +5,7 @@
 #   bench/aws/sweep.sh [--trials 2] [--concurrency 2] [--harness <name>]
 #                      [--model <id>] [--seconds 3600] [--seed <s>]
 #                      [--git-ref <sha|branch>] [--type c7i.2xlarge] [--spot]
-#                      [--sweep-id <id>]
+#                      [--sweep-id <id>] [--codex-workers 1,2,...]
 #
 # Each trial is a fully independent VM (own world, own bot, own harness), so
 # --concurrency is bounded by two things OUTSIDE AWS as much as inside it:
@@ -34,6 +34,7 @@ GIT_REF="$(git rev-parse HEAD)"
 ITYPE="c7i.2xlarge"
 SPOT=0
 SWEEP_ID="$(date +%Y%m%d-%H%M%S)"
+CODEX_WORKERS=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --trials)      TRIALS="$2"; shift 2 ;;
@@ -45,14 +46,27 @@ while [[ $# -gt 0 ]]; do
         --git-ref)     GIT_REF="$2"; shift 2 ;;
         --type)        ITYPE="$2"; shift 2 ;;
         --sweep-id)    SWEEP_ID="$2"; shift 2 ;;
+        --codex-workers) CODEX_WORKERS="$2"; shift 2 ;;
         --spot)        SPOT=1; shift ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
 
-# A shared refresh token must not be rotated by concurrent ephemeral runners.
+# The legacy credential is shared. Named worker slots are independent SSM
+# parameters and can therefore run in parallel, subject to account limits.
 if [[ "$HARNESS" == "codex" ]]; then
-    CONCURRENCY=1
+    if [[ -z "$CODEX_WORKERS" ]]; then
+        CONCURRENCY=1
+    else
+        IFS=',' read -r -a CODEX_WORKER_LIST <<< "$CODEX_WORKERS"
+        (( ${#CODEX_WORKER_LIST[@]} > 0 )) || { echo "--codex-workers cannot be empty" >&2; exit 2; }
+        for worker in "${CODEX_WORKER_LIST[@]}"; do
+            [[ "$worker" =~ ^[1-9][0-9]*$ ]] || { echo "invalid Codex worker: $worker" >&2; exit 2; }
+        done
+        (( CONCURRENCY <= ${#CODEX_WORKER_LIST[@]} )) || { echo "Codex concurrency exceeds supplied worker slots" >&2; exit 2; }
+    fi
+elif [[ -n "$CODEX_WORKERS" ]]; then
+    echo "--codex-workers is only valid with --harness codex" >&2; exit 2
 fi
 
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
@@ -69,13 +83,14 @@ log "sweep=$SWEEP_ID trials=$TRIALS concurrency=$CONCURRENCY harness=$HARNESS mo
 log "artifacts -> $DEST | s3://$BUCKET/runs/"
 
 RUN_IDS=()
-launch_one() {  # $1 = trial index
-    local n="$1" run_id out iid
+launch_one() {  # $1 = trial index, $2 = optional Codex worker slot
+    local n="$1" worker="${2:-}" run_id out iid
     run_id="${SWEEP_ID}-t${n}"
     local args=(--seconds "$SECONDS_BUDGET" --harness "$HARNESS" --model "$MODEL"
                 --seed "$SEED" --run-id "$run_id" --type "$ITYPE" --git-ref "$GIT_REF"
                 --no-wait)
     [[ $SPOT -eq 1 ]] && args+=(--spot)
+    [[ -n "$worker" ]] && args+=(--codex-worker "$worker")
     out=$(bench/aws/launch.sh "${args[@]}" 2>&1) || { log "trial $n FAILED to launch:"; echo "$out" >&2; return 1; }
     iid=$(sed -n 's/^launched \(i-[a-z0-9]*\).*/\1/p' <<<"$out" | head -1)
     echo "$run_id $iid" >> "$DEST/instances.txt"
@@ -131,7 +146,9 @@ trial=1
 while (( trial <= TRIALS )); do
     wave=()
     for (( k = 0; k < CONCURRENCY && trial <= TRIALS; k++, trial++ )); do
-        launch_one "$trial" && wave+=("${SWEEP_ID}-t${trial}")
+        worker=""
+        [[ "$HARNESS" == "codex" && -n "$CODEX_WORKERS" ]] && worker="${CODEX_WORKER_LIST[$k]}"
+        launch_one "$trial" "$worker" && wave+=("${SWEEP_ID}-t${trial}")
     done
     (( ${#wave[@]} == 0 )) && { log "no trials launched in this wave — aborting"; exit 1; }
     log "wave of ${#wave[@]} running; polling every 60s (up to ${MAX_MINUTES}m)"

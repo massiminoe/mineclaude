@@ -29,7 +29,7 @@ set +x
 if [[ "$HARNESS" == "codex" ]]; then
     export CODEX_AUTH_DIR=/opt/codex-auth
     install -d -m 700 "$CODEX_AUTH_DIR"
-    if ! aws ssm get-parameter --region __REGION__ --name /mineclaude-bench/codex-auth \
+    if ! aws ssm get-parameter --region __REGION__ --name __CODEX_AUTH_PARAMETER__ \
         --with-decryption --query Parameter.Value --output text > "$CODEX_AUTH_DIR/auth.json"; then
         shutdown -h now "missing Codex auth"; exit 1
     fi
@@ -76,10 +76,10 @@ bench/run.sh \
     --run-id "$RUN_ID" \
     || echo "bench run exited nonzero — uploading what we have"
 
-# Persist token rotation before this ephemeral VM is destroyed. Run Codex
-# trials serially for a shared login, avoiding concurrent refresh/write races.
+# Persist token rotation before this ephemeral VM is destroyed. Parallel Codex
+# workers receive distinct SSM parameters, so each writes only its own slot.
 if [[ "$HARNESS" == "codex" ]]; then
-    python3 bench/codex_auth.py "$CODEX_AUTH_DIR/auth.json" --upload --region __REGION__ \
+    python3 bench/codex_auth.py "$CODEX_AUTH_DIR/auth.json" --upload --region __REGION__ __CODEX_WORKER_ARGS__ \
         || echo "ERROR: Codex auth refresh persistence failed; re-seed SSM before another run"
 fi
 
