@@ -29,8 +29,8 @@ services:
       # clients install nothing and still see the skin. itzg auto-resolves the
       # correct Fabric build of each Modrinth project for VERSION + TYPE and
       # pulls Fabric API (a Fabric Tailor dependency) via DOWNLOAD_DEPENDENCIES.
-      # The bot's skin is set once with `/skin set url <mineskin-url>` (the bot
-      # runs it itself; it's opped) and Fabric Tailor persists it under /data.
+      # Set SKIN_TEXTURE_URL to opt into a user-supplied skin. The bot runs
+      # /skin itself (it is opped); Fabric Tailor persists it under /data.
       TYPE: "FABRIC"
       MODRINTH_PROJECTS: "fabrictailor"
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"

@@ -6,6 +6,7 @@
 #                      [--model <id>] [--seconds 3600] [--seed <s>]
 #                      [--git-ref <sha|branch>] [--type c7i.2xlarge] [--spot]
 #                      [--sweep-id <id>] [--codex-workers 1,2,...]
+#                      [--reasoning-effort low]
 #
 # Each trial is a fully independent VM (own world, own bot, own harness), so
 # --concurrency is bounded by two things OUTSIDE AWS as much as inside it:
@@ -35,12 +36,14 @@ ITYPE="c7i.2xlarge"
 SPOT=0
 SWEEP_ID="$(date +%Y%m%d-%H%M%S)"
 CODEX_WORKERS=""
+REASONING_EFFORT="${BENCH_REASONING_EFFORT:-}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --trials)      TRIALS="$2"; shift 2 ;;
         --concurrency) CONCURRENCY="$2"; shift 2 ;;
         --harness)     HARNESS="$2"; shift 2 ;;
         --model)       MODEL="$2"; shift 2 ;;
+        --reasoning-effort) REASONING_EFFORT="$2"; shift 2 ;;
         --seconds)     SECONDS_BUDGET="$2"; shift 2 ;;
         --seed)        SEED="$2"; shift 2 ;;
         --git-ref)     GIT_REF="$2"; shift 2 ;;
@@ -51,6 +54,8 @@ while [[ $# -gt 0 ]]; do
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
+
+source bench/validate-config.sh
 
 # The legacy credential is shared. Named worker slots are independent SSM
 # parameters and can therefore run in parallel, subject to account limits.
@@ -91,6 +96,7 @@ launch_one() {  # $1 = trial index, $2 = optional Codex worker slot
                 --no-wait)
     [[ $SPOT -eq 1 ]] && args+=(--spot)
     [[ -n "$worker" ]] && args+=(--codex-worker "$worker")
+    [[ -n "$REASONING_EFFORT" ]] && args+=(--reasoning-effort "$REASONING_EFFORT")
     out=$(bench/aws/launch.sh "${args[@]}" 2>&1) || { log "trial $n FAILED to launch:"; echo "$out" >&2; return 1; }
     iid=$(sed -n 's/^launched \(i-[a-z0-9]*\).*/\1/p' <<<"$out" | head -1)
     echo "$run_id $iid" >> "$DEST/instances.txt"

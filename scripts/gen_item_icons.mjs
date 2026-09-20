@@ -3,10 +3,10 @@
 // Minecraft 1.21.5 item/block textures, so the monitor can render real icons
 // instead of bare text.
 //
-// Why generate-and-commit (mirrors scripts/gen_skill_docs.py): the textures
+// Generated locally, not committed: the textures
 // come from the `minecraft-assets` dev dependency; baking them into one JSON at
 // build time means the runtime has zero icon deps and works offline. Re-run
-// after a MC version bump.
+// after a MC version bump. Minecraft textures retain Mojang's terms.
 //
 //   node scripts/gen_item_icons.mjs
 //
@@ -30,6 +30,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const frontendDir = path.join(repoRoot, "frontend");
 const outPath = path.join(frontendDir, "public", "itemIcons.json");
+fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
 // minecraft-assets and pngjs are devDependencies of the frontend, so resolve
 // them from there.

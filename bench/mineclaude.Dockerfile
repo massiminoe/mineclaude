@@ -9,9 +9,9 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE requirements-dev.lock ./
 COPY mineclaude/ ./mineclaude/
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir -c requirements-dev.lock .
 
 # Compose-network defaults; MCP_HOST must be 0.0.0.0 so the harness container
 # can reach the MCP server (the host-process default is 127.0.0.1).

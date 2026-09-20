@@ -4,8 +4,9 @@ A benchmark for LLM agents + harnesses: **how many Minecraft advancements can
 an agent earn in a fixed wall-clock budget**, driving the mineclaude bot in a
 fresh, fixed-seed survival world?
 
-- **Metric**: the **count** of advancements earned within the budget (default
-  budget: 3600s / 1 hour). Every advancement counts 1.
+- **Metric**: advancement **count**, with a default budget of 3600s / 1 hour.
+  Every advancement counts 1. Historical raw scores use the post-exit ledger;
+  the release derives a separate strict in-budget count (see methodology below).
   Per-advancement timestamps are captured too, so time-based metrics (AUC,
   time-to-milestone) can be derived later from the same artifacts.
 - **Gamerscore (weighted points) is currently DISABLED**, but the logic is
@@ -35,7 +36,7 @@ in-world, start the harness (the clock starts here), let the harness self-exit
 at the budget, snapshot `GET /advancements`, score with `bench/score.py`, and
 collect everything into `state/bench/<run-id>/`:
 
-    metadata.json      run id, harness, model, seed, git sha, t0
+    metadata.json      run id, harness, model, seed, git sha, t0, settings + source hashes
     score.json         earned count + chronological breakdown
     usage.json         token ledger + cost + rate-limit health (bench/usage.py)
     advancements.json  raw ledger snapshot (ground truth)
@@ -95,7 +96,10 @@ metadata.json to read it from):
 `bench/analysis/advancement_curves.ipynb` — cumulative advancements over time per model,
 mean + min/max spread, pacing (how much is banked by the halfway mark, how long each trial
 ran silent), and cost per advancement. Reads `state/bench/sweep-*/` directly; no live
-stack needed. Run it with the repo venv: `.venv/bin/jupyter lab`.
+stack needed. Its analysis dependencies are `numpy`, `pandas`, `matplotlib`, and
+`jupyterlab`; install them into a separate analysis environment before running
+Jupyter. The notebook uses historical raw scores; see the release inventory
+section before publishing figures.
 
 ## Harnesses
 
@@ -110,7 +114,8 @@ when the budget ends.
 |---|---|---|---|---|
 | `claude-code` | `claude -p --continue`, stream-json | `.claude/skills/` | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` | `result` events (list price) |
 | `opencode` | `opencode run --format json --auto` | `.claude/skills/` (native Claude-compatible path) | `OPENCODE_API_KEY` | `step_finish` events (Zen metered) |
-| `cursor` | `@cursor/sdk` local agent (`driver.mjs`) | `.cursor/skills/` | `CURSOR_API_KEY` | none on a Pro plan — **see below** |
+| `cursor` | `@cursor/sdk` local agent (`driver.mjs`) | `.cursor/skills/` | `CURSOR_API_KEY` | entitlement-dependent — **see below** |
+| `codex` | pinned `codex exec --json` | `.agents/skills/` | subscription auth in an isolated mount | cumulative session snapshots; cost unavailable |
 
 Model ids carry their provider where the CLI expects it:
 
@@ -124,15 +129,15 @@ Cursor, `composer-2.5` and `grok-4.6`; the run dumps the account's live
 catalogue to `harness/cursor-models.json` so a renamed id is visible rather than
 mysterious.
 
-**Cursor runs have no token or cost ledger.** Measured, not assumed. The CLI's
+**The historical Cursor runs tested here have no token or cost ledger.** The CLI's
 stream-json result event carries only `duration_ms`. `@cursor/sdk` declares
 `agent.getUsage()` (returning `rawCostCents` / `chargedCents` plus full token
 counts), which is why the harness drives the SDK — but that call is
 **entitlement-gated**: on an individual Pro account it returns
 `[feature_unavailable] This feature is not available for your account`, and the
 event stream carries no `usage` events either (only `status`, `thinking`,
-`assistant`, `tool_call`). On Pro there is no programmatic per-run usage from
-Cursor by any route.
+`assistant`, `tool_call`). These artifacts therefore have no programmatic per-run usage ledger; this is
+a statement about the tested account and harness, not all Cursor plans or versions.
 
 `usage.py` reports that honestly — `tokens: null`, `cost_usd: null`,
 `cost_basis: "unavailable"`, and `health.usage_error` naming the reason. It must
@@ -154,27 +159,11 @@ a credential case in `run.sh`, `aws/setup.sh`, and `aws/user-data.sh.tpl`.
 
 ### Budget and quota, before you run a sweep
 
-A measured 1h Claude Code trial burns 16–48M tokens, overwhelmingly cache reads.
-Both new subscriptions meter in dollars, so that shape matters more than the
-model's sticker price:
-
-- **opencode Go** — $12 per 5h, $30/week, $60/month at Zen list prices. The
-  flash-tier models are cheap even at that volume; `qwen3.8-max` ($2/$6 per Mtok)
-  is only viable if prompt caching is active through the gateway, which is
-  exactly what `usage.json`'s `cache_read` column tells you.
-- **Cursor Pro** — a $20/month credit pool, i.e. roughly one to two hour-long
-  runs at frontier prices. Run `composer-2.5` first. This cannot be tracked from
-  the artifacts (see above) — watch the dashboard.
-
-Measured on the first 10-minute pilots (local, arm64): `qwen3.8-flash` spent
-**$0.031**, with caching confirmed active through the gateway (867k cache-read
-against 156 raw input tokens) — roughly $0.20 for a 1h trial. The flash tier is
-nowhere near the Go caps; only `qwen3.8-max` (~15x the cache-read rate) is worth
-watching. opencode's `step_finish` token counts were verified per-step, not
-cumulative, against a real transcript.
-
-Pilot each new (harness, model) at `--seconds 600` and read `usage.json` before
-committing to 1h trials.
+Pilot each new (harness, model, reasoning setting) with `--seconds 600` before
+committing to one-hour trials. Inspect `usage.json`, harness errors, and account
+quota availability. Subscription caps and provider pricing change; the release
+should report the observed cost basis, not treat historical subscription prices
+as current recommendations. Missing token/cost data stays `null`.
 
 ### MCP tool timeout
 
@@ -216,7 +205,14 @@ stack is up at a time (they share host ports).
 
 ## Cloud run (AWS, ephemeral VM per run)
 
-One-time: `aws configure`, then
+For this project, authenticate with the dedicated benchmark profile:
+
+```sh
+export AWS_PROFILE=mineclaude-sso
+aws sso login --profile mineclaude-sso
+```
+
+Do not use the default `aws login` profile. For a new AWS installation, then run
 
     bench/aws/setup.sh          # bucket, IAM role, security group, key pair,
                                 # and uploads CLAUDE_CODE_OAUTH_TOKEN to SSM
@@ -235,8 +231,8 @@ live VM with the printed ssh command; boot log is `/var/log/bench-userdata.log`.
 
 ## Roadmap
 
-- Parallelism: N ≤ 4 independent runs = N `launch.sh` invocations (fully
-  independent VMs already); a small sweep driver + results table comes next.
+- `aws/sweep.sh` runs trials in configurable concurrent waves. For Codex, use
+  distinct worker slots and a short parallel pilot before a long sweep.
 - Weighted gamerscore is parked, not deleted — re-enable by passing
   `--gamerscore --scoring …` in `run.sh` and re-surfacing the table to the
   agent in `harness/claude-code/entrypoint.sh` + `prompt.md`. Bump
@@ -247,7 +243,10 @@ live VM with the printed ssh command; boot log is `/var/log/bench-userdata.log`.
 
 The `codex` harness uses pinned `@openai/codex` 0.153.4 and `codex exec --json`,
 resuming the exact session between invocations. It supports these benchmark models:
-`gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`. Pass `--model` explicitly.
+`gpt-6-astra`, `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`. Pass `--model` explicitly.
+Use `--reasoning-effort low` to request and record low reasoning in the Codex
+harness. Omit the flag to leave the CLI default unspecified; this is recorded
+as `null`, not inferred as a particular reasoning level.
 The shared skill, task prompt, world, deadline, and scoring are unchanged.
 
 Authentication is subscription-only (`forced_login_method = "chatgpt"`); API-key
@@ -277,7 +276,7 @@ bench/aws/launch.sh --harness codex --model gpt-5.6-sol --seconds 600
 ```
 
 The default Codex credential is shared, so `sweep.sh` forces it to concurrency 1.
-For parallel Codex trials, create one independent login session per worker slot
+For new parallel Codex credentials, create one independent login session per worker slot
 (these may belong to the same ChatGPT account), then upload each to a distinct
 parameter. Use a distinct `CODEX_HOME` for each interactive login, and pass the
 resulting auth file explicitly when uploading it:
@@ -289,6 +288,11 @@ CODEX_AUTH_FILE=state/codex-worker-1/auth.json bench/aws/setup.sh --codex-auth-o
 bench/aws/sweep.sh --harness codex --model gpt-5.6-luna --trials 4 \\
   --concurrency 4 --codex-workers 1,2,3,4 --seconds 3600
 ```
+
+The current project slots originated from one login snapshot; separate SSM
+parameters alone do not prove independent refresh sessions. Run a short parallel
+pilot before long parallel sweeps, and re-seed genuinely independent sessions
+if refresh failures recur.
 
 Each worker refreshes only its own writable `/opt/codex-auth/auth.json` and saves
 it back to its matching SSM slot before termination. Re-seed the affected worker
@@ -311,3 +315,61 @@ snapshot yet remains uncounted. Cost is `null` / `unavailable`
 because this subscription stream reports no monetary ledger. Missing usage is
 also `null`, never a fabricated zero. Throttle detection scans errors and stderr,
 never successful tool output.
+
+
+## Methodology and score boundaries
+
+The benchmark compares **model + harness + configuration**, not models in
+isolation. Agents receive structured state, screenshots, a documented primitive
+API, Baritone navigation/mining, and runtime reflexes. The shared task rewards
+breadth: each displayed advancement is worth one, including root advancements;
+recipe unlocks are excluded. These are assisted survival runs, not raw mouse
+and keyboard play.
+
+The game is Minecraft Java 1.21.5, survival, normal difficulty, and the seed is
+`mineclaude-bench-1` unless overridden. Startup scripts enable `keepInventory`,
+`doImmediateRespawn`, and one-player sleeping, and disable insomnia. A fixed seed
+does not eliminate mob/weather/timing variation. Cloud runs use an amd64 client;
+local arm64 development runs should be a separate comparison group.
+
+Historical `score.json` is the final ledger count **after harness exit**. The
+runner records `t0_epoch` before starting the harness container, while each
+harness starts its own budget after readiness/setup. Shutdown and polling also
+introduce delay. Consequently a final ledger count can include advancements
+after `t0_epoch + budget_seconds`. `score.py` preserves this historical metric;
+it does not enforce a cutoff.
+
+For the release, `inventory.py` separately derives `timed_earned_count` from
+unrounded runtime session receipt timestamps in the inclusive interval
+`[t0_epoch, t0_epoch + budget_seconds]`. Unknown timestamps remain unknown; they
+are not scored as zero. Keep the raw count alongside it. Do not change old
+artifacts to make them agree with a new metric.
+
+## Release inventory and reproduction
+
+See [release audit instructions](release/README.md). The inventory creates a
+manifest of all discovered runs, preserves conflicting copies and missing
+artifacts, labels exclusions, and groups candidate runs by harness, model,
+reasoning setting, budget, seed, and source commit. Candidate means ready for
+methodology review, not approved for a headline claim.
+
+New runs record non-secret settings, a dirty-checkout flag, and hashes of runtime,
+bridge, skill, prompt, and harness source files in `metadata.json`. Installed
+harness versions remain in `harness/*version*.txt`. Source hashes detect local
+patches but cannot recover their contents; use a committed ref for release runs.
+The repo still has floating base-image and dependency versions, so a Git commit
+alone does not promise an identical environment.
+
+For an explicit Astra configuration after committing and pushing the updated
+harness (this starts a paid cloud run):
+
+```sh
+AWS_PROFILE=mineclaude-sso bench/aws/launch.sh --harness codex \
+  --model gpt-6-astra --reasoning-effort low --seconds 3600 --codex-worker 1
+```
+
+The September 2026 Astra runs predate this option. Their base SHA does not include
+the model admission and low-reasoning patch. The reconstructed source edits are
+preserved in `release/legacy-astra-low.patch`; apply them only to the historical
+base `21de4d9` in a separate checkout. The annotation file states the provenance
+and uncertainty of that reconstruction.
