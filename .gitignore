@@ -8,6 +8,11 @@ build/
 .eggs/
 *.pyc
 .env
+.env.*
+!.env.example
+.venv/
+*.pem
+auth.json
 .pytest_cache/
 
 # Frontend
@@ -27,3 +32,6 @@ mc-client/mods/*.jar
 
 # Agent persistent state (plan.md, future memory.md, etc.)
 state/
+
+# Generated Minecraft textures (local build assets, not original code)
+frontend/public/itemIcons.json

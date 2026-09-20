@@ -53,6 +53,7 @@ RUN_ID="__RUN_ID__"
 
 # Gameplay recorder capture rate — compose reads it from this env.
 export RECORD_FPS="__RECORD_FPS__"
+export BENCH_REASONING_EFFORT="__REASONING_EFFORT__"
 
 # Perf probe: a 15s sample of VM load, per-container CPU, and the recorder
 # ffmpeg's own share. A score is only meaningful if the VM wasn't starved, and

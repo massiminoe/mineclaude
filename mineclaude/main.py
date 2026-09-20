@@ -36,19 +36,8 @@ def _load_dotenv() -> None:
             os.environ[key] = value
 
 
-# The bot's custom skin is broadcast server-side by Fabric Tailor (mc-server runs
-# TYPE=FABRIC). Fabric Tailor persists it in the world's playerdata, so a normal
-# relaunch keeps it — but `docker compose down -v` wipes the world and the bot
-# reverts to default Steve. Re-assert the skin every launch so a clean restart
-# self-heals; it's idempotent (Fabric Tailor just re-sets the same texture) and a
-# no-op when already set. The URL is a Mojang-hosted upload of skins/claude_crab.png
-# (via MineSkin). Override with SKIN_TEXTURE_URL / SKIN_MODEL; set the URL to "" to
-# disable. To change the skin: replace skins/claude_crab.png, re-upload it at
-# https://mineskin.org, and paste the new textures.minecraft.net URL below.
-DEFAULT_SKIN_URL = (
-    "https://textures.minecraft.net/texture/"
-    "6c75af04ca959367bb55dec6beb0f4b57dec5451481cc399a6443ef510d84258"
-)
+# Optional user-supplied skin, broadcast by Fabric Tailor. No custom skin is
+# shipped or applied by default. Set SKIN_TEXTURE_URL to opt in.
 
 
 async def _reapply_skin(bridge, url: str, model: str, logger) -> None:
@@ -89,7 +78,7 @@ def main() -> None:
     monitor_port = int(os.environ.get("MONITOR_PORT", "5555"))
     mcp_host = os.environ.get("MCP_HOST", "127.0.0.1")
     mcp_port = int(os.environ.get("MCP_PORT", "5556"))
-    skin_url = os.environ.get("SKIN_TEXTURE_URL", DEFAULT_SKIN_URL)
+    skin_url = os.environ.get("SKIN_TEXTURE_URL", "")
     skin_model = os.environ.get("SKIN_MODEL", "classic")
 
     from mineclaude import mcp_server

@@ -24,13 +24,22 @@ required = true
 default_tools_approval_mode = "approve"
 tool_timeout_sec = 90
 EOF_CONFIG
+# Insert at the root of the TOML document, before the MCP table. Omission
+# preserves historical default behavior; never label an unknown default 'low'.
+if [[ -n "${BENCH_REASONING_EFFORT:-}" ]]; then
+    case "$BENCH_REASONING_EFFORT" in
+        minimal|low|medium|high|xhigh) ;;
+        *) log 'FATAL: unsupported BENCH_REASONING_EFFORT'; exit 1 ;;
+    esac
+    sed -i "/^model = /a model_reasoning_effort = \"$BENCH_REASONING_EFFORT\"" "$CODEX_HOME/config.toml"
+fi
 chmod 600 "$CODEX_HOME/config.toml"
 wait_for_mcp || exit 1
 install_skill "$WORKSPACE/.agents/skills"
 write_agents_md '.agents/skills/mineclaude/SKILL.md'
 cd "$WORKSPACE" || exit 1
 codex --version > "$ART/codex-version.txt" 2>&1
-log "model=$BENCH_MODEL budget=${RUN_SECONDS}s codex=$(cat "$ART/codex-version.txt")"
+log "model=$BENCH_MODEL reasoning=${BENCH_REASONING_EFFORT:-unspecified} budget=${RUN_SECONDS}s codex=$(cat "$ART/codex-version.txt")"
 PROMPT="$(build_prompt)"
 start_clock
 i=0

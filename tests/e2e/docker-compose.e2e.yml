@@ -1,12 +1,21 @@
+# Compose 2.24.4+ is required for !override. Each test session chooses its own
+# project name; no development ports, bind mounts, or volumes are reused.
 services:
   mc-server:
     environment:
-      # Deterministic world so assertions about nearby blocks remain stable.
       SEED: "-4077293573215000000"
-      LEVEL_TYPE: "minecraft:normal"
       DIFFICULTY: "peaceful"
       GAMEMODE: "survival"
-    ports:
-      # Expose RCON so the harness can teleport the player, give items, and
-      # set up scenario state without relying on agent actions.
-      - "25575:25575"
+    ports: !reset []
+    volumes: !override
+      - e2e-world:/data
+  mc-client:
+    environment:
+      RECORD_VIDEO: "0"
+    ports: !override
+      - "127.0.0.1::8081"
+      - "127.0.0.1::8082"
+    volumes: !override
+      - hmc-assets:/headlessmc/HeadlessMC/run/assets
+volumes:
+  e2e-world:

@@ -6,9 +6,9 @@
 #
 # Usage:
 #   bench/run.sh [--seconds 3600] [--harness <name>] [--model <id>]
-#                [--run-id <id>] [--seed <s>] [--local] [--keep]
+#                [--run-id <id>] [--seed <s>] [--local] [--keep] [--reasoning-effort low]
 #   --harness  which bench/harness/<name> image drives the run
-#              (claude-code | opencode | cursor); default claude-code
+#              (claude-code | opencode | cursor | codex); default claude-code
 #   --local    use the native arm64 mc-client (Apple Silicon dev)
 #   --keep     leave the stack up after the run (debugging)
 #
@@ -28,11 +28,13 @@ RUN_ID="$(date +%Y%m%d-%H%M%S)"
 SEED="mineclaude-bench-1"
 LOCAL=0
 KEEP=0
+REASONING_EFFORT="${BENCH_REASONING_EFFORT:-}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --seconds) SECONDS_BUDGET="$2"; shift 2 ;;
         --harness) HARNESS="$2"; shift 2 ;;
         --model)   MODEL="$2"; shift 2 ;;
+        --reasoning-effort) REASONING_EFFORT="$2"; shift 2 ;;
         --run-id)  RUN_ID="$2"; shift 2 ;;
         --seed)    SEED="$2"; shift 2 ;;
         --local)   LOCAL=1; shift ;;
@@ -41,12 +43,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "$HARNESS" == "codex" ]]; then
-    case "$MODEL" in
-        gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;
-        *) echo "Codex bench requires --model gpt-5.6-luna, gpt-5.6-terra, or gpt-5.6-sol" >&2; exit 2 ;;
-    esac
-fi
+source bench/validate-config.sh
 
 if [[ ! -f "bench/harness/${HARNESS}/Dockerfile" ]]; then
     echo "bench: unknown harness '$HARNESS' (no bench/harness/$HARNESS/Dockerfile)" >&2
@@ -88,6 +85,7 @@ export BENCH_RUN_DIR="./state/bench/${RUN_ID}"
 export BENCH_RUN_SECONDS="$SECONDS_BUDGET"
 export BENCH_HARNESS="$HARNESS"
 export BENCH_MODEL="$MODEL"
+export BENCH_REASONING_EFFORT="$REASONING_EFFORT"
 export BENCH_SEED="$SEED"
 # opencode and Cursor drive MCP through the TypeScript SDK, whose tool-call
 # timeout defaults to 60s; keep the inline `execute` wait clear of it so a long
@@ -143,19 +141,12 @@ if [[ $mcp_up -ne 1 ]]; then
 fi
 
 T0=$(date +%s)
-GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
-cat > "$BENCH_RUN_DIR/metadata.json" <<EOF
-{
-  "run_id": "$RUN_ID",
-  "harness": "$HARNESS",
-  "model": "$MODEL",
-  "budget_seconds": $SECONDS_BUDGET,
-  "seed": "$SEED",
-  "git_sha": "$GIT_SHA",
-  "t0_epoch": $T0,
-  "started_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-EOF
+METADATA_ARGS=(--t0 "$T0" --out "$BENCH_RUN_DIR/metadata.json")
+[[ $LOCAL -eq 1 ]] && METADATA_ARGS+=(--local)
+# Resolve .env/Compose defaults too, but metadata.py retains only named,
+# non-secret settings. Never save or print the full resolved Compose config.
+COMPOSE_PROFILES=harness "${COMPOSE[@]}" config --format json \
+    | RUN_ID="$RUN_ID" python3 bench/metadata.py --compose-config-stdin "${METADATA_ARGS[@]}"
 
 log "starting harness — clock running"
 # --no-deps is load-bearing: without it, `up harness` re-evaluates the

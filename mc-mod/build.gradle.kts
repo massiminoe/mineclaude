@@ -79,8 +79,10 @@ tasks.named<ProcessResources>("processResources") {
     }
 }
 
-tasks.named<Jar>("jar") {
-    from("LICENSE") {
+tasks.withType<Jar>().configureEach {
+    from("licenses") { into("META-INF/licenses") }
+    // Docker copies the root license into the standalone build context.
+    from(if (file("LICENSE").exists()) file("LICENSE") else file("../LICENSE")) {
         rename { "${it}_${archivesBaseName}" }
     }
 }

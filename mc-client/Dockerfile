@@ -7,6 +7,8 @@ WORKDIR /build
 # source-only changes.
 COPY mc-mod/gradlew mc-mod/settings.gradle.kts mc-mod/build.gradle.kts mc-mod/gradle.properties ./
 COPY mc-mod/gradle ./gradle
+COPY LICENSE ./LICENSE
+COPY mc-mod/licenses ./licenses
 RUN ./gradlew --no-daemon dependencies > /dev/null 2>&1 || true
 COPY mc-mod/src ./src
 RUN ./gradlew --no-daemon build -x test

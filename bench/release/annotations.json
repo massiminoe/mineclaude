@@ -1,0 +1,50 @@
+{
+  "astra-low-20260915-single-1h": {
+    "reasoning_effort": "low",
+    "reasoning_source": "Historical local launcher state/bench/astra-low-launch/user-data.sh.tpl; cloud boot log records execution of its Python patch, but does not contain the final config.toml.",
+    "notes": "Recorded git_sha is the base checkout, not the full executed source. Low reasoning is reconstructed from the retained launcher; the original run metadata did not record it. Harness aborted after five failures; per-invocation stderr contains HTTP 401 / auth refresh failures.",
+    "exclude_reason": "authentication_failure",
+    "source_patch_sha256": "0dc40a149741df5e197c9857c6dfb54ec98c40fea839f8b8e98127b1dd811a55"
+  },
+  "astra-low-20260917-repeat-1h": {
+    "reasoning_effort": "low",
+    "reasoning_source": "Historical local launcher state/bench/astra-low-launch/user-data.sh.tpl; cloud boot log records execution of its Python patch, but does not contain the final config.toml.",
+    "notes": "Recorded git_sha is the base checkout, not the full executed source. Low reasoning is reconstructed from the retained launcher; the original run metadata did not record it.",
+    "source_patch_sha256": "0dc40a149741df5e197c9857c6dfb54ec98c40fea839f8b8e98127b1dd811a55"
+  },
+  "astra-low-20260917-three-t3": {
+    "reasoning_effort": "low",
+    "reasoning_source": "Historical local launcher state/bench/astra-low-launch/user-data.sh.tpl; cloud boot log records execution of its Python patch, but does not contain the final config.toml.",
+    "notes": "Recorded git_sha is the base checkout, not the full executed source. Low reasoning is reconstructed from the retained launcher; the original run metadata did not record it.",
+    "source_patch_sha256": "0dc40a149741df5e197c9857c6dfb54ec98c40fea839f8b8e98127b1dd811a55"
+  },
+  "astra-low-20260915-retry-1h": {
+    "reasoning_effort": "low",
+    "reasoning_source": "Historical local launcher state/bench/astra-low-launch/user-data.sh.tpl; cloud boot log records execution of its Python patch, but does not contain the final config.toml.",
+    "notes": "Recorded git_sha is the base checkout, not the full executed source. Low reasoning is reconstructed from the retained launcher; the original run metadata did not record it.",
+    "source_patch_sha256": "0dc40a149741df5e197c9857c6dfb54ec98c40fea839f8b8e98127b1dd811a55"
+  },
+  "astra-low-20260917-three-t2": {
+    "reasoning_effort": "low",
+    "reasoning_source": "Historical local launcher state/bench/astra-low-launch/user-data.sh.tpl; cloud boot log records execution of its Python patch, but does not contain the final config.toml.",
+    "notes": "Recorded git_sha is the base checkout, not the full executed source. Low reasoning is reconstructed from the retained launcher; the original run metadata did not record it.",
+    "source_patch_sha256": "0dc40a149741df5e197c9857c6dfb54ec98c40fea839f8b8e98127b1dd811a55"
+  },
+  "astra-low-20260917-three-t1": {
+    "reasoning_effort": "low",
+    "reasoning_source": "Historical local launcher state/bench/astra-low-launch/user-data.sh.tpl; cloud boot log records execution of its Python patch, but does not contain the final config.toml.",
+    "notes": "Recorded git_sha is the base checkout, not the full executed source. Low reasoning is reconstructed from the retained launcher; the original run metadata did not record it.",
+    "source_patch_sha256": "0dc40a149741df5e197c9857c6dfb54ec98c40fea839f8b8e98127b1dd811a55"
+  },
+  "sol-20260915-wave2-t3": {
+    "exclude_reason": "authentication_failure",
+    "notes": " Harness aborted after five failures; per-invocation stderr contains HTTP 401 / auth refresh failures."
+  },
+  "sol-20260915-wave2-t4": {
+    "exclude_reason": "authentication_failure",
+    "notes": " Harness aborted after five failures; per-invocation stderr contains HTTP 401 / auth refresh failures."
+  },
+  "sol-20260915-retry-t1": {
+    "notes": "Raw score 17; Hot Stuff arrived 3602.1612556 seconds after recorded t0. Strict one-hour derived count is 16. Preserve both."
+  }
+}

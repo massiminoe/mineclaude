@@ -59,7 +59,7 @@ test: ## Run the test suite
 
 .PHONY: test-e2e
 test-e2e: ## Run the opt-in e2e tests
-	.venv/bin/pytest --run-e2e
+	.venv/bin/pytest tests/e2e --run-e2e
 
 .PHONY: skill-docs
 skill-docs: ## Regenerate generated skill docs from code
@@ -73,4 +73,4 @@ frontend: ## Run the frontend dev server
 
 .PHONY: frontend-build
 frontend-build: ## Production build of the frontend
-	cd frontend && npx vite build
+	cd frontend && npm run build

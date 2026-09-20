@@ -78,6 +78,7 @@ services:
       MCP_URL: http://mineclaude:5556/mcp
       BENCH_HARNESS: "${BENCH_HARNESS:-claude-code}"
       BENCH_MODEL: "${BENCH_MODEL:-claude-haiku-4-5-20251001}"
+      BENCH_REASONING_EFFORT: "${BENCH_REASONING_EFFORT:-}"
       BENCH_RUN_SECONDS: "${BENCH_RUN_SECONDS:-3600}"
       # The superset of harness auth; each image reads only its own and fails
       # fast if that one is empty.

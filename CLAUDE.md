@@ -12,23 +12,25 @@ Headless Minecraft bot runtime, driven over **MCP** by an external agent (e.g. C
 - `BRIDGE_URL` (env, default `http://localhost:8081`) — native bridge HTTP
 - `BRIDGE_WS_URL` (env, default `ws://localhost:8082/events`) — native bridge events WS
 - **MCP tools (8):** `execute(code, timeout, wait)` (single-flight; blocks up to the inline-wait budget `wait` (default `MINECLAUDE_EXECUTE_WAIT_S`=50s, sized under the client's request timeout) then returns `status:"running"` while the action keeps running in the background and holds the slot; `timeout` is the action's hard cap), `interrupt()` (out-of-band slot purge), `get_state(flush)`, `screenshot(yaw/pitch/look_at)`, `get_handler(event_type)`, `set_handler(event_type, code, preempts, cooldown_s)`, `wait_for_event(types, timeout)`, `wait_for_action(action_id, timeout)` (level-triggered block on a backgrounded action's completion — checks current state first so it can't miss a fast finish, returns the same shape as `execute`; the clean idiom for a `status:"running"` handle, vs. the future-only `wait_for_event(["action_done"])`). `say(message)` is a primitive inside `execute`, not a tool. Connect Claude Code: `claude mcp add --transport http mineclaude http://127.0.0.1:5556/mcp`
-- `cd frontend && npm run dev` — run frontend dev server (proxies to agent on port 3000)
+- `cd frontend && npm run dev` — run frontend dev server (proxies to the monitor on port 5555)
 
 ## Bench (LLM/harness benchmark)
 
 `bench/` turns the stack into a benchmark: how many **advancements** can a (harness, model) pair earn in a fixed wall-clock budget (default 1 hour) on a fixed-seed world. Every advancement counts 1; the weighted Xbox-style gamerscore (`bench/scoring/gamerscore.json`, 122 advancements / 3,375 max) is currently **disabled** but kept — re-score any run offline with `bench/score.py --gamerscore --scoring …`. `bench/run.sh --harness <name> --model <id>` runs one local/on-VM trial (compose overlay `bench/compose.bench.yml`: fixed seed, difficulty normal, containerized mineclaude + one harness container behind a compose profile). `bench/aws/launch.sh` runs it on an ephemeral self-terminating EC2 VM and uploads artifacts (score, transcripts, session log, video) to S3; `bench/aws/sweep.sh` does N trials of one entry. `bench/analysis/advancement_curves.ipynb` plots accumulation-over-time and cost per advancement.
 
-**Three harnesses** live in `bench/harness/`, one image each, sharing one contract (`common.sh` + `prompt.md` — the build context is `bench/harness/` so the task text and MCP-readiness gate are identical everywhere; `BENCH_HARNESS` picks the Dockerfile). Each has its own credential (one SSM parameter each) and its own parser in `bench/usage.py` behind one output schema:
+**Four harnesses** live in `bench/harness/`, one image each, sharing one contract (`common.sh` + `prompt.md` — the build context is `bench/harness/` so the task text and MCP-readiness gate are identical everywhere; `BENCH_HARNESS` picks the Dockerfile). Each has its own credential and its own parser in `bench/usage.py` behind one output schema:
 
 - `claude-code` — `claude -p`; `CLAUDE_CODE_OAUTH_TOKEN`; usage from `result` events only (per-message `usage` blocks are mid-stream snapshots and overcount), `cost_basis: list_price_estimate`
 - `opencode` — `opencode run --format json`; models carry the provider (`opencode-go/<id>`); `OPENCODE_API_KEY`; usage summed from per-step `step_finish` (verified per-step, not cumulative), `cost_basis: gateway_metered` — the same figure the Go plan's dollar caps are charged against, so `usage.json` doubles as quota tracking
 - `cursor` — a `@cursor/sdk` driver, NOT `cursor-agent -p` (inline MCP config + a structured event stream). **No tokens or cost on an individual Pro plan**: the CLI reports only `duration_ms` and `agent.getUsage()` is entitlement-gated (`feature_unavailable`), so `usage.py` reports `null` with `cost_basis: unavailable` — never zeros, which would read as a free run and drag means down
 
+- `codex` — pinned CLI, subscription credentials in isolated SSM worker slots, resumable sessions, and cumulative usage recovery at the deadline. Cost remains unavailable. `--reasoning-effort` records an explicit setting; omission is unknown/default, never inferred as low. See `bench/README.md` for AWS profile and worker instructions.
+
 Two cross-harness gotchas: rate-limit detection reads **error payloads and stderr only**, never transcript bodies (a loose match quarantines valid trials — the mineclaude skill has a line numbered 429 and epoch timestamps contain those digits); and non-Claude harnesses lower the inline `execute` wait to 40s (`BENCH_EXECUTE_WAIT_S` → `MINECLAUDE_EXECUTE_WAIT_S`) to stay clear of the MCP TypeScript SDK's 60s tool-call timeout. `health.throttled` quarantines a rate-limited trial from means. See `bench/README.md`.
 
 ## Project Structure
 
-- `mineclaude/` — Python package: `bridge`, `sandbox`, `primitives`, `action_queue`, `reflexes`, `runtime` (headless Runtime + Controller seam), `gamestate` (structured snapshot), `models` (typed return shapes), `mcp_server` (FastMCP, 7 tools), `monitor`, `session_log`, `main` (MCP launcher). The brain (Claude loop + LLM providers) was deleted — MCP is the only interface.
+- `mineclaude/` — Python package: `bridge`, `sandbox`, `primitives`, `action_queue`, `reflexes`, `runtime` (headless Runtime + Controller seam), `gamestate` (structured snapshot), `models` (typed return shapes), `mcp_server` (FastMCP, 8 tools), `monitor`, `session_log`, `main` (MCP launcher). The brain (Claude loop + LLM providers) was deleted — MCP is the only interface.
 - `skills/mineclaude/` — the Claude Code skill: how to drive the bot. `SKILL.md` + hand-written `mental-model`/`snippets`/`handlers` + generated `primitives`/`events`/`tools` (run `scripts/gen_skill_docs.py` to regenerate the latter from code)
 - `frontend/` — React + TypeScript + Vite monitor UI ("flight deck"): single read-only screen — MJPEG feed, action queue + reflex rail, position/vitals/inventory footer. No console, no sessions browser, no routing
 - `tests/` — pytest-asyncio tests (asyncio_mode = "auto")
@@ -51,7 +53,7 @@ Two cross-harness gotchas: rate-limit detection reads **error payloads and stder
 
 - Python 3.13, deps: aiohttp, httpx, websockets, mcp, uvicorn
     - use the virtual environment at .venv/
-- Entry point: `mineclaude = "agent.main:main"` (the MCP launcher)
+- Entry point: `mineclaude = "mineclaude.main:main"` (the MCP launcher)
 - Monitor: aiohttp server on port 5555 (MONITOR_PORT) inside agent process
 - Frontend: React + Vite dev server on port 5173, proxies `/api` to monitor
   - `cd frontend && npm run dev` — dev server

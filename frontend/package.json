@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "icons": "node ../scripts/gen_item_icons.mjs",
+    "predev": "npm run icons",
+    "prebuild": "npm run icons"
   },
   "dependencies": {
     "react": "^19.2.4",

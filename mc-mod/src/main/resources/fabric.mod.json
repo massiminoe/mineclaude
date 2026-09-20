@@ -6,8 +6,8 @@
   "description": "Native Fabric bridge that exposes the mineclaude HTTP/WS surface directly from the MC client.",
   "authors": ["Massimino"],
   "contact": {
-    "homepage": "https://github.com/mineclaude/mineclaude",
-    "sources": "https://github.com/mineclaude/mineclaude"
+    "homepage": "https://github.com/massiminoe/mineclaude",
+    "sources": "https://github.com/massiminoe/mineclaude"
   },
   "license": "MIT",
   "environment": "client",

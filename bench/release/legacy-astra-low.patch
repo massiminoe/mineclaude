@@ -1,0 +1,20 @@
+--- a/bench/run.sh
++++ b/bench/run.sh
+@@ -44,6 +44,6 @@
+ if [[ "$HARNESS" == "codex" ]]; then
+     case "$MODEL" in
+-        gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;
++        gpt-6-astra|gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;
+         *) echo "Codex bench requires --model gpt-5.6-luna, gpt-5.6-terra, or gpt-5.6-sol" >&2; exit 2 ;;
+     esac
+ fi
+--- a/bench/harness/codex/entrypoint.sh
++++ b/bench/harness/codex/entrypoint.sh
+@@ -16,6 +16,7 @@
+ cli_auth_credentials_store = "file"
+ forced_login_method = "chatgpt"
+ model = "$BENCH_MODEL"
++model_reasoning_effort = "low"
+ approval_policy = "never"
+ sandbox_mode = "danger-full-access"
+ [mcp_servers.mineclaude]
