@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="What can an AI agent achieve in one hour of Minecraft? An early benchmark of models and coding harnesses, their progress, and their cost.">
+  <meta property="og:title" content="One hour in Minecraft — Mineclaude">
+  <meta property="og:description" content="An early benchmark of autonomous agents: progress, a standout run, and the price of getting there.">
+  <meta property="og:type" content="article">
+  <meta property="og:image" content="https://massiminoe.github.io/mineclaude/assets/progress.png">
+  <title>One hour in Minecraft — Mineclaude</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#article">Skip to article</a>
+  <header class="masthead"><a class="wordmark" href="./">Mineclaude</a><a href="https://github.com/massiminoe/mineclaude">Code on GitHub <span aria-hidden="true">↗</span></a></header>
+  <main id="article">
+    <article>
+      <!-- EDIT: title and standfirst -->
+      <header class="article-header">
+        <p class="status">Research notes <span>Working draft · September 2026</span></p>
+        <h1>One hour<br>in Minecraft.</h1>
+        <p class="standfirst">Give an agent a world, a set of tools, and sixty minutes.<br class="desktop-break"> What does it manage to do?</p>
+        <nav aria-label="In this article"><a href="#motivation">The benchmark</a><a href="#astra">Astra’s run</a><a href="#cost">Cost</a><a href="#next">What comes next</a></nav>
+      </header>
+      <!-- EDIT: main figure and caption -->
+      <figure class="wide lead-figure">
+        <a href="assets/progress.png" aria-label="Open the full-resolution benchmark progress chart"><img src="assets/progress.png" width="3456" height="2160" fetchpriority="high" alt="Mean cumulative Minecraft advancements over one hour for 13 model–harness combinations. GPT-6 Astra with Codex leads at 22.4 advancements across five runs."></a>
+        <figcaption><span>Figure 1</span> Progress over a fixed one-hour budget. Each line is the mean of repeated runs for one model–harness combination. <a href="assets/progress.png">View full size</a></figcaption>
+      </figure>
+      <!-- EDIT: introduction and motivation -->
+      <section id="motivation" class="prose">
+        <h2>A small world.<br>A long chain of decisions.</h2>
+        <p>Minecraft asks an agent to turn an open-ended goal into a sequence of concrete actions. Gather materials. Make tools. Find food. Recover when a plan fails. Progress depends on keeping those decisions connected over time.</p>
+        <p>Mineclaude is a headless Minecraft runtime controlled by an external agent. We use it to ask a simple question: how many advancements can a model and its harness earn in one hour?</p>
+        <p>These first results cover <strong>60 runs across 13 model–harness combinations</strong>, using a fixed world seed. Every advancement counts as one point. The runtime supplies the game tools; the external agent decides what to do with them.</p>
+        <aside class="note"><strong>Reading these results.</strong> This is an early comparison of complete model–harness setups. Historical source revisions and harness versions differ, and reasoning settings were not consistently recorded. It is not a controlled measurement of model capability alone.</aside>
+      </section>
+      <!-- EDIT: Astra interpretation; add the published video URL here when ready. -->
+      <section id="astra" class="prose">
+        <h2>Astra goes further.</h2>
+        <p>GPT-6 Astra with Codex has the highest mean advancement count in this cohort: <strong>22.4 across five runs</strong>. Its best runs reach 24. The run selected for the accompanying video reaches its final advancement at 53 minutes and 58 seconds.</p>
+        <p>The trajectory makes the result tangible. It earns “Diamonds!” at 17:37, enters the Nether at 34:55, and reaches “A Terrible Fortress” at 38:08. Later advancements include catching fish, collecting an axolotl, and breeding animals.</p>
+        <p>The figure below follows that single run. It is a showcase of what the agent achieved; the repeated-run means above give the broader comparison.</p>
+      </section>
+      <figure class="wide">
+        <a href="assets/astra-achievements.png" aria-label="Open all 24 achievements at full resolution"><img src="assets/astra-achievements.png" width="3456" height="2880" loading="lazy" alt="GPT-6 Astra’s selected video run earns 24 advancements. A stepped timeline pairs each unlock with a Minecraft item icon; a key lists all achievement names and timestamps."></a>
+        <figcaption><span>Figure 2</span> All 24 advancements in the selected Astra run, in order. Low reasoning is reconstructed from the retained launcher. <a href="assets/astra-achievements.png">View full size</a></figcaption>
+      </figure>
+      <!-- EDIT: cost discussion -->
+      <section id="cost" class="prose">
+        <h2>The price of progress.</h2>
+        <p>Performance is one part of the comparison. The cost of keeping an agent working for an hour is another. The chart plots mean advancement count against mean model-usage cost, with a stepped Pareto frontier marking the combinations for which no plotted alternative is both cheaper and at least as successful.</p>
+        <p>Codex token counts are valued at published standard, short-context API rates. Claude Code provides list-price estimates; OpenCode provides gateway-metered usage. These figures describe model usage, rather than subscription charges or the full cost of running the benchmark.</p>
+        <p>At those rates, GPT-5.6 Luna with Codex averages <strong>$0.86 per run</strong>, Terra $2.98, Sol $9.88, and Astra $24.53. Cursor is omitted from this chart because token and cost data have not been recovered from its run artifacts.</p>
+      </section>
+      <figure class="wide">
+        <a href="assets/cost-performance.png" aria-label="Open the cost–performance frontier at full resolution"><img src="assets/cost-performance.png" width="3456" height="2160" loading="lazy" alt="Cost–performance comparison of 11 model–harness combinations over 53 runs. The frontier steps horizontally, then vertically. Codex results range from Luna at $0.86 and 14 advancements to Astra at $24.53 and 22.4 advancements."></a>
+        <figcaption><span>Figure 3</span> Cost on a logarithmic axis; performance is the mean strict one-hour count. Codex long-context rate applicability remains unverified. <a href="assets/cost-performance.png">View full size</a></figcaption>
+      </figure>
+      <!-- EDIT: future directions -->
+      <section id="next" class="prose">
+        <h2>What comes next?</h2>
+        <p>This first pass gives us a useful starting point. The next version should make the comparisons more controlled and test whether the same patterns hold beyond one world.</p>
+        <ul class="directions">
+          <li><h3>More worlds, more runs.</h3><p>Repeat across seeds and increase the number of trials to separate reliable progress from a particularly favorable run.</p></li>
+          <li><h3>Comparable configurations.</h3><p>Pin runtime and harness versions, record reasoning settings, and compare the same model across harnesses where possible.</p></li>
+          <li><h3>A fuller account of cost.</h3><p>Verify request-level pricing conditions, recover Cursor usage where possible, and report infrastructure cost separately.</p></li>
+          <li><h3>Look beyond the final score.</h3><p>Study where agents stall, how they recover, and which strategies consistently lead to new advancements.</p></li>
+        </ul>
+      </section>
+      <section class="prose methods" aria-labelledby="methods-heading">
+        <h2 id="methods-heading">A note on the numbers</h2>
+        <p>Figures use the candidate-run release audit from 16 August–17 September 2026. Advancements are counted only when their receipt timestamp falls within the recorded one-hour budget. The single-run Luna/Codex cohort from a different source revision is excluded; the four-run Luna/Codex cohort is retained.</p>
+        <p>The selected Astra run is <code>astra-low-20260917-three-t3</code>, chosen by highest one-hour count, then earliest final advancement. The frontier compares cohort means across differing cost bases; it does not establish statistically significant dominance. These are draft publication figures pending final cohort and pricing review.</p>
+        <p><a href="https://github.com/massiminoe/mineclaude/tree/main/bench">Benchmark code</a> · <a href="https://github.com/massiminoe/mineclaude/blob/main/bench/release/README.md">Cohort methodology</a> · <a href="https://developers.openai.com/api/docs/pricing">API pricing reference</a></p>
+      </section>
+    </article>
+  </main>
+  <footer class="footer"><span>Mineclaude · An experiment in autonomous agents</span><span>Minecraft imagery © Mojang. Independent project; not affiliated with Mojang or the model providers.</span></footer>
+</body>
+</html>
