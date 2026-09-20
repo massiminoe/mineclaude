@@ -81,8 +81,9 @@ For the showcase, choose the highest strict one-hour Astra count; break ties by
 the earliest timestamp of the final counted advancement, then run ID. This
 selects `astra-low-20260917-three-t3` (24 advancements, final at about 3238.1 s)
 over `astra-low-20260917-three-t1` (24, final at about 3576.0 s). The recording is
-`video/play-20260917-155455.mp4`. Playback, duration, and video/event alignment
-still need verification during artifact packaging.
+`video/play-20260917-155455.mp4`. Playback and duration were checked during video preparation. The 43 commentary
+captions use inferred timing bounds; they are not exact message timestamps.
+Keep that timing qualification with the published recording.
 
 The existing notebook predates this manifest and uses raw snapshot scores from
 local sweep folders. Do not publish its cached figures as release results.

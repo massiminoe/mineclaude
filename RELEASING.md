@@ -51,7 +51,7 @@ monitor inventory, and captures a screenshot. No model credentials are needed.
 Logs are retained under `state/e2e/`; only that test session's containers and
 volumes are removed. This is separate from unit tests and mock startup.
 
-## Remaining publication decisions
+## Release status and publication decisions
 
 - Original code uses MIT, with the root `LICENSE` included in the Python package
   and bridge JAR. Keep third-party asset and dataset terms separate.
@@ -64,8 +64,9 @@ volumes are removed. This is separate from unit tests and mock startup.
   `bench/release/capture_environment.py --out <path>` using the release Python
   environment (optionally `--history-root state/release-audit/s3-runs`).
   Docker/harness defaults still float; this observation does not reconstruct old images.
-- Record a passing real Minecraft smoke test for the release checkout. Unit
-  tests and mock startup do not replace that test.
+- The September 20 real Minecraft smoke passed on native arm64, including
+  crafting, MCP state, monitor state, and a screenshot. See the
+  [validation record](bench/release/validation-2026-09-20.md) for scope and evidence.
 - Review the release branch and require green GitHub CI and smoke checks
   before merging or tagging.
 

@@ -1,7 +1,6 @@
 --- a/bench/run.sh
 +++ b/bench/run.sh
-@@ -43,7 +43,7 @@
- 
+@@ -44,6 +44,6 @@
  if [[ "$HARNESS" == "codex" ]]; then
      case "$MODEL" in
 -        gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;

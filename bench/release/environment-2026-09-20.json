@@ -1529,5 +1529,49 @@
       "version": "4.0.2",
       "license": "MIT"
     }
-  ]
+  ],
+  "minecraft_smoke_test": {
+    "implementation_commit": "6123ab1",
+    "platform": "linux/arm64",
+    "result": "passed",
+    "scope": "Fresh isolated world, rebuilt client, cached server image; no provider/model call. Not an amd64 client runtime test.",
+    "images": [
+      {
+        "ID": "sha256:bccc8bf35e4e8128fb8d2d57375b5bcc1e35278d5cefe3b1e98eecf61dbed2e5",
+        "ContainerName": "mineclaude-e2e-5eebce52b7-mc-client-1",
+        "Repository": "mineclaude-e2e-5eebce52b7-mc-client",
+        "Tag": "latest",
+        "Platform": "linux/arm64",
+        "Size": 912926544,
+        "Created": "2026-09-20T08:23:11.099115964Z",
+        "LastTagTime": "2026-09-20T08:23:11.177621172Z"
+      },
+      {
+        "ID": "sha256:675bb24fdce31a386c498cb60ffb7b04c25d48480c6b2445533e611dfbab39b4",
+        "ContainerName": "mineclaude-e2e-5eebce52b7-mc-server-1",
+        "Repository": "itzg/minecraft-server",
+        "Tag": "latest",
+        "Platform": "linux/arm64",
+        "Size": 334628282,
+        "Created": "2026-03-07T15:04:54.735022731Z",
+        "LastTagTime": "2026-03-09T03:33:45.31990455Z"
+      }
+    ],
+    "server_repo_digest": "itzg/minecraft-server@sha256:675bb24fdce31a386c498cb60ffb7b04c25d48480c6b2445533e611dfbab39b4",
+    "server_mods": [
+      "fabric-api-0.128.2+1.21.5.jar",
+      "fabrictailor-2.6.6.jar"
+    ],
+    "craft_result": "Crafted 4 oak_planks",
+    "inventory_after": [
+      {
+        "name": "oak_planks",
+        "count": 4
+      }
+    ],
+    "mcp_tools": 8,
+    "monitor_inventory": "verified",
+    "screenshot": "received",
+    "temporary_containers_and_volumes": "removed and verified absent"
+  }
 }
