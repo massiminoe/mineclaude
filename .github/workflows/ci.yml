@@ -9,14 +9,14 @@ permissions:
 
 jobs:
   python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.13'
       # The Codex usage collector's unit tests execute Node.js.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
       - run: python -m venv .venv
@@ -25,13 +25,13 @@ jobs:
       - run: make skill-docs && git diff --exit-code -- skills/mineclaude
       - run: for script in bench/run.sh bench/validate-config.sh bench/aws/*.sh bench/aws/*.tpl bench/harness/*/entrypoint.sh; do bash -n "$script"; done
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
           cache: npm
@@ -40,10 +40,10 @@ jobs:
       - run: npm run lint
       - run: npm run build
   bridge:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
         with:
           distribution: temurin
           java-version: '21'

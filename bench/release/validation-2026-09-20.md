@@ -1,8 +1,10 @@
 # Source release validation — September 20, 2026
 
-Implementation commit: `6123ab1` on `release/readiness`. The following follow-up
-changes only record validation and remove a whitespace-only context line from
-the reconstructed historical patch (updating its checksum and derived inventory).
+Implementation commit: `6123ab1` on `release/readiness`. Follow-up changes record validation and remove a whitespace-only context line
+from the reconstructed historical patch (updating its checksum and derived
+inventory). CI actions were then updated to maintained versions and the runner
+pinned to Ubuntu 24.04 after GitHub flagged deprecated action runtimes.
+No game runtime or smoke-test code changed after the passing Minecraft test.
 
 - Python suite: **281 passed, 1 skipped**. The skipped test is the opt-in real
   Minecraft test, which was run separately below.
