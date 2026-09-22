@@ -15,7 +15,7 @@ install_skill "$WORKSPACE/.claude/skills"
 # imply some advancements are worth more than others). The /scoring mount stays
 # for when weighted scoring is re-enabled.
 cat > "$WORKSPACE/.mcp.json" <<JSON
-{"mcpServers": {"mineclaude": {"type": "http", "url": "${MCP_URL}"}}}
+{"mcpServers": {"minetrials": {"type": "http", "url": "${MCP_URL}"}}}
 JSON
 
 claude --version > "$ART/claude-version.txt" 2>&1 || true

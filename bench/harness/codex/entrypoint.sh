@@ -18,7 +18,7 @@ forced_login_method = "chatgpt"
 model = "$BENCH_MODEL"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
-[mcp_servers.mineclaude]
+[mcp_servers.minetrials]
 url = "$MCP_URL"
 required = true
 default_tools_approval_mode = "approve"
@@ -36,7 +36,7 @@ fi
 chmod 600 "$CODEX_HOME/config.toml"
 wait_for_mcp || exit 1
 install_skill "$WORKSPACE/.agents/skills"
-write_agents_md '.agents/skills/mineclaude/SKILL.md'
+write_agents_md '.agents/skills/minetrials/SKILL.md'
 cd "$WORKSPACE" || exit 1
 codex --version > "$ART/codex-version.txt" 2>&1
 log "model=$BENCH_MODEL reasoning=${BENCH_REASONING_EFFORT:-unspecified} budget=${RUN_SECONDS}s codex=$(cat "$ART/codex-version.txt")"

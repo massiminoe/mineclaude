@@ -1,26 +1,61 @@
-# Mineclaude
+# MineTrials
 
-Mineclaude lets an external agent play Minecraft through **MCP**. It provides a
-headless Minecraft client, a native Kotlin/Fabric bridge, a Python runtime, and a
-read-only browser monitor. The runtime has no built-in LLM; the connected agent
-supplies the decisions.
+**A Minecraft benchmark for AI agents and their harnesses.** MineTrials measures
+how many advancements a **model + harness** can earn in a fresh, fixed-seed
+survival world within a fixed time budget (one hour by default).
 
-The [benchmark](bench/README.md) measures how many Minecraft advancements a
-**model + harness** earns in a fresh, fixed-seed survival world within a fixed
-time budget. It records advancement events, transcripts, runtime logs, usage
-where available, and gameplay video. Claude Code, OpenCode, Cursor, and Codex
-harnesses are included.
+[Dataset on Hugging Face](https://huggingface.co/datasets/mxls/MineTrials) ·
+[Watch the video](https://youtu.be/ntVf2DUeaBg) ·
+[Benchmark guide](bench/README.md)
 
-## Quickstart
+This repository contains the benchmark runner, scoring and analysis tools, and
+Claude Code, OpenCode, Cursor, and Codex harnesses. It also includes the shared
+Minecraft environment: a headless client, native Kotlin/Fabric bridge, Python
+MCP runtime, agent skill, and read-only gameplay monitor. The runtime has no
+built-in LLM; each harness connects its own agent.
 
-Requirements: Python 3.13, Node.js 22.12+ (for the monitor), Git, and a running
-Docker Engine/Desktop with Compose. The Docker build downloads Minecraft and
-the required mods; you do not need to install Java or Gradle on the host.
+Trials record advancement events, agent transcripts, runtime logs, gameplay
+video, and token usage and cost where available. The published results and
+recordings live in the [MineTrials dataset](https://huggingface.co/datasets/mxls/MineTrials).
+
+## Run the benchmark
+
+You need Git, Python 3.13, and Docker Engine/Desktop with Compose. The runner
+builds the Minecraft environment, runtime, and selected harness in containers;
+Java, Gradle, and Node.js are not required on the host for a benchmark run.
 The Compose configuration accepts the Minecraft EULA for the server.
 
 ```bash
-git clone https://github.com/massiminoe/mineclaude.git
-cd mineclaude
+git clone https://github.com/massiminoe/minetrials.git
+cd minetrials
+```
+
+Configure credentials for your chosen harness in the environment or a local
+`.env` file; see [harness authentication](bench/README.md#auth) and the
+[Codex setup](bench/README.md). Then run a trial, for example:
+
+```bash
+bench/run.sh --harness claude-code --model claude-haiku-4-5-20251001 --seconds 3600
+```
+
+On Apple Silicon, add `--local` to use the native arm64 client. Start with
+`--seconds 600` for a short pilot before a full run. The runner creates a fresh
+world, starts the harness after the bot is ready, collects artifacts under
+`state/bench/<run-id>/`, and tears down the trial stack.
+
+The primary metric is **advancement count**: each advancement counts once.
+Historical `score.json` files use the final ledger, which can include events
+after the deadline; the release derives a separate strict in-budget score.
+Read the [methodology and score boundaries](bench/README.md#methodology-and-score-boundaries)
+for game rules, timing, exclusions, and reproducibility limits. For sweeps,
+AWS runs, additional harnesses, and analysis, see the [benchmark guide](bench/README.md).
+
+## Develop the runtime or connect an agent manually
+
+For interactive development, install the Python runtime and browser monitor
+from the repository root. Node.js 22.12+ is required for the monitor.
+
+```bash
 python3.13 -m venv .venv
 .venv/bin/python -m pip install -c requirements-dev.lock -e '.[dev]'
 cd frontend && npm ci && cd ..
@@ -44,10 +79,10 @@ take several minutes. The monitor shows video, actions, events, and inventory;
 actions come from the connected MCP agent.
 
 Connect your agent to `http://127.0.0.1:5556/mcp` and give it the
-[Mineclaude skill](skills/mineclaude/SKILL.md). For Claude Code:
+[Minecraft driving skill](skills/minetrials/SKILL.md). For Claude Code:
 
 ```bash
-claude mcp add --transport http mineclaude http://127.0.0.1:5556/mcp
+claude mcp add --transport http minetrials http://127.0.0.1:5556/mcp
 ```
 
 The runtime requires no provider credentials. Your external agent or benchmark
@@ -62,7 +97,7 @@ These services are intended for a trusted development environment. The bridge
 and monitor have no authentication, and the bundled Minecraft server uses
 offline mode. Keep their ports on a trusted network.
 
-## How it works
+## Benchmark environment
 
 The agent calls MCP tools to inspect the world, take screenshots, and execute
 short Python actions in the runtime's restricted primitive environment. The
@@ -93,15 +128,28 @@ It needs Docker Compose 2.24.4+ and no model credentials. On Apple Silicon it
 uses the native arm64 client. Diagnostic logs are kept under `state/e2e/`. `docker compose down` stops the development stack;
 `docker compose down -v` also removes its named volumes.
 
+## Naming and migration
+
+The project, Python package, CLI, MCP service, and agent skill are named
+`minetrials` (MineTrials in prose). Reinstall the Python package and rebuild
+containers when updating an existing checkout. Update MCP connection names,
+skill paths, and runtime environment overrides to `MINETRIALS_*`. The default
+Minecraft player is now `MineTrials`, with a matching offline operator UUID;
+existing worlds will treat it as a new player.
+
+The original seed `mineclaude-bench-1`, deployed AWS resource/profile names,
+and historical evidence retain their recorded values. Changing the seed would
+change the benchmark world; renaming cloud resources requires a separate migration.
+
 ## Repository guide
 
 - [bench/](bench/README.md): run orchestration, AWS sweeps, scoring, and analysis.
-- [mineclaude/](mineclaude/): Python runtime, MCP server, monitor, and sandbox.
+- [minetrials/](minetrials/): Python runtime, MCP server, monitor, and sandbox.
 - [mc-mod/](mc-mod/): Kotlin/Fabric native bridge.
 - [mc-client/](mc-client/): headless client images and startup scripts.
 - [frontend/](frontend/README.md): React monitor.
-- [skills/mineclaude/](skills/mineclaude/SKILL.md): agent-facing driving instructions.
-- [CLAUDE.md](CLAUDE.md): detailed bridge API and operational gotchas.
+- [skills/minetrials/](skills/minetrials/SKILL.md): agent-facing driving instructions.
+- [RUNTIME.md](RUNTIME.md): detailed bridge API and operational gotchas.
 - [RELEASING.md](RELEASING.md): release preparation and reproducibility checks.
 - [THIRD_PARTY.md](THIRD_PARTY.md): dependency and asset provenance.
 
@@ -110,7 +158,7 @@ not in Git. The code release and benchmark dataset are separate deliverables.
 
 ## License
 
-Mineclaude's original code is available under the [MIT License](LICENSE).
+MineTrials' original code is available under the [MIT License](LICENSE).
 Third-party code and assets retain their own terms; see [THIRD_PARTY.md](THIRD_PARTY.md).
 The code license does not cover Minecraft assets or the separately published
 benchmark dataset and gameplay recordings.

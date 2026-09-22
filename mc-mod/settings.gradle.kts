@@ -5,4 +5,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = "mineclaude-bridge"
+rootProject.name = "minetrials-bridge"

@@ -18,7 +18,7 @@ base {
 
 loom {
     mixin {
-        defaultRefmapName.set("mineclaude-bridge.refmap.json")
+        defaultRefmapName.set("minetrials-bridge.refmap.json")
     }
 }
 

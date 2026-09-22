@@ -8,8 +8,8 @@ several along the way.
 
 How to play:
 
-- You drive a real headless Minecraft bot through the `mineclaude` MCP server.
-  Use the mineclaude skill in this workspace — it documents the tools
+- You drive a real headless Minecraft bot through the `minetrials` MCP server.
+  Use the minetrials skill in this workspace — it documents the tools
   (`execute`, `get_state`, `screenshot`, `wait_for_event`, ...), the primitive
   vocabulary, and proven patterns for mining, crafting, building, and combat.
 - Advancements you earn arrive as `advancement` events in

@@ -15,10 +15,10 @@ from collections import deque
 
 import pytest
 
-from mineclaude.action_queue import ActionQueue
-from mineclaude.bridge import BridgeResponse
-from mineclaude import reflexes
-from mineclaude.reflexes import (
+from minetrials.action_queue import ActionQueue
+from minetrials.bridge import BridgeResponse
+from minetrials import reflexes
+from minetrials.reflexes import (
     REFLEX_EVENT_TYPES,
     WEAPON_PRIORITY,
     ReflexHandler,
@@ -305,10 +305,10 @@ async def test_register_default_handlers_preempt_flags():
 
 
 async def test_register_default_handlers_recovery_handlers_resume():
-    """The recovery handlers reprompt Claude after acting so the agent can
+    """The recovery handlers reprompt the agent after acting so the agent can
     react to whatever the reflex did. `hostile_nearby` is the deliberate
     exception — it's a pure awareness signal and must never resume, or every
-    mob wandering past would wake Claude."""
+    mob wandering past would wake the agent."""
     agent = FakeAgent()
     reg = ReflexRegistry(agent)
     register_default_handlers(reg)
@@ -321,7 +321,7 @@ async def test_register_default_handlers_recovery_handlers_resume():
 async def test_hostile_nearby_non_creeper_is_informational_only():
     """For a non-creeper mob, hostile_nearby rides the reflex plumbing purely
     for awareness: the dispatcher records it into `recent`, but the handler
-    returns without preempting the current action or resuming/waking Claude."""
+    returns without preempting the current action or resuming/waking the agent."""
     agent = FakeAgent()
     reg = ReflexRegistry(agent)
     register_default_handlers(reg)
@@ -450,7 +450,7 @@ async def test_damage_taken_no_attacker_is_record_only():
 
 async def test_damage_taken_player_attacker_is_record_only():
     """PvP: a player hit carries an attacker_kind/id but is in
-    NO_RETALIATE_KINDS — leave it to Claude. No preempt, flee, or attack,
+    NO_RETALIATE_KINDS — leave it to the agent. No preempt, flee, or attack,
     even at high HP where a hostile mob would be retaliated against."""
     agent = FakeAgent(_FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}}))
     await damage_taken_handler(agent, {
@@ -635,7 +635,7 @@ async def test_damage_taken_high_hp_equip_failure_still_retaliates():
 async def test_damage_taken_retaliate_times_out_stops_and_records(monkeypatch):
     """If the /attack loop outlives the retaliation budget, timed_op issues
     /attack/stop and the handler returns normally (record-only), slogging the
-    timeout so the resume path can wake Claude to re-decide. A still-alive,
+    timeout so the resume path can wake the agent to re-decide. A still-alive,
     fleeing mob is modeled by a blocking attack()."""
     monkeypatch.setattr(reflexes, "RETALIATE_TIMEOUT_S", 0.03)
     bridge = _FakeBridge({"position": {"x": 10.0, "y": 64.0, "z": 5.0}})
@@ -891,7 +891,7 @@ async def test_resume_skipped_when_handler_cancelled_by_newer_reflex():
     """If a newer reflex cancels the in-flight handler, the cancelled
     handler must NOT fire its resume — the newer reflex will fire its own
     resume after its handler completes. Without this, both reflexes would
-    stage resumes and Claude would see a double prompt for one logical
+    stage resumes and the agent would see a double prompt for one logical
     event sequence."""
     agent = FakeAgent()
     reg = ReflexRegistry(agent)
@@ -977,7 +977,7 @@ async def test_started_drowning_surfaces_before_walking_to_shore():
 async def test_started_drowning_still_walks_when_surface_fails():
     """Surface failure shouldn't abort the escape — Baritone might still
     succeed if the player happened to drift to the surface, and even a failed
-    goto leaves a useful reflex entry for Claude to react to next iteration."""
+    goto leaves a useful reflex entry for the agent to react to next iteration."""
     class _NoSurfaceBridge(_FakeBridge):
         async def surface(self, timeout: float = 2.0):
             raise RuntimeError("bridge down")
@@ -1041,7 +1041,7 @@ async def test_entered_lava_handler_uses_shore_finder():
 
 async def test_shore_finder_no_candidate_leaves_bot_alone():
     """Sealed prison: only water in range, no land tile to walk to. We accept
-    the edge case and don't move the bot — Claude is on its own."""
+    the edge case and don't move the bot — the agent is on its own."""
     blocks = [
         _block("water", 0, 62, 0, 0.5),
         _block("water", 1, 62, 0, 1.0),
@@ -1131,7 +1131,7 @@ async def test_shore_finder_respects_max_distance():
 
 
 async def test_escape_handler_swallows_status_failure():
-    """Bridge errors mustn't kill the WS consumer — Claude reconciles next iter."""
+    """Bridge errors mustn't kill the WS consumer — the agent reconciles next iter."""
     class _BoomBridge(_FakeBridge):
         async def get_status(self):
             raise RuntimeError("network down")

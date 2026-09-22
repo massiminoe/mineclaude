@@ -37,7 +37,7 @@ def test_metadata_records_edits_and_omits_secrets(tmp_path):
     del settings["BENCH_REASONING_EFFORT"]
     assert metadata.make_metadata(tmp_path, settings, 100, False)["reasoning_effort"] is None
     resolved = {"services": {
-        "mineclaude": {"environment": {"MINECLAUDE_EXECUTE_WAIT_S": "40"}},
+        "minetrials": {"environment": {"MINETRIALS_EXECUTE_WAIT_S": "40"}},
         "mc-client": {"environment": {"RECORD_FPS": "5"}, "platform": "linux/arm64"},
         "mc-server": {"environment": {"DIFFICULTY": "hard", "RCON_PASSWORD": "secret-value"}},
         "harness": {"build": {"args": {"BENCH_HARNESS_VERSION": "0.153.4"}},

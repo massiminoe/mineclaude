@@ -2,7 +2,7 @@
 # Smoke test for the native Fabric mod bridge.
 #
 # Assumes `docker compose up -d` is already running. Verifies:
-#   1. The mineclaude-bridge mod loaded inside the MC client.
+#   1. The minetrials-bridge mod loaded inside the MC client.
 #   2. The native HTTP server is listening on :8081 and /health responds
 #      with kind=native-mod (so we know we're not accidentally hitting
 #      something else bound to that port).
@@ -40,7 +40,7 @@ green "bridge identifies as native-mod"
 # Look for the mod's startup line in the MC client logs.
 echo
 echo "--- mod startup line ---"
-if docker compose logs mc-client 2>&1 | grep -F "mineclaude bridge: starting"; then
+if docker compose logs mc-client 2>&1 | grep -F "minetrials bridge: starting"; then
     green "mod startup line found"
 else
     red "mod startup line not found in mc-client logs — mod did not initialize"

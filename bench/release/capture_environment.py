@@ -34,7 +34,7 @@ def capture(history_root=None):
         ]}
     python = []
     for dist in importlib.metadata.distributions():
-        if dist.metadata["Name"] == "mineclaude":
+        if dist.metadata["Name"] == "minetrials":
             continue
         python.append({"name": dist.metadata["Name"], "version": dist.version,
                        "license_expression": dist.metadata.get("License-Expression"),

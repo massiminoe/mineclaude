@@ -108,7 +108,7 @@ log "building images"
 "${COMPOSE[@]}" --profile harness build
 
 log "starting world stack"
-"${COMPOSE[@]}" up -d mc-server mc-client mineclaude
+"${COMPOSE[@]}" up -d mc-server mc-client minetrials
 
 log "waiting for the bot to be in-world (bridge /status.health)"
 in_world=0
@@ -126,7 +126,7 @@ if [[ $in_world -ne 1 ]]; then
     exit 1
 fi
 
-log "waiting for the MCP server (mineclaude :5556)"
+log "waiting for the MCP server (minetrials :5556)"
 mcp_up=0
 for _ in $(seq 1 24); do
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 localhost:5556/mcp 2>/dev/null || echo 000)
@@ -134,8 +134,8 @@ for _ in $(seq 1 24); do
     sleep 5
 done
 if [[ $mcp_up -ne 1 ]]; then
-    log "FAIL: mineclaude MCP server never answered on :5556 (container crash-looping?)"
-    "${COMPOSE[@]}" logs --tail 100 mineclaude > "$BENCH_RUN_DIR/logs-failure.txt" || true
+    log "FAIL: minetrials MCP server never answered on :5556 (container crash-looping?)"
+    "${COMPOSE[@]}" logs --tail 100 minetrials > "$BENCH_RUN_DIR/logs-failure.txt" || true
     [[ $KEEP -eq 1 ]] || "${COMPOSE[@]}" down -v --remove-orphans
     exit 1
 fi
@@ -161,7 +161,7 @@ if [[ "$("${COMPOSE[@]}" ps -q mc-server)" != "$server_cid" ]]; then
     exit 1
 fi
 
-hard_stop=$(( T0 + SECONDS_BUDGET + 180 ))  # grace for the last claude invocation to wind down
+hard_stop=$(( T0 + SECONDS_BUDGET + 180 ))  # grace for the last harness invocation to wind down
 while :; do
     cid=$(COMPOSE_PROFILES=harness "${COMPOSE[@]}" ps -q harness)
     running=$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo false)

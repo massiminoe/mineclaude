@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "com.minetrials.bridge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+    "ClientPlayNetworkHandlerDamageMixin",
+    "ClientPlayNetworkHandlerHealthMixin",
+    "FishingBobberAccessor",
+    "InteractionManagerEventsMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "refmap": "minetrials-bridge.refmap.json"
+}

@@ -18,7 +18,7 @@ fi
 # the repo's skill directory mounts in unchanged. They load on demand, hence the
 # AGENTS.md pointer.
 install_skill "$WORKSPACE/.claude/skills"
-write_agents_md ".claude/skills/mineclaude/SKILL.md"
+write_agents_md ".claude/skills/minetrials/SKILL.md"
 
 # permission "*": allow alongside --auto — the flag covers the run, the config
 # covers anything the flag doesn't, and neither can block on a prompt that no
@@ -27,7 +27,7 @@ cat > "$WORKSPACE/opencode.json" <<JSON
 {
   "\$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "mineclaude": {
+    "minetrials": {
       "type": "remote",
       "url": "${MCP_URL}",
       "enabled": true

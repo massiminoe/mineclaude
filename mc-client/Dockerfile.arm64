@@ -12,7 +12,7 @@
 # ships linux-x86_64 .so files, so we bake the official linux-arm64 LWJGL 3.3.3
 # natives and point the game at them at runtime (see entrypoint.arm64.sh).
 
-# --- Stage 1: build the mineclaude bridge mod (already multi-arch) ----------
+# --- Stage 1: build the minetrials bridge mod (already multi-arch) ----------
 FROM eclipse-temurin:21-jdk AS mod-builder
 WORKDIR /build
 COPY mc-mod/gradlew mc-mod/settings.gradle.kts mc-mod/build.gradle.kts mc-mod/gradle.properties ./
@@ -53,7 +53,7 @@ RUN mkdir -p /headlessmc/HeadlessMC && { \
     echo "hmc.gamedir=/headlessmc/HeadlessMC/run"; \
     echo "hmc.java.versions=/opt/java/openjdk/bin/java"; \
     echo "hmc.offline=true"; \
-    echo "hmc.offline.username=Claude"; \
+    echo "hmc.offline.username=MineTrials"; \
     echo "hmc.check.xvfb=true"; \
     echo "hmc.assets.dummy=false"; \
     echo "hmc.invert.lwjgl.flag=true"; \
@@ -97,7 +97,7 @@ RUN set -e; cd /headlessmc; \
 COPY mc-client/download-mods.sh /tmp/download-mods.sh
 RUN MODS_DIR=/tmp/mods bash /tmp/download-mods.sh && rm -f /tmp/mods/hmc-specifics*.jar
 
-# Freshly built mineclaude bridge mod from stage 1.
+# Freshly built minetrials bridge mod from stage 1.
 COPY --from=mod-builder /build/build/libs/ /tmp/mod-builder-libs/
 
 # mcrcon for the entrypoint's RCON gamerule setup.

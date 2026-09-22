@@ -1,6 +1,6 @@
-# Mineclaude monitor
+# MineTrials monitor
 
-Read-only React/TypeScript monitor for the shared Mineclaude runtime: live video,
+Read-only React/TypeScript monitor for the shared MineTrials runtime: live video,
 action queue, event history, player vitals, and inventory details.
 
 Use Node.js 22.12+ and start the Python runtime from the repository root with

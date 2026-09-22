@@ -2,11 +2,11 @@
 #
 # Build context is bench/harness/ (not this dir) so every harness image shares
 # prompt.md + common.sh — see bench/README.md for the contract they implement:
-#   - env MCP_URL           — the mineclaude MCP endpoint to drive
+#   - env MCP_URL           — the minetrials MCP endpoint to drive
 #   - env BENCH_RUN_SECONDS — wall-clock budget; the container exits by itself
 #   - env BENCH_MODEL       — model id for this entry in the eval matrix
 #   - auth via CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY
-#   - /skills  (ro)  — the mineclaude skill directory from the repo
+#   - /skills  (ro)  — the minetrials skill directory from the repo
 #   - /scoring (ro)  — the gamerscore table
 #   - /artifacts     — where transcripts/metadata get written
 #

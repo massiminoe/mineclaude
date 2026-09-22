@@ -15,7 +15,7 @@ fi
 # Cursor's own skill discovery path, plus the workspace pointer (skills load on
 # demand here, unlike Claude Code which lists them up front).
 install_skill "$WORKSPACE/.cursor/skills"
-write_agents_md ".cursor/skills/mineclaude/SKILL.md"
+write_agents_md ".cursor/skills/minetrials/SKILL.md"
 
 node --version > "$ART/cursor-version.txt" 2>&1
 node -e 'console.log("@cursor/sdk " + JSON.parse(require("fs").readFileSync("/opt/bench/node_modules/@cursor/sdk/package.json")).version)' \

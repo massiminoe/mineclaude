@@ -36,8 +36,8 @@ mkdir -p "$MODS_DIR"
 # --- Bot name (override for running several clients on one server) ----------
 # Each parallel agent needs a distinct player name. BOT_NAME rewrites HMC's
 # offline username so the captured launch command (and thus the joined player)
-# uses it. Defaults to Claude to match the amd64 path.
-BOT_NAME="${BOT_NAME:-Claude}"
+# uses it. Defaults to MineTrials to match the amd64 path.
+BOT_NAME="${BOT_NAME:-MineTrials}"
 CONFIG="/headlessmc/HeadlessMC/config.properties"
 if grep -q '^hmc.offline.username=' "$CONFIG" 2>/dev/null; then
     sed -i "s/^hmc.offline.username=.*/hmc.offline.username=$BOT_NAME/" "$CONFIG"
@@ -174,7 +174,7 @@ echo "Configuring game rules via RCON..."
 python3 -c "
 from mcrcon import MCRcon
 try:
-    with MCRcon('$MC_SERVER', 'mineclaude') as mcr:
+    with MCRcon('$MC_SERVER', 'minetrials') as mcr:
         print(mcr.command('gamerule doImmediateRespawn true'))
         print(mcr.command('gamerule keepInventory true'))
         # Let the lone bot skip the night without a creative human watcher

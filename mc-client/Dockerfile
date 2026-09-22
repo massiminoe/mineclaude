@@ -1,4 +1,4 @@
-# --- Stage 1: build the mineclaude bridge mod (JDK 21 + gradle wrapper) ---
+# --- Stage 1: build the minetrials bridge mod (JDK 21 + gradle wrapper) ---
 FROM eclipse-temurin:21-jdk AS mod-builder
 
 WORKDIR /build
@@ -31,7 +31,7 @@ RUN apt-get update -qq && \
 # Configure HeadlessMC for headless operation
 RUN mkdir -p /headlessmc/HeadlessMC && \
     echo "hmc.offline=true" >> /headlessmc/HeadlessMC/config.properties && \
-    echo "hmc.offline.username=Claude" >> /headlessmc/HeadlessMC/config.properties && \
+    echo "hmc.offline.username=MineTrials" >> /headlessmc/HeadlessMC/config.properties && \
     echo "hmc.check.xvfb=true" >> /headlessmc/HeadlessMC/config.properties && \
     echo "hmc.assets.dummy=false" >> /headlessmc/HeadlessMC/config.properties && \
     echo "hmc.always.lwjgl.flag=false" >> /headlessmc/HeadlessMC/config.properties
@@ -48,7 +48,7 @@ RUN hmc download fabric:1.21.5
 COPY mc-client/download-mods.sh /tmp/download-mods.sh
 RUN MODS_DIR=/tmp/mods bash /tmp/download-mods.sh
 
-# Pull the freshly built mineclaude bridge mod from stage 1.
+# Pull the freshly built minetrials bridge mod from stage 1.
 # Loom emits the remapped production jar plus a sources jar; only the remapped
 # one is a runnable mod, so the entrypoint filters out -sources/-dev variants
 # before copying into the mods dir.

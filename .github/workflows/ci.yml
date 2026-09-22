@@ -22,7 +22,7 @@ jobs:
       - run: python -m venv .venv
       - run: .venv/bin/python -m pip install -c requirements-dev.lock -e '.[dev]'
       - run: make test
-      - run: make skill-docs && git diff --exit-code -- skills/mineclaude
+      - run: make skill-docs && git diff --exit-code -- skills/minetrials
       - run: for script in bench/run.sh bench/validate-config.sh bench/aws/*.sh bench/aws/*.tpl bench/harness/*/entrypoint.sh; do bash -n "$script"; done
   frontend:
     runs-on: ubuntu-24.04

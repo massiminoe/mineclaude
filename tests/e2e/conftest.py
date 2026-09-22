@@ -40,7 +40,7 @@ def unused_port():
 
 @pytest.fixture(scope="session")
 def mc_stack():
-    project = f"mineclaude-e2e-{uuid.uuid4().hex[:10]}"
+    project = f"minetrials-e2e-{uuid.uuid4().hex[:10]}"
     evidence = REPO_ROOT / "state" / "e2e" / project
     evidence.mkdir(parents=True)
     command = ["docker", "compose", "-p", project, "-f", str(REPO_ROOT / "docker-compose.yml")]
@@ -81,7 +81,7 @@ def live_runtime(mc_stack):
     while monitor_port == mcp_port:
         mcp_port = unused_port()
     with (mc_stack["evidence"] / "runtime.log").open("w") as log:
-        process = subprocess.Popen([sys.executable, "-m", "mineclaude.main"], cwd=REPO_ROOT,
+        process = subprocess.Popen([sys.executable, "-m", "minetrials.main"], cwd=REPO_ROOT,
             env={**os.environ, "MOCK_BRIDGE": "0", "SESSION_LOG": "0", "SKIN_TEXTURE_URL": "",
                  "BRIDGE_URL": mc_stack["bridge"], "BRIDGE_WS_URL": mc_stack["ws"],
                  "MONITOR_PORT": str(monitor_port), "MCP_HOST": "127.0.0.1", "MCP_PORT": str(mcp_port)},

@@ -12,11 +12,11 @@ import asyncio
 
 import pytest
 
-from mineclaude.bridge import BridgeResponse
-from mineclaude.models import Event, GameState
-from mineclaude.primitives import make_primitives
-from mineclaude.runtime import Runtime
-from mineclaude.sandbox import SandboxError
+from minetrials.bridge import BridgeResponse
+from minetrials.models import Event, GameState
+from minetrials.primitives import make_primitives
+from minetrials.runtime import Runtime
+from minetrials.sandbox import SandboxError
 
 
 def _default_status() -> dict:
@@ -183,7 +183,7 @@ async def test_execute_running_handle_can_be_interrupted():
 
 
 async def test_execute_inline_wait_env_override(monkeypatch):
-    monkeypatch.setenv("MINECLAUDE_EXECUTE_WAIT_S", "0.1")
+    monkeypatch.setenv("MINETRIALS_EXECUTE_WAIT_S", "0.1")
     rt = _runtime()
     rt.start()
     assert rt._inline_wait_s == 0.1
@@ -246,7 +246,7 @@ async def test_get_state_no_flush_peeks_without_draining():
 
 
 async def test_get_state_caps_returned_events_and_flags_truncation():
-    from mineclaude.runtime import MAX_RETURNED_EVENTS
+    from minetrials.runtime import MAX_RETURNED_EVENTS
 
     rt = _runtime()
     n = MAX_RETURNED_EVENTS + 30
@@ -347,7 +347,7 @@ async def test_handle_event_death_cancels_in_flight_reflex_handler():
             cancelled.set()
             raise
 
-    from mineclaude.reflexes import ReflexHandler
+    from minetrials.reflexes import ReflexHandler
     rt.reflexes.register(ReflexHandler(event_type="hostile_nearby", handle=never_ending))
     await rt._handle_event({"type": "hostile_nearby", "data": {}})
     await asyncio.sleep(0)  # let the handler task start

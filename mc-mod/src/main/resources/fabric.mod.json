@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "id": "mineclaude_bridge",
+  "id": "minetrials_bridge",
   "version": "${version}",
-  "name": "Mineclaude Bridge",
-  "description": "Native Fabric bridge that exposes the mineclaude HTTP/WS surface directly from the MC client.",
+  "name": "MineTrials Bridge",
+  "description": "Native Fabric bridge that exposes the MineTrials runtime HTTP/WS surface directly from the MC client.",
   "authors": ["Massimino"],
   "contact": {
-    "homepage": "https://github.com/massiminoe/mineclaude",
-    "sources": "https://github.com/massiminoe/mineclaude"
+    "homepage": "https://github.com/massiminoe/minetrials",
+    "sources": "https://github.com/massiminoe/minetrials"
   },
   "license": "MIT",
   "environment": "client",
@@ -15,12 +15,12 @@
     "client": [
       {
         "adapter": "kotlin",
-        "value": "com.mineclaude.bridge.MineclaudeBridgeClient"
+        "value": "com.minetrials.bridge.MineTrialsBridgeClient"
       }
     ]
   },
   "mixins": [
-    "mineclaude.mixins.json"
+    "minetrials.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${loader_version}",

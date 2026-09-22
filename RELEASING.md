@@ -1,8 +1,12 @@
-# Release preparation
+# MineTrials release preparation
 
-The first release consists of a versioned code checkout, a benchmark results
+The MineTrials release consists of a versioned code checkout, a benchmark results
 article, and a separately versioned dataset with gameplay video. Raw runs,
 credentials, and downloaded audit evidence remain under ignored `state/` paths.
+
+Public release links: [dataset](https://huggingface.co/datasets/mxls/MineTrials)
+and [video](https://youtu.be/ntVf2DUeaBg). The repository is named `minetrials`;
+use MineTrials in titles and prose. The results webpage is maintained separately.
 
 ## Evidence and result selection
 
@@ -36,7 +40,7 @@ make test
 cd frontend && npm ci && cd ..
 make frontend-build
 make skill-docs
-git diff --exit-code -- skills/mineclaude
+git diff --exit-code -- skills/minetrials
 cd mc-mod && ./gradlew --no-daemon build && cd ..
 ```
 

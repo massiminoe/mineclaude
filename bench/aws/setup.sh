@@ -17,7 +17,7 @@
 #
 #   --creds-only   skip the infra section, upload credentials only.
 # Provisioning needs IAM/EC2 admin rights (a root or admin profile), but the
-# day-to-day `mineclaude` bench user deliberately has neither — it can read SSM
+# day-to-day benchmark user deliberately has neither — it can read SSM
 # and run instances, nothing more. Without this flag a rotation re-run under
 # that user dies on `iam:CreateRole` (it can't even `get-role` to see that the
 # role already exists), which made the documented rotation path unrunnable.
@@ -97,7 +97,7 @@ SG_ID=$(aws ec2 describe-security-groups --region "$REGION" \
     --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo None)
 if [[ "$SG_ID" == "None" || -z "$SG_ID" ]]; then
     SG_ID=$(aws ec2 create-security-group --region "$REGION" --vpc-id "$VPC" \
-        --group-name "$SG" --description "mineclaude bench (SSH only)" \
+        --group-name "$SG" --description "minetrials bench (SSH only)" \
         --query GroupId --output text)
     echo "created security group $SG_ID"
 fi

@@ -34,7 +34,7 @@ function Header({ game, connected }: { game: GameState | null; connected: boolea
   return (
     <header>
       <div className="wordmark">
-        mineclaude<span> / monitor</span>
+        MineTrials<span> / monitor</span>
       </div>
       <div className="hgroup">
         <div className="field">

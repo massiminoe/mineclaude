@@ -2,8 +2,8 @@
 
 import pytest
 
-from mineclaude.bridge import BridgeResponse, MockBridgeClient
-from mineclaude.primitives import _check, make_primitives
+from minetrials.bridge import BridgeResponse, MockBridgeClient
+from minetrials.primitives import _check, make_primitives
 
 
 def test_check_returns_message_on_success():
@@ -16,7 +16,7 @@ def test_check_raises_on_error():
 
 
 def test_check_prefixes_partial():
-    """Partial successes must be surfaced so Claude sees '[partial]' in tool results."""
+    """Partial successes must be surfaced so the agent sees '[partial]' in tool results."""
     assert _check(BridgeResponse("partial", "crafted 5 of 10")) == "[partial] crafted 5 of 10"
 
 
@@ -520,7 +520,7 @@ async def test_chest_dict_and_string_input_forms(bridge, prims):
 
 @pytest.mark.asyncio
 async def test_log(prims):
-    from mineclaude.primitives import _log_buffer
+    from minetrials.primitives import _log_buffer
     _log_buffer.clear()
     prims["log"]("test message")
     assert "test message" in _log_buffer

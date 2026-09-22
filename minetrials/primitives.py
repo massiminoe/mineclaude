@@ -1,0 +1,905 @@
+"""Sandbox primitives — async functions exposed to LLM-generated code."""
+
+from __future__ import annotations
+
+import asyncio
+import functools
+import inspect
+import uuid
+from typing import Any, Callable, Coroutine
+
+from minetrials.bridge import BridgeClient, BridgeResponse
+
+# Shared log buffer, cleared before each sandbox execution
+_log_buffer: list[str] = []
+
+# Max chars per outgoing chat line. MC chat caps at 256; we split at 240 to
+# leave headroom for the `<Name> ` prefix the server prepends.
+CHAT_MAX_LEN = 240
+
+# Type for sub-action callback
+SubActionCallback = Callable[..., Coroutine[Any, Any, None]]
+
+
+def _summarize_args(fn: Any, args: tuple, kwargs: dict) -> dict[str, Any]:
+    """Convert positional args to a named dict using the function's signature."""
+    sig = inspect.signature(fn)
+    params = list(sig.parameters.keys())
+    summary: dict[str, Any] = {}
+    for i, val in enumerate(args):
+        key = params[i] if i < len(params) else f"arg{i}"
+        # Truncate large results (like block lists)
+        if isinstance(val, list) and len(val) > 3:
+            summary[key] = f"[{len(val)} items]"
+        elif isinstance(val, str) and len(val) > 80:
+            summary[key] = val[:80] + "..."
+        else:
+            summary[key] = val
+    for key, val in kwargs.items():
+        summary[key] = val
+    return summary
+
+
+def _wrap(name: str, fn: Any, on_subaction: SubActionCallback) -> Any:
+    """Wrap an async primitive to emit sub-action events."""
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        sub_id = uuid.uuid4().hex[:8]
+        summarized = _summarize_args(fn, args, kwargs)
+        await on_subaction(sub_id, name, summarized, "started")
+        try:
+            result = await fn(*args, **kwargs)
+            await on_subaction(sub_id, name, None, "completed", result=result)
+            return result
+        except Exception as e:
+            await on_subaction(sub_id, name, None, "failed", error=str(e))
+            raise
+    return wrapper
+
+
+def _check(resp: BridgeResponse) -> str:
+    """Raise on error responses so sandbox code stops on failure.
+
+    Partial successes are surfaced with a `[partial]` prefix so the agent can
+    tell when a craft/smelt delivered fewer than requested, or when a place
+    succeeded without verification.
+    """
+    if resp.status == "error":
+        raise RuntimeError(resp.message)
+    if resp.status == "partial":
+        return f"[partial] {resp.message}"
+    return resp.message
+
+
+def make_primitives(
+    bridge: BridgeClient,
+    on_subaction: SubActionCallback | None = None,
+) -> dict[str, Any]:
+    """Create a dict of name → async callable primitives, closed over bridge."""
+
+    async def goToPosition(x: float, z: float, *, y: float, allow_break: bool = False) -> str:
+        """Walk to (x, y, z). y is REQUIRED — you decide the altitude;
+        Baritone paths to the exact 3-D goal you give it. Don't know y?
+        Resolve it first with `standableY(x, z)` and LOOK at the result: if
+        it names a y far from where you are (e.g. the surface while you're in
+        a mine), that IS where this call would take you — don't pass it on
+        blindly. Underground, y comes from your own survey (gameState
+        position, your design line, a getHeightmap scan), never from a guess.
+
+        `allow_break=False` (the default) forbids Baritone from breaking
+        blocks en route: the walk uses only existing passable terrain, and if
+        no dig-free path exists it fails as "Stuck" after ~5s of no progress
+        (possibly partway there — read the error's position). Pass
+        `allow_break=True` only when you're OK with Baritone digging its own
+        route; every block it breaks shows up as a `block_broken` event in
+        `get_state(flush=True).events`, so check that after a permissive walk.
+
+        Returns where you ACTUALLY ended up, not the target: "Walked to
+        (px, py, pz) - <d> from target (tx, ty, tz)" on a real move, or
+        "Did not move - already at ... (within arrival range)" when the target
+        was already within ~2 blocks (a no-op). So a returned string that names
+        coords near your start, or says "Did not move", means you did not
+        travel there — read it instead of re-scanning position to confirm."""
+        if y is None:  # the annotation alone can't stop an explicit y=None
+            raise ValueError(
+                "goToPosition requires y — resolve it with standableY(x, z) "
+                "and READ the result before passing it on"
+            )
+        return _check(await bridge.goto(x, z, y=y, allow_break=allow_break))
+
+    async def standableY(x: int, z: int, near_y: int | None = None) -> int | None:
+        """The y your feet would occupy at column (x, z): replaceable feet +
+        head cells over a solid floor, searching outward from `near_y` (your
+        current y if omitted) up to +-64. Returns None when no standable cell
+        exists in that window — commonly an UNLOADED CHUNK (targets beyond
+        ~50 blocks), not impossible terrain; chain shorter hops instead.
+
+        This is the explicit form of the y-resolution goToPosition used to do
+        implicitly. The value is proximity-based, not "the surface": from
+        inside a cave you get the cave floor near you — but if your column is
+        solid at your depth, the nearest standable cell may be the surface.
+        READ the value before feeding it to goToPosition."""
+        resp = await bridge.heightmap(x, z, 1, 1, near_y)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data["ys"][0][0]
+
+    async def goToPlayer(player: str, distance: int = 3) -> str:
+        """Walk to within `distance` blocks of a named player."""
+        return _check(await bridge.follow(player, distance))
+
+    async def followPlayer(player: str, distance: int = 3) -> str:
+        """Continuously follow a named player (fire-and-forget; call stop() to end)."""
+        return _check(await bridge.follow(player, distance))
+
+    async def stop() -> str:
+        """Halt all movement — cancels Baritone pathing / mining / following."""
+        return _check(await bridge.stop())
+
+    async def placeBlock(block_type: str, x: int, z: int, *, y: int | None = None) -> str:
+        """Place a block at (x, z). y is optional — when omitted the bridge
+        places at the standable-y cell at this column, i.e. on the ground
+        surface. Pin y explicitly when building above ground level (walls,
+        roofs) or when the column is a cave (auto-resolve picks the local
+        floor closest to your current y)."""
+        return _check(await bridge.place(block_type, x, z, y))
+
+    async def getBlock(x: int, y: int, z: int) -> dict:
+        """Inspect a single cell. Returns `{block, replaceable}`.
+
+        `block` is the block id with `minecraft:` stripped (e.g. `"air"`,
+        `"oak_planks"`, `"grass_block"`). `replaceable` is the vanilla
+        `BlockState.isReplaceable()` flag — same predicate `placeBlock`
+        uses to decide whether the cell can be overwritten, so a cell with
+        `replaceable=True` can be placed into.
+        """
+        resp = await bridge.get_block(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def getBlocks(coords: list[tuple[int, int, int]]) -> list[dict]:
+        """Batch-inspect many cells in ONE round-trip. Pass a list of
+        `(x, y, z)` tuples; get back a list of `{x, y, z, block, replaceable}`
+        in the same order — same per-cell shape as `getBlock`.
+
+        This is the scalable form of cell inspection. Each `getBlock` is one
+        bridge round-trip and one server tick, so looping it over a coord list
+        costs N ticks served serially (the classic 50-cell preflight = ~2.5s+
+        of pure wait). `getBlocks` collapses the whole list into a single tick
+        and a single round-trip. Reach for it whenever you'd otherwise write
+        `for c in coords: await getBlock(*c)` — build-footprint preflight,
+        re-checking a set of known ore/coords, verifying a wall is clear, etc.
+
+        Capped at 4096 coords per call. For a contiguous ground sweep prefer
+        `getHeightmap`; for a radius scan around the player prefer
+        `getNearbyBlocks` / `findBlocks` — those already read in one tick too.
+        """
+        resp = await bridge.get_blocks(list(coords))
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data["blocks"]
+
+    async def getHeightmap(
+        x0: int,
+        z0: int,
+        w: int,
+        h: int,
+        near_y: int | None = None,
+    ) -> dict:
+        """Bulk-scan the standable y at every column in `[x0, x0+w) × [z0, z0+h)`.
+
+        One bridge round-trip per call. Returns:
+          - `ys`: 2-D list (h rows × w cols) of int OR None — the y the
+            player's feet would occupy; None means no standable column was
+            found within ±64 of the reference y.
+          - `floor`: 2-D list of block-id strings OR None, parallel to `ys`.
+          - `near_y`: the reference y used (your current y if you didn't pass
+            one). The search picks the standable y closest to this — so
+            indoors / underground you get the local floor, not the surface
+            40 blocks above.
+
+        Capped at 1024 cells (e.g. 32×32) per call. For "find the flattest
+        N×N building footprint" — fetch one heightmap covering all candidate
+        origins and reduce in Python; do NOT call this in a nested loop.
+        """
+        resp = await bridge.heightmap(x0, z0, w, h, near_y)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def breakBlockAt(x: int, y: int, z: int) -> str:
+        """Mine/break the block at (x, y, z). Self-navigates within reach
+        (Baritone, ~15s budget) — don't goToPosition first.
+
+        Auto-selects a tool that can harvest the block before swinging, so you
+        don't have to equip one first and a stray torch/block left in hand by a
+        prior place/use won't make you mine bare-handed. It picks the BEST
+        suitable tool (highest tier → fastest), e.g. your diamond pickaxe over
+        a stone one. To be conservative and spare a premium tool, equip the
+        cheaper one yourself: a tool you already hold that can harvest the block
+        is KEPT, never overridden. If you own no tool that can harvest the
+        block, it mines bare-handed (slow, and stone/ore drop nothing)."""
+        return _check(await bridge.break_block(x, y, z))
+
+    async def collectItems(radius: float = 6) -> str:
+        """Walk to and pick up dropped item entities within `radius`. Call after
+        breaking blocks or killing mobs; bump radius to ~10 after a mining run."""
+        return _check(await bridge.collect(radius))
+
+    async def attack(entity_id: int | str) -> str:
+        """Fight the entity with this numeric id to the death — Baritone
+        pathfinds after the moving target (terrain-smart: jumps, gaps, walls)
+        while it swings on the full-damage cadence the moment it's in reach,
+        ~30s cap. Get ids from getNearbyEntities / findEntities. One call per
+        kill, not per swing. Equip a sword first. If a shield is in (or can be
+        auto-equipped to) the offhand, it raises the guard between swings on its
+        own — keep one in your inventory for a free in-melee block."""
+        return _check(await bridge.attack(str(entity_id)))
+
+    async def attackRanged(entity_id: int | str) -> str:
+        """Shoot the entity with this numeric id using a bow until it's dead —
+        the ranged counterpart to attack(). The bridge auto-equips a bow, owns
+        the ballistic aim (it leads the moving target and arcs for gravity), and
+        volleys full-charge shots from where it stands. STATIONARY: it holds its
+        ground (no kiting), so the target must stay in bow range with a clear
+        sightline. Get ids from getNearbyEntities / findEntities. One call per
+        kill, not per shot. Needs a bow and arrows in the inventory; ends with
+        out_of_ammo / out_of_reach / no_line_of_sight if it can't keep shooting.
+        Reach for this over attack() to fight from a distance (skeletons,
+        creepers you don't want to melee) or when you can't safely close in."""
+        return _check(await bridge.attack_ranged(str(entity_id)))
+
+    async def fishRod(
+        wait_s: float | None = None,
+        *,
+        look_at: tuple[float, float, float] | None = None,
+    ) -> dict:
+        """Cast a fishing rod, wait for a bite, reel in, and report the catch.
+        One call owns the whole lifecycle — cast, wait, reel — the same shape
+        as sleepInBed owns bed/wake.
+
+        STAND CLOSE to the water (a few blocks from the edge) and pass
+        `look_at=(x,y,z)` aimed at a water block — vanilla tosses a caught
+        item toward you as a real thrown entity, not a teleport into your
+        inventory, so a long-range cast makes the catch land short of pickup
+        range even when everything else goes right (see the `partial` case
+        below). Without `look_at` the cast goes wherever you're already
+        facing, which is how bad casts happen (bobber bounces off an
+        obstacle, lands on dry ground).
+
+        Equips a `fishing_rod` first (raises if you don't have one). After
+        casting it checks within ~2s that the hook actually landed in open
+        water — if not, it fails FAST as `bad_cast` instead of silently
+        burning the whole wait budget on a doomed cast. Otherwise waits up to
+        `wait_s` (default 40s, capped at 60s server-side — vanilla's
+        un-Lure'd bite window is 5-30s) for the bobber's bite signal, reels
+        in the instant it fires (the catch window is only a couple of
+        seconds), and verifies the catch via an inventory-count diff — the
+        same truth-in-return pattern as fillBucket/emptyBucket.
+
+        Returns {caught, reason, position, inventory_delta} — inventory_delta
+        is always present (empty dict if nothing changed). `reason` is one of
+        `caught | no_bite | lost | bad_cast`. If a bite was reeled in but
+        nothing landed in your inventory (the toss missed — cast too far),
+        this returns rather than raises with a `[partial]`-prefixed message
+        and `dropped_at`/`item` fields naming where it actually landed — call
+        collectItems() to grab it. Raises on `no_bite` (no bite within the
+        window — try a different spot), `lost` (the hook vanished before
+        biting; just cast again), and `bad_cast` (recast closer to / aimed at
+        open water) so a bare `await fishRod(...)` in a loop is the natural
+        "fish until something bites" idiom. Needing a longer wait than the
+        per-call cap? Loop this call rather than expecting one call to block
+        indefinitely.
+        """
+        resp = await bridge.fish(wait_s, look_at=look_at)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        if resp.status == "partial":
+            data["message"] = f"[partial] {resp.message}"
+        else:
+            data["message"] = resp.message
+        return data
+
+    async def craft(item: str, count: int = 1) -> str:
+        """Craft `count` of the OUTPUT item (not iterations/inputs); returns the
+        amount actually produced — read it. 3x3 recipes auto-locate a nearby
+        crafting table; only place one if craft fails with 'no crafting table'."""
+        return _check(await bridge.craft(item, count))
+
+    async def furnaceLoad(
+        input_item: str,
+        input_count: int,
+        fuel_item: str,
+        fuel_count: int,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> str:
+        """Load a nearby furnace's input + fuel slots and start smelting. Returns
+        immediately — does NOT wait for the cook (compute fuel yourself: coal=8
+        items, planks/logs=1.5, round up). Auto-walks to the furnace."""
+        return _check(await bridge.furnace_load(
+            input_item, input_count, fuel_item, fuel_count, x, y, z,
+        ))
+
+    async def furnaceInspect(
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        """Read furnace state without modifying it: {position, lit, input, fuel,
+        output}. Smelting takes ~10s/item; sleep the cook time, then poll."""
+        resp = await bridge.furnace_inspect(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def furnaceExtract(
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        """Pull everything from the furnace (output, then leftover input + fuel):
+        {output, input_left, fuel_left}. Calling mid-cook aborts the cook."""
+        resp = await bridge.furnace_extract(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    def _normalize_chest_items(items: Any) -> list[dict[str, Any]]:
+        """Accept either [(name, count_or_all), ...] tuples or [{name, count}, ...]
+        dicts. Tuples are the friendlier sandbox shape; dicts match what the
+        bridge receives. Either form is fine."""
+        out: list[dict[str, Any]] = []
+        for entry in items:
+            if isinstance(entry, dict):
+                out.append({"name": entry["name"], "count": entry.get("count", "all")})
+            elif isinstance(entry, (tuple, list)) and len(entry) == 2:
+                out.append({"name": entry[0], "count": entry[1]})
+            elif isinstance(entry, str):
+                out.append({"name": entry, "count": "all"})
+            else:
+                raise ValueError(
+                    f"chest items entry must be (name, count) or {{name, count}}, got {entry!r}"
+                )
+        return out
+
+    async def chestStore(x: int, y: int, z: int, items: Any) -> dict:
+        """Deposit into the chest at (x, y, z). `items` is [(name, count|'all'), ...].
+        Coords required. Returns {stored, skipped} — partial success is the shape,
+        not an error. Auto-walks to the chest."""
+        resp = await bridge.chest_store(x, y, z, _normalize_chest_items(items))
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def chestTake(x: int, y: int, z: int, items: Any) -> dict:
+        """Withdraw from the chest at (x, y, z) into inventory. Same `items` shape
+        as chestStore; returns {taken, skipped}."""
+        resp = await bridge.chest_take(x, y, z, _normalize_chest_items(items))
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def chestInspect(x: int, y: int, z: int) -> dict:
+        """Read chest contents without modifying: {size, slots, totals}. Use
+        `totals` for 'do I have N of X here?'."""
+        resp = await bridge.chest_inspect(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return resp.data
+
+    async def useAnvil(
+        left: str,
+        right: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        """Combine two items on a nearby anvil and take the result. `left` is the
+        base (the tool/armor/item kept), `right` is what's applied to it:
+
+          - useAnvil("iron_pickaxe", "iron_ingot")       -> repair with material
+          - useAnvil("diamond_sword", "diamond_sword")   -> merge two damaged tools
+          - useAnvil("diamond_sword", "enchanted_book")  -> apply a book's enchant
+
+        Places one of each input. Auto-walks to the anvil (place one first; craft
+        from 3 iron_block + 4 iron_ingot). Taking the result COSTS XP LEVELS — read
+        getStats()/getState player.xp_level first; if you can't afford it nothing is
+        consumed and this raises. Renaming is not supported here.
+
+        Returns {combined, result:{item,count}, xp_levels_spent, position}. Raises
+        on no-anvil / item-missing / incompatible-combination / not-enough-XP."""
+        resp = await bridge.anvil_combine(left, right, x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def smithUpgrade(
+        template: str,
+        base: str,
+        addition: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        """Upgrade gear at a nearby smithing table. Three inputs, one of each:
+        `template`, `base` (the equipment), `addition` (the material).
+
+          - netherite: smithUpgrade("netherite_upgrade_smithing_template",
+                                     "diamond_chestplate", "netherite_ingot")
+          - armor trim: smithUpgrade("<trim>_armor_trim_smithing_template",
+                                     "<armor>", "<trim material>")  # cosmetic
+
+        No XP cost. Auto-walks to the table (craft it from 2 iron_ingot + 4 planks).
+        The netherite_upgrade template is loot-only (bastion chests) — it must
+        already be in your inventory; only the netherite_ingot is craftable
+        (4 netherite_scrap + 4 gold_ingot; scrap smelts from ancient_debris).
+
+        Returns {upgraded, result:{item,count}, position}. Raises on no-table /
+        item-missing / invalid combination."""
+        resp = await bridge.smithing_upgrade(template, base, addition, x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def enchant(
+        item: str,
+        tier: int = 3,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> dict:
+        """Enchant `item` at a nearby enchanting table. `tier` picks which of the
+        three on-screen options to take: 1=top/cheapest, 2=middle, 3=bottom/best
+        (default). The resulting enchantment(s) are RANDOM — you choose the tier,
+        not the enchantment.
+
+        Two prerequisites this can't fake (it raises with the reason if unmet):
+          - XP levels: needs experience (>= the tier's displayed requirement to
+            use it, and >= `tier` levels to pay). Grind via mining/smelting/combat;
+            check getState player.xp_level. Spends `tier` levels + `tier` lapis.
+          - Bookshelves: a bare table caps the offered levels low. Ring the table
+            with up to 15 bookshelves (1 block gap) to reach level-30 enchants.
+
+        Needs lapis_lazuli in inventory (>= tier). Auto-walks to the table (craft
+        from 1 book + 2 diamond + 4 obsidian).
+
+        Returns {enchanted, item, tier, enchantments:[{name,level}],
+        xp_levels_spent, lapis_used, position}. Raises on no-table / item-missing /
+        no-lapis / enchant-didn't-apply (too few levels or no bookshelves)."""
+        resp = await bridge.enchant(item, tier, x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def equip(item: str, slot: str = "hand") -> str:
+        """Equip an item to hand (default) or an armor slot. Equip the right tool
+        BEFORE mining/fighting — placing/eating swaps your hand off the tool."""
+        return _check(await bridge.equip(item, slot))
+
+    async def discard(slot: int, count: int = 1) -> str:
+        """Drop `count` items from PI slot (0..8 hotbar, 9..35 main inventory).
+        Find the slot via getInventory(). Armor/offhand aren't discardable.
+
+        Drops land on the ground right next to you, and the bot auto-collects
+        nearby item entities — so a naive discard tends to get re-picked-up
+        (and a following collectItems WILL re-grab it). To actually shed items,
+        walk well away (>~8 blocks) before any collectItems. To free space
+        without losing loot, prefer chestStore over discard."""
+        return _check(await bridge.discard(slot, count))
+
+    async def unequip(slot: str = "offhand") -> dict:
+        """Move an equipped item back into the inventory (NOT dropped) — the
+        counterpart to equip. `slot` is "offhand" | "head" | "chest" | "legs" |
+        "feet". Frees the offhand the attack loop auto-fills with a shield, or
+        strips an armor piece to swap or store it.
+
+        Returns {unequipped, slot, item, noop}: `noop` if the slot was already
+        empty; `unequipped` is False (item left equipped, not dropped) if the
+        inventory is full — check it. Raises only if not connected / bad slot."""
+        resp = await bridge.unequip(slot)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def useItem(item: str) -> str:
+        """Right-click in air with `item` held — eat food, drink potion,
+        throw snowball/egg/ender pearl, cast fishing rod, charge bow.
+
+        The bridge equips the item to mainhand, then fires the use action
+        and holds for whatever duration the item needs (read off the item
+        itself — food ≈ 1.7s, dried kelp ≈ 0.9s, potion ≈ 1.7s, bow draws
+        to max). Instant-use items (snowball, ender pearl, fishing rod,
+        loaded crossbow) don't hold at all. Crossbow first call loads,
+        next call fires.
+
+        Each call consumes/throws one item. To "eat to full", loop:
+        check `getStats()["hunger"]` and call again until satisfied.
+        """
+        return _check(await bridge.use_item(item))
+
+    async def interact(x: int, y: int, z: int) -> str:
+        """Right-click the block at (x, y, z) — open/close doors, press
+        buttons, flip levers, toggle trapdoors and fence gates, sleep in
+        a bed, play a note block.
+
+        Auto-paths within reach. Fails on air. If the click opens a screen
+        (chest/furnace/crafting table) the bridge closes it and returns
+        `[partial]` — use the dedicated chest/furnace/craft primitives
+        for those instead.
+
+        To sleep in a bed use sleepInBed() instead — a raw interact() can't
+        tell whether you actually fell asleep or skipped the night.
+        """
+        return _check(await bridge.interact(x, y, z))
+
+    async def sleepInBed(x: int, y: int, z: int, wait_s: float | None = None) -> dict:
+        """Sleep in the bed at (x, y, z) — the right way to skip a night.
+
+        Confirms you actually fell asleep (a daytime / monsters-nearby /
+        obstructed bed fails loudly with the reason), then blocks until you
+        wake. Returns {slept, night_skipped, time}: `night_skipped` is True
+        only when you wake into morning. If the night doesn't pass within
+        `wait_s` (default 20s) — another player awake, or the server's
+        playersSleepingPercentage gamerule not met — it leaves the bed and
+        returns night_skipped=False rather than hanging.
+
+        Auto-paths within reach. Raises on a hard failure (not a bed, couldn't
+        reach it, couldn't fall asleep).
+        """
+        resp = await bridge.sleep_in_bed(x, y, z, wait_s=wait_s)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def use(
+        item: str | None = None,
+        *,
+        look_at: tuple[float, float, float] | None = None,
+        hold_ms: int | None = None,
+    ) -> dict:
+        """Unified right-click — the one primitive behind every "use an item"
+        interaction (it's what a player does pressing the use key).
+
+        Forms:
+          - use("bread")                               -> eat (use in air)
+          - use("water_bucket", look_at=(x,y,z))       -> pour/place at the aim
+          - use("bucket", look_at=(wx,wy,wz))          -> fill from a water/lava source
+          - use("torch", look_at=(x+0.5,y+1,z+0.5))    -> place on the face you look at
+          - use("flint_and_steel", look_at=(x,y,z))    -> light fire on the hit face
+          - use(look_at=(x,y,z))                        -> right-click whatever's held / empty hand
+
+        `look_at` aims the eye at that exact world point and dispatches on the
+        REAL raycast: if the ray hits a block it tries interactBlock (door,
+        torch, flint & steel, any BlockItem); otherwise it falls through to
+        item-use (buckets fill/pour, food). Omit `look_at` for a pure in-air
+        use. Auto-navigates within reach; equips `item` first if given.
+
+        To put fire/torch INSIDE or on a specific face, aim at a point on that
+        face (e.g. a top-row portal block from the ground gives a downward face
+        so fire lands in the interior). Buckets: aim at the source's centre to
+        fill, at the target block to pour.
+
+        Returns a dict: `used` (did anything happen), `dispatch` ("block" or
+        "item"), `hit` ({block,x,y,z,face}) when a block was struck, and
+        `inventory_delta` (e.g. {"water_bucket": 1, "bucket": -1} after a
+        fill). Raises only on hard failures (item missing, navigation failed);
+        a no-op (aim missed / not usable here) returns `used: False` rather
+        than raising — check it.
+
+        Leash tie-off: aiming at a fence while leading mobs (after
+        useOnEntity(id, "lead")) ties them to a knot on the post. The bridge
+        verifies this against world state (vanilla gives the client no
+        success signal for it) and returns `used: True` with `tied` (the mob
+        ids) and `leash_knot` ({x,y,z}) when it took.
+        """
+        resp = await bridge.use(item, look_at=look_at, hold_ms=hold_ms)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def useOnEntity(entity_id: int | str, item: str | None = None) -> dict:
+        """Right-click an entity — the use-key twin of attack(). This is how a
+        player feeds, breeds, leashes, shears, milks, tames, saddles, and
+        name-tags mobs; get ids from getNearbyEntities / findEntities.
+
+        Forms:
+          - useOnEntity(id, "wheat")     -> feed a cow/sheep (breed: feed TWO)
+          - useOnEntity(id, "lead")      -> leash an animal (click a fence via
+                                            use(look_at=...) to tie it off)
+          - useOnEntity(id, "shears")    -> shear a sheep
+          - useOnEntity(id, "bucket")    -> milk a cow
+          - useOnEntity(id, "bone")      -> tame a wolf (repeat until it sits)
+          - useOnEntity(id)              -> guaranteed EMPTY-hand click (toggle
+                                            a tamed wolf sit, unleash) — stows
+                                            whatever was held first, so a
+                                            leftover bone can't feed the wolf
+                                            you meant to sit
+
+        Equips `item` first if given, auto-navigates within reach (the target
+        may wander; it retries a few times). Hits the exact entity — no aiming
+        needed. Returns a dict: `used` (did the entity react), `entity`
+        ({id, type, name}), and `inventory_delta` (e.g. {"wheat": -1} after a
+        feed — read it to confirm the feed took). Breeding hearts aren't
+        client-readable: confirm a baby via getNearbyEntities a few seconds
+        later. A no-op click (wrong item for this mob) returns `used: False`
+        rather than raising — check it.
+
+        NOT supported: boats/minecarts (boarding is denied — riding isn't
+        available) and villager trading (the trade screen is closed and
+        reported as a [partial]). Piglin bartering is not a right-click at
+        all — drop a gold ingot near the piglin (discard) and collect what it
+        throws back."""
+        resp = await bridge.use_on_entity(str(entity_id), item)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def fillBucket(x: int, y: int, z: int) -> dict:
+        """Fill an empty bucket from the fluid SOURCE at (x, y, z).
+
+        You name the source cell; the bridge does the rest — it validates the
+        cell is a still *source* (not flowing — a bucket can't scoop runoff, and
+        you can't tell source from flowing by block id, the bridge reads the
+        fluid state), equips an empty `bucket`, walks into reach, aims at the
+        source, and fills. Works for water and lava.
+
+        This replaces the old `use("bucket", look_at=(x,y,z))` dance: no eye-ray
+        geometry to hand-compute, and an honest error when the cell is flowing /
+        empty / out of reach instead of a silent no-op.
+
+        Find a source first with `getNearbyBlocks`/`findBlocks` (look for
+        `"water"`/`"lava"`). Returns `{filled, fluid, position, inventory_delta}`
+        (e.g. `{"bucket": -1, "water_bucket": 1}`). Raises on hard failures (no
+        empty bucket, not a source, unreachable); a missed fill raises too.
+        """
+        resp = await bridge.bucket_fill(x, y, z)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def emptyBucket(x: int, y: int, z: int, *, item: str | None = None) -> dict:
+        """Pour a filled bucket so the fluid lands in the cell (x, y, z).
+
+        You name the destination air cell; the bridge equips the bucket, walks
+        into reach, and pours INTO that cell. A filled bucket runs its own
+        eye-raycast, so the bridge can't force the hit — instead it previews
+        several sightlines (each solid face beside the cell, plus the cell
+        itself) and only fires the one that vanilla will actually resolve into
+        your cell. In a pit it picks the far wall over the near lip you stand on.
+
+        If no sightline lands in the cell (a lip/wall deflects every angle), it
+        does NOT pour a mess elsewhere — it raises, naming where the fluid would
+        have gone, so you can break that edge, stand on another side, or pick a
+        more open cell. The target cell must be empty/replaceable.
+
+        Which bucket: auto-detected when you hold exactly one of
+        `water_bucket`/`lava_bucket`. Pass `item="water_bucket"` (or
+        `"lava_bucket"`) to disambiguate when you hold both.
+
+        Casting obsidian: obsidian forms only when water flows DOWN onto a still
+        lava SOURCE from a separate cell — pour lava into the bottom of a 2-deep
+        walled pit, then pour water into the cell directly above it. Pouring
+        water straight into the lava cell just replaces it (no obsidian), and
+        water on FLOWING lava makes cobblestone. Lava on open ground spreads, so
+        contain it. Recover the water afterward with `fillBucket` (reusable).
+
+        Returns `{emptied, fluid, requested, placed_at, verified,
+        inventory_delta}`. `placed_at` is where the fluid actually went (not an
+        echo of the request) and `verified` is True only when a real fluid
+        source is confirmed in the cell afterward — a `[partial]` result means
+        the bucket emptied but the source couldn't be confirmed (it flowed off
+        or the cell was obstructed). Raises on hard failures (no filled bucket,
+        ambiguous without `item`, target occupied, no clean sightline,
+        unreachable).
+        """
+        resp = await bridge.bucket_empty(x, y, z, item=item)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def block(
+        duration_s: float = 2.0,
+        *,
+        look_at: tuple[float, float, float] | None = None,
+        item: str = "shield",
+    ) -> dict:
+        """Raise a shield and actively block for `duration_s` seconds, then
+        lower it. A shield in the offhand is inert on its own — this is what
+        actually mitigates the hit.
+
+        Auto-equips the shield to the offhand if it isn't already there.
+        Blocking only protects the direction you FACE, so pass `look_at=(x,y,z)`
+        (e.g. an attacker's position) to point at the threat first. You can't
+        `block` and `attack` at the same time — and you usually don't need to:
+        `attack` already raises an offhand shield on its own between swings. Use
+        `block` for the cases where you want to tank WITHOUT swinging — a
+        skeleton's volley, a creeper's approach — then attack once it's safe.
+
+        Time-boxed: it holds the block for the whole window (so the shield
+        absorbs hits during it) and confirms the pose engaged. Returns a dict:
+        `blocking` (was the block pose actually confirmed) and `held_ms`. Raises
+        only if there's no shield to equip; a held-but-never-engaged block
+        returns `blocking: False` rather than raising — check it."""
+        resp = await bridge.block(duration_s, look_at=look_at, item=item)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        data = dict(resp.data)
+        data["message"] = resp.message
+        return data
+
+    async def setAutoShield(enabled: bool = True) -> bool:
+        """Toggle the bridge's autonomic auto-shield (default ON).
+
+        When on, the bridge raises the offhand shield on its own against
+        incoming hostile fire (skeleton arrows, blaze fireballs) — a tick-thread
+        reflex that never takes the action slot or interrupts what you're doing.
+        It only engages when a shield is ALREADY in your offhand, stands down
+        while you're moving or already in a fight (attack()/block() run their own
+        shield), and faces the threat for you. Turn it OFF for stretches where a
+        raised guard is counterproductive — precise building, or deliberately
+        taking a hit. Returns the resulting enabled state."""
+        resp = await bridge.set_auto_shield(enabled)
+        if resp.status == "error":
+            raise RuntimeError(resp.message)
+        return bool(resp.data.get("enabled", enabled))
+
+    async def getStats() -> dict:
+        """Return {health, hunger, position:{x,y,z}, biome, time}. Position is a
+        NESTED dict — use stats['position']['x']."""
+        resp = await bridge.get_status()
+        return resp.data
+
+    async def getInventory() -> list[dict]:
+        """Return the inventory as a list of {name, count, slot}. Tools + armor
+        also carry durability:{remaining, max}."""
+        resp = await bridge.get_status()
+        return resp.data.get("inventory", [])
+
+    async def getNearbyBlocks(range_: int = 16) -> list[dict]:
+        """Return blocks within `range_` as {name, x, y, z, distance}, nearest first."""
+        resp = await bridge.get_nearby_blocks(range_)
+        return resp.data.get("blocks", [])
+
+    async def getNearbyEntities(range_: int = 32) -> list[dict]:
+        """Return entities within `range_` as {id, name, type, x, y, z, health, distance}.
+        Adds `baby` (bool) for entity types with a baby/adult state (animals,
+        zombies/husks/drowned/zombie_villagers/zombified_piglins, piglins,
+        hoglins, zoglins) — omitted entirely for types with no such concept
+        (skeletons, players, items, ...). Pass an entity's `id` to attack()."""
+        resp = await bridge.get_nearby_entities(range_)
+        return resp.data.get("entities", [])
+
+    async def findBlocks(block_type: str, range_: int = 32, count: int = 10) -> list[dict]:
+        """Find up to `count` of one block type within `range_` (max 64), nearest first."""
+        resp = await bridge.get_nearby_blocks(range_, block_types=[block_type])
+        blocks = resp.data.get("blocks", [])
+        return blocks[:count]
+
+    async def findMultipleBlocks(block_types: list[str], range_: int = 32, count: int = 10) -> dict[str, list[dict]]:
+        """Find several block types in one scan (max range 64). Returns {type: [blocks]}."""
+        resp = await bridge.get_nearby_blocks(range_, block_types=block_types)
+        blocks = resp.data.get("blocks", [])
+        result: dict[str, list[dict]] = {t: [] for t in block_types}
+        for b in blocks:
+            name = b["name"]
+            if name in result and len(result[name]) < count:
+                result[name].append(b)
+        return result
+
+    async def findEntities(entity_type: str, range_: int = 32) -> list[dict]:
+        """Find entities matching a type/name within `range_`. Case-insensitive
+        and `minecraft:`-prefix tolerant: "Sheep", "sheep", and "minecraft:sheep"
+        all match the sheep whose type is "sheep"/name is "Sheep"."""
+        resp = await bridge.get_nearby_entities(range_)
+        entities = resp.data.get("entities", [])
+        needle = entity_type.removeprefix("minecraft:").casefold()
+        return [
+            e for e in entities
+            if str(e.get("type", "")).removeprefix("minecraft:").casefold() == needle
+            or str(e.get("name", "")).casefold() == needle
+        ]
+
+    async def say(message: str) -> None:
+        """Send a chat message in-game. Splits long text at the 240-char limit,
+        preferring a word boundary. The talking primitive — chat is no longer a
+        top-level tool; an agent narrates / replies by calling say() inside
+        execute()."""
+        text = str(message).strip()
+        while text:
+            if len(text) <= CHAT_MAX_LEN:
+                await bridge.chat(text)
+                break
+            split_at = text.rfind(" ", 0, CHAT_MAX_LEN)
+            if split_at == -1:
+                split_at = CHAT_MAX_LEN
+            await bridge.chat(text[:split_at])
+            text = text[split_at:].lstrip()
+
+    async def sleep(seconds: float) -> None:
+        """Wait `seconds` (async). Use to let a furnace cook or a mob settle."""
+        await asyncio.sleep(seconds)
+
+    def log(message: str) -> None:
+        """Append a message to the action's output log (also returned in the result).
+        `print(...)` works too. The only non-async primitive."""
+        _log_buffer.append(str(message))
+
+    primitives = {
+        "goToPosition": goToPosition,
+        "standableY": standableY,
+        "goToPlayer": goToPlayer,
+        "followPlayer": followPlayer,
+        "stop": stop,
+        "placeBlock": placeBlock,
+        "getHeightmap": getHeightmap,
+        "getBlock": getBlock,
+        "getBlocks": getBlocks,
+        "breakBlockAt": breakBlockAt,
+        "collectItems": collectItems,
+        "attack": attack,
+        "attackRanged": attackRanged,
+        "fishRod": fishRod,
+        "block": block,
+        "setAutoShield": setAutoShield,
+        "craft": craft,
+        "furnaceLoad": furnaceLoad,
+        "furnaceInspect": furnaceInspect,
+        "furnaceExtract": furnaceExtract,
+        "chestStore": chestStore,
+        "chestTake": chestTake,
+        "chestInspect": chestInspect,
+        "useAnvil": useAnvil,
+        "smithUpgrade": smithUpgrade,
+        "enchant": enchant,
+        "equip": equip,
+        "unequip": unequip,
+        "discard": discard,
+        "useItem": useItem,
+        "interact": interact,
+        "sleepInBed": sleepInBed,
+        "use": use,
+        "useOnEntity": useOnEntity,
+        "fillBucket": fillBucket,
+        "emptyBucket": emptyBucket,
+        "getStats": getStats,
+        "getInventory": getInventory,
+        "getNearbyBlocks": getNearbyBlocks,
+        "getNearbyEntities": getNearbyEntities,
+        "findBlocks": findBlocks,
+        "findMultipleBlocks": findMultipleBlocks,
+        "findEntities": findEntities,
+        "say": say,
+        "sleep": sleep,
+        "log": log,
+    }
+
+    # Wrap async primitives with sub-action tracking (skip log and sleep)
+    if on_subaction is not None:
+        skip = {"log", "sleep"}
+        for name, fn in primitives.items():
+            if name not in skip and asyncio.iscoroutinefunction(fn):
+                primitives[name] = _wrap(name, fn, on_subaction)
+
+    return primitives

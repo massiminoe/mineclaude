@@ -47,11 +47,11 @@ logs-arm: ## Tail mc-client logs (arm64 stack)
 
 .PHONY: run
 run: ## Run the MCP launcher
-	.venv/bin/mineclaude
+	.venv/bin/minetrials
 
 .PHONY: run-mock
 run-mock: ## Run the MCP launcher with a mock bridge (no MC server)
-	MOCK_BRIDGE=1 .venv/bin/mineclaude
+	MOCK_BRIDGE=1 .venv/bin/minetrials
 
 .PHONY: test
 test: ## Run the test suite

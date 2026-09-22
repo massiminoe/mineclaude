@@ -1,6 +1,6 @@
 # Third-party components and assets
 
-The root MIT license covers Mineclaude's original code. The components below
+The root MIT license covers MineTrials's original code. The components below
 retain their own licenses; this document does not relicense them. This release
 publishes source and build recipes, not prebuilt Minecraft images or mod bundles.
 
@@ -9,7 +9,7 @@ publishes source and build recipes, not prebuilt Minecraft images or mod bundles
 - Minecraft Java Edition, its server, and game assets belong to Mojang/Microsoft.
   Setup downloads them separately. See the [Minecraft EULA](https://www.minecraft.net/eula)
   and [Usage Guidelines](https://www.minecraft.net/usage-guidelines). The server
-  recipe sets `EULA=TRUE`; use it only if you accept those terms. Mineclaude is
+  recipe sets `EULA=TRUE`; use it only if you accept those terms. MineTrials is
   not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 - [itzg/docker-minecraft-server](https://github.com/itzg/docker-minecraft-server/blob/master/LICENSE):
   Apache-2.0 for the image's project code; bundled software retains its own terms.
@@ -38,7 +38,7 @@ package's actual license when redistributing it, including transitive packages.
 
 Provider CLI/SDK harnesses are installed separately from upstream packages in
 `bench/harness/*/Dockerfile`. Their terms and account authentication are separate
-from Mineclaude's MIT license. Their observed historical versions and the current
+from MineTrials's MIT license. Their observed historical versions and the current
 registry resolutions are recorded in the environment snapshot, with provenance.
 
 ## Assets
@@ -51,7 +51,7 @@ textures. Generated textures are ignored by Git and are outside this project's
 MIT grant. They are still present in a locally built monitor; review Minecraft's
 terms before distributing that monitor or deploying it publicly.
 
-The former `skins/claude_crab.png` and its default texture URL were removed from
+The former bundled crab skin and its default texture URL were removed from
 the release tree because its provenance was unverified. No custom skin is shipped
 or applied by default. Historical Git commits and gameplay recordings still
 contain the old skin; removing it here does not change those historical artifacts.

@@ -75,7 +75,7 @@ TOKEN_KEYS = ("input", "output", "thinking", "cache_write", "cache_read")
 #
 # Only ever matched against *error* payloads and stderr — never a whole
 # transcript. A transcript carries every tool result the agent saw, and the
-# mineclaude skill alone is enough to poison a loose match: the first pilot run
+# minetrials skill alone is enough to poison a loose match: the first pilot run
 # was wrongly quarantined because `primitives.md` has a line numbered 429 and
 # because epoch timestamps like 1788054294 contain "429". Hence \b429\b (digits
 # are word characters, so a timestamp can no longer match) plus a narrow scope.

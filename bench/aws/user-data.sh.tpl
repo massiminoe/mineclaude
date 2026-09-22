@@ -16,8 +16,8 @@ curl -fsSL https://get.docker.com | sh
 curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscli.zip
 unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install
 
-git clone https://github.com/massiminoe/mineclaude.git /opt/mineclaude
-cd /opt/mineclaude
+git clone https://github.com/massiminoe/minetrials.git /opt/minetrials
+cd /opt/minetrials
 git checkout --quiet __GIT_REF__
 
 # Harness credential: each harness authenticates differently, so pull only the

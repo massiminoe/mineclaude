@@ -11,7 +11,7 @@ mkdir -p "$MODS_DIR"
 if ls /tmp/mods/*.jar 1>/dev/null 2>&1; then
     cp /tmp/mods/*.jar "$MODS_DIR/"
 fi
-# Mineclaude native bridge mod (built in stage 1 of the Dockerfile). Loom
+# MineTrials native bridge mod (built in stage 1 of the Dockerfile). Loom
 # also writes a -sources.jar alongside the remapped production jar; the
 # extglob filter below keeps only the latter so Fabric doesn't try to load
 # the sources artifact as a mod.
@@ -90,7 +90,7 @@ echo "Configuring game rules via RCON..."
 python3 -c "
 from mcrcon import MCRcon
 try:
-    with MCRcon('mc-server', 'mineclaude') as mcr:
+    with MCRcon('mc-server', 'minetrials') as mcr:
         print(mcr.command('gamerule doImmediateRespawn true'))
         print(mcr.command('gamerule keepInventory true'))
         # Let the lone bot skip the night without a creative human watcher
@@ -124,7 +124,7 @@ done
 # (the first tick it's in a world) and exposes POST /record/{start,stop,roll}
 # so a fresh file can be cut without a container restart. It taps the same :99
 # framebuffer (read-only x11grab) as /screenshot + /video/stream. See
-# mc-mod/src/main/kotlin/com/mineclaude/bridge/RecordRoute.kt.
+# mc-mod/src/main/kotlin/com/minetrials/bridge/RecordRoute.kt.
 
 # Keep container alive, streaming logs
 echo "=== Entering log tail ==="

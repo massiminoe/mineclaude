@@ -1,7 +1,7 @@
 [project]
-name = "mineclaude"
+name = "minetrials"
 version = "0.1.0"
-description = "Headless Minecraft bot runtime, driven over MCP"
+description = "Minecraft advancement benchmark for AI agents and harnesses, with a shared MCP runtime"
 license = {file = "LICENSE"}
 requires-python = ">=3.13"
 dependencies = [
@@ -20,11 +20,16 @@ dev = [
     "pytest-asyncio",
 ]
 
+[project.urls]
+Repository = "https://github.com/massiminoe/minetrials"
+Dataset = "https://huggingface.co/datasets/mxls/MineTrials"
+Video = "https://youtu.be/ntVf2DUeaBg"
+
 [project.scripts]
-mineclaude = "mineclaude.main:main"
+minetrials = "minetrials.main:main"
 
 [tool.setuptools]
-packages = ["mineclaude"]
+packages = ["minetrials"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

@@ -6,7 +6,7 @@
 # Driven by bench/run.sh — don't `up` this by hand unless debugging. It
 # (a) pins the world seed + difficulty on mc-server, (b) redirects recordings
 # and session logs into a per-run artifacts dir (BENCH_RUN_DIR), and (c) adds
-# the two bench-only services: the containerized mineclaude runtime and the
+# the two bench-only services: the containerized minetrials runtime and the
 # harness. The harness sits behind a compose profile so the runner can bring
 # the world up first and start the clock precisely when the agent starts.
 services:
@@ -37,10 +37,10 @@ services:
       # this *replaces* it: recordings land in the per-run artifacts dir.
       - "${BENCH_RUN_DIR:-./state/bench/dev}/video:/recordings"
 
-  mineclaude:
+  minetrials:
     build:
       context: .
-      dockerfile: bench/mineclaude.Dockerfile
+      dockerfile: bench/minetrials.Dockerfile
     depends_on:
       - mc-client
     environment:
@@ -53,7 +53,7 @@ services:
       # (what opencode and Cursor use as the client) defaults to 60s, so the
       # 50s default has little headroom once server overhead is counted — the
       # non-Claude harnesses lower it via BENCH_EXECUTE_WAIT_S.
-      MINECLAUDE_EXECUTE_WAIT_S: "${BENCH_EXECUTE_WAIT_S:-50}"
+      MINETRIALS_EXECUTE_WAIT_S: "${BENCH_EXECUTE_WAIT_S:-50}"
     ports:
       - "5555:5555" # monitor (watch a live run from the host)
       - "5556:5556" # MCP (debug against the same server the harness drives)
@@ -73,9 +73,9 @@ services:
       args:
         BENCH_HARNESS_VERSION: "${BENCH_HARNESS_VERSION:-latest}"
     depends_on:
-      - mineclaude
+      - minetrials
     environment:
-      MCP_URL: http://mineclaude:5556/mcp
+      MCP_URL: http://minetrials:5556/mcp
       BENCH_HARNESS: "${BENCH_HARNESS:-claude-code}"
       BENCH_MODEL: "${BENCH_MODEL:-claude-haiku-4-5-20251001}"
       BENCH_REASONING_EFFORT: "${BENCH_REASONING_EFFORT:-}"

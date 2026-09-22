@@ -12,9 +12,9 @@ import pytest
 
 pytest.importorskip("mcp")  # optional [mcp] extra
 
-from mineclaude.bridge import MockBridgeClient
-from mineclaude.runtime import Runtime
-from mineclaude.mcp_server import build_mcp
+from minetrials.bridge import MockBridgeClient
+from minetrials.runtime import Runtime
+from minetrials.mcp_server import build_mcp
 
 
 def _split(res):

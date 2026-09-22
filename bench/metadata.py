@@ -14,14 +14,14 @@ import sys
 from datetime import datetime, timezone
 
 SOURCE_PATHS = (
-    "mineclaude", "mc-mod/src", "mc-mod/gradle.properties", "mc-mod/build.gradle.kts",
+    "minetrials", "mc-mod/src", "mc-mod/gradle.properties", "mc-mod/build.gradle.kts",
     "mc-mod/settings.gradle.kts", "mc-mod/gradle/wrapper/gradle-wrapper.properties",
     "mc-client/entrypoint.sh", "mc-client/entrypoint.arm64.sh",
     "mc-client/Dockerfile", "mc-client/Dockerfile.arm64", "mc-client/download-mods.sh",
-    "skills/mineclaude", "bench/harness", "bench/run.sh", "bench/metadata.py",
+    "skills/minetrials", "bench/harness", "bench/run.sh", "bench/metadata.py",
     "bench/validate-config.sh", "bench/compose.bench.yml", "bench/compose.codex.yml",
     "docker-compose.yml", "docker-compose.arm64.yml", "pyproject.toml", "requirements-dev.lock",
-    "bench/score.py", "bench/usage.py", "bench/mineclaude.Dockerfile",
+    "bench/score.py", "bench/usage.py", "bench/minetrials.Dockerfile",
     "mc-client/options.txt", "mc-client/baritone-settings.txt", "mc-server/ops.json",
 )
 
@@ -57,7 +57,7 @@ def make_metadata(root, settings, t0, local, compose=None):
         # Select only these non-secret fields; never save the resolved config.
         services = compose["services"]
         result.update({
-            "execute_wait_s": float(services["mineclaude"]["environment"]["MINECLAUDE_EXECUTE_WAIT_S"]),
+            "execute_wait_s": float(services["minetrials"]["environment"]["MINETRIALS_EXECUTE_WAIT_S"]),
             "record_fps": int(services["mc-client"]["environment"]["RECORD_FPS"]),
             "difficulty": services["mc-server"]["environment"]["DIFFICULTY"],
             "client_platform": services["mc-client"]["platform"],

@@ -1,4 +1,4 @@
-// Cursor harness driver: run one bench session against the mineclaude MCP
+// Cursor harness driver: run one bench session against the minetrials MCP
 // server until the wall-clock budget expires, then write the transcript and the
 // billed usage ledger.
 //
@@ -14,7 +14,7 @@
 import { appendFileSync, writeFileSync, readFileSync } from "node:fs";
 import { Agent, Cursor } from "@cursor/sdk";
 
-const MCP_URL = process.env.MCP_URL ?? "http://mineclaude:5556/mcp";
+const MCP_URL = process.env.MCP_URL ?? "http://minetrials:5556/mcp";
 const MODEL = process.env.BENCH_MODEL;
 const RUN_SECONDS = Number(process.env.BENCH_RUN_SECONDS ?? 3600);
 const ART = process.env.ARTIFACTS_DIR ?? "/artifacts";
@@ -69,10 +69,10 @@ try {
         model: { id: MODEL },
         apiKey: process.env.CURSOR_API_KEY,
         // settingSources:["project"] loads the workspace's own layer, which is how
-        // .cursor/skills/mineclaude gets discovered. MCP is passed inline instead
+        // .cursor/skills/minetrials gets discovered. MCP is passed inline instead
         // (inline takes precedence) so the server can never be silently missing.
         local: { cwd: WORKSPACE, settingSources: ["project"] },
-        mcpServers: { mineclaude: { type: "http", url: MCP_URL } },
+        mcpServers: { minetrials: { type: "http", url: MCP_URL } },
     });
 } catch (err) {
     // Bad key, unknown model, unreachable backend: fail with one readable line.

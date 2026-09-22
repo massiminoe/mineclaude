@@ -8,13 +8,13 @@
 # re-deriving the contract.
 #
 # Env contract (set by bench/compose.bench.yml):
-#   MCP_URL            the mineclaude MCP endpoint to drive
+#   MCP_URL            the minetrials MCP endpoint to drive
 #   BENCH_MODEL        model id for this entry in the eval matrix
 #   BENCH_RUN_SECONDS  wall-clock budget; the container exits by itself
 #   ARTIFACTS_DIR      where transcripts/logs get written (default /artifacts)
 # Mounts: /skills (ro), /artifacts (rw).
 
-MCP_URL="${MCP_URL:-http://mineclaude:5556/mcp}"
+MCP_URL="${MCP_URL:-http://minetrials:5556/mcp}"
 # No default model: a wrong-but-plausible default would silently produce a scored
 # run for the wrong benchmark entry. The runner always sets it.
 BENCH_MODEL="${BENCH_MODEL:?BENCH_MODEL must be set}"
@@ -45,12 +45,12 @@ wait_for_mcp() {
 }
 
 # --- workspace -------------------------------------------------------------
-# Install the mineclaude skill into a harness's own discovery path. The skill
+# Install the minetrials skill into a harness's own discovery path. The skill
 # itself is identical everywhere; only the directory each CLI looks in differs
 # (.claude/skills for Claude Code + opencode, .cursor/skills for Cursor).
 install_skill() {  # $1 = skills dir, e.g. /workspace/.claude/skills
     mkdir -p "$1"
-    cp -r /skills/mineclaude "$1/mineclaude"
+    cp -r /skills/minetrials "$1/minetrials"
 }
 
 # Skills load on demand in opencode and Cursor — the agent has to choose to open
@@ -59,9 +59,9 @@ install_skill() {  # $1 = skills dir, e.g. /workspace/.claude/skills
 # doesn't need this.
 write_agents_md() {  # $1 = skill path relative to the workspace root
     cat > "$WORKSPACE/AGENTS.md" <<AGENTS
-# Mineclaude
+# MineTrials
 
-You drive a headless Minecraft bot over the \`mineclaude\` MCP server.
+You drive a headless Minecraft bot over the \`minetrials\` MCP server.
 
 **Read \`$1\` before your first action.** It documents the MCP tools, the
 primitive vocabulary you run inside \`execute\`, the event and reflex model, and

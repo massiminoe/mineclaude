@@ -1,7 +1,7 @@
-# Mineclaude Bench
+# MineTrials benchmark guide
 
 A benchmark for LLM agents + harnesses: **how many Minecraft advancements can
-an agent earn in a fixed wall-clock budget**, driving the mineclaude bot in a
+an agent earn in a fixed wall-clock budget**, using the shared MCP runtime in a
 fresh, fixed-seed survival world?
 
 - **Metric**: advancement **count**, with a default budget of 3600s / 1 hour.
@@ -25,11 +25,17 @@ fresh, fixed-seed survival world?
   `mineclaude-bench-1`), fixed MC version (1.21.5), difficulty `normal`,
   pristine world per run. Mob/weather RNG remains; average over trials.
 
+Published artifacts: [MineTrials on Hugging Face](https://huggingface.co/datasets/mxls/MineTrials).
+Watch the [accompanying video](https://youtu.be/ntVf2DUeaBg).
+For a first local trial, start with the [repository quickstart](../README.md#run-the-benchmark).
+The original seed and deployed AWS identifiers are retained for reproducibility;
+see [naming and migration](../README.md#naming-and-migration).
+
 ## Anatomy of a run
 
 `bench/compose.bench.yml` overlays the base docker-compose stack:
 
-    mc-server (fixed seed) <- mc-client (bridge mod) <- mineclaude (MCP) <- harness
+    mc-server (fixed seed) <- mc-client (bridge mod) <- minetrials (MCP) <- harness
 
 `bench/run.sh` orchestrates one trial: build, world up, wait until the bot is
 in-world, start the harness (the clock starts here), let the harness self-exit
@@ -41,7 +47,7 @@ collect everything into `state/bench/<run-id>/`:
     usage.json         token ledger + cost + rate-limit health (bench/usage.py)
     advancements.json  raw ledger snapshot (ground truth)
     harness/           the harness's own transcripts + harness log
-    sessions/          mineclaude session log (advancement receipt timestamps)
+    sessions/          minetrials session log (advancement receipt timestamps)
     video/             full gameplay recording (15 fps, ~70-90 MB per 30 min,
                        so ~150-180 MB for the 1h default budget)
     logs.txt           compose logs
@@ -62,7 +68,7 @@ so a run with no ledger is never mistaken for a free one).
 Rate-limit detection for the two new harnesses is scoped to **error payloads and
 stderr only**, never the transcript body. A transcript carries every tool result
 the agent saw, and a loose pattern quarantines valid trials: the first pilot was
-wrongly flagged `THROTTLED` because the mineclaude skill has a line numbered 429
+wrongly flagged `THROTTLED` because the minetrials skill has a line numbered 429
 and because epoch timestamps like `1788054294` contain those digits.
 
 Two things about the Claude Code source format that the code depends on, both verified
@@ -169,8 +175,8 @@ as current recommendations. Missing token/cost data stays `null`.
 
 opencode and Cursor both drive MCP through the TypeScript SDK, whose tool-call
 timeout defaults to 60s. `execute`'s inline wait is 50s, so `run.sh` drops it to
-40s (`BENCH_EXECUTE_WAIT_S` -> the mineclaude service's
-`MINECLAUDE_EXECUTE_WAIT_S`) for non-Claude harnesses: a long action then
+40s (`BENCH_EXECUTE_WAIT_S` -> the minetrials service's
+`MINETRIALS_EXECUTE_WAIT_S`) for non-Claude harnesses: a long action then
 backgrounds as `status:"running"` instead of failing client-side.
 
 ## Auth
