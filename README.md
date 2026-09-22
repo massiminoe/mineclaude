@@ -1,5 +1,9 @@
 # MineTrials
 
+<p align="center">
+  <img src="assets/branding/minetrials-logo-horizontal.png" width="720" alt="MineTrials: a robot pilots Steve using two control sticks, with the wordmark to the right.">
+</p>
+
 **A Minecraft benchmark for AI agents and their harnesses.** MineTrials measures
 how many advancements a **model + harness** can earn in a fresh, fixed-seed
 survival world within a fixed time budget (one hour by default).
@@ -15,8 +19,10 @@ MCP runtime, agent skill, and read-only gameplay monitor. The runtime has no
 built-in LLM; each harness connects its own agent.
 
 Trials record advancement events, agent transcripts, runtime logs, gameplay
-video, and token usage and cost where available. The published results and
-recordings live in the [MineTrials dataset](https://huggingface.co/datasets/mxls/MineTrials).
+video, and token usage and cost where available. The [MineTrials dataset](https://huggingface.co/datasets/mxls/MineTrials)
+contains non-video run artifacts; watch the accompanying video below.
+
+[![Watch MineTrials: AI agents playing Minecraft](output/astra-thumbnail/astra-thumbnail-v4.png)](https://youtu.be/ntVf2DUeaBg)
 
 ## How an agent plays Minecraft
 
