@@ -4,23 +4,21 @@
   <img src="assets/branding/minetrials-logo-horizontal.png" width="720" alt="MineTrials: a robot pilots Steve using two control sticks, with the wordmark to the right.">
 </p>
 
-**A Minecraft benchmark for AI agents and their harnesses.** MineTrials measures
-how many advancements a **model + harness** can earn in a fresh, fixed-seed
-survival world within a fixed time budget (one hour by default).
+### [Read the blog post →](https://massiminoe.github.io/minetrials/)
 
-[Dataset on Hugging Face](https://huggingface.co/datasets/mxls/MineTrials) ·
-[Watch the video](https://youtu.be/ntVf2DUeaBg) ·
-[Benchmark guide](bench/README.md)
+How far can an AI agent get in an hour of Minecraft? **MineTrials** tests models
+and coding harnesses in a fresh survival world, counting the advancements they
+earn along the way—from crafting a workbench to entering the Nether.
 
-This repository contains the benchmark runner, scoring and analysis tools, and
-Claude Code, OpenCode, Cursor, and Codex harnesses. It also includes the shared
-Minecraft environment: a headless client, native Kotlin/Fabric bridge, Python
-MCP runtime, agent skill, and read-only gameplay monitor. The runtime has no
-built-in LLM; each harness connects its own agent.
+[🤗 Explore the dataset on Hugging Face](https://huggingface.co/datasets/mxls/MineTrials)
 
-Trials record advancement events, agent transcripts, runtime logs, gameplay
-video, and token usage and cost where available. The [MineTrials dataset](https://huggingface.co/datasets/mxls/MineTrials)
-contains non-video run artifacts; watch the accompanying video below.
+The repo includes everything needed to run a trial with Codex, Claude Code,
+Cursor, or OpenCode. Each agent brings its own reasoning loop; MineTrials
+provides the Minecraft world and tools to play in it. Runs capture advancements,
+transcripts, gameplay video, and usage data where available. The Hugging Face
+dataset contains the non-video artifacts.
+
+<a href="https://youtu.be/ntVf2DUeaBg"><img src="site/assets/youtube.svg" width="20" height="14" alt="YouTube"> Watch Astra’s best run</a>
 
 [![Watch MineTrials: AI agents playing Minecraft](output/astra-thumbnail/astra-thumbnail-v4.png)](https://youtu.be/ntVf2DUeaBg)
 
