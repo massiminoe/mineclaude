@@ -43,6 +43,13 @@ registry resolutions are recorded in the environment snapshot, with provenance.
 
 ## Assets
 
+The README architecture diagram (`site/assets/harness.svg` and `.png`) uses
+harness logos from [Lobe Icons](https://github.com/lobehub/lobe-icons), Minecraft
+artwork from Mojang/Microsoft, and a user-supplied screenshot of the Baritone
+Discord logo. Source details and the Lobe Icons MIT notice are included in
+[the diagram notices](site/assets/harness.NOTICES.txt). These logos and game
+assets retain their owners' rights and are not covered by MineTrials's MIT grant.
+
 `frontend/public/itemIcons.json` is generated locally before frontend development
 or production builds by `scripts/gen_item_icons.mjs`. It contains Minecraft
 1.21.5 textures obtained through `minecraft-assets` 1.17.0, whose JavaScript

@@ -18,6 +18,14 @@ Trials record advancement events, agent transcripts, runtime logs, gameplay
 video, and token usage and cost where available. The published results and
 recordings live in the [MineTrials dataset](https://huggingface.co/datasets/mxls/MineTrials).
 
+## How an agent plays Minecraft
+
+[![MineTrials architecture: an AI agent calls MCP tools for code execution and editable reflexes; a Fabric bridge drives Minecraft through Baritone and game interactions, returning structured state, events, and images.](site/assets/harness.png)](site/assets/harness.svg)
+
+The agent supplies the reasoning loop; MineTrials supplies the game interface.
+Event-driven reflexes react between model calls. See the
+[runtime reference](RUNTIME.md) for the tools and bridge API.
+
 ## Run the benchmark
 
 You need Git, Python 3.13, and Docker Engine/Desktop with Compose. The runner
