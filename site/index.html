@@ -20,9 +20,9 @@
   <main id="article">
     <article>
       <header class="article-header">
-        <p class="status">Working draft <span>September 2026</span></p>
+        <p class="status"><span>September 2026</span></p>
         <h1>One hour in Minecraft.</h1>
-        <p class="standfirst">Give an agent a world, a set of tools, and sixty minutes. What does it manage to do?</p>
+        <p class="standfirst">How far can today's agents get in an hour of Minecraft?</p>
         <nav aria-label="In this article"><a href="#introduction">Introduction</a><a href="#astra">Astra’s best run</a><a href="#cost">Pareto frontier</a><a href="#conclusion">Conclusion</a></nav>
       </header>
       <figure class="wide lead-figure" id="progress-figure">
@@ -36,48 +36,39 @@
       </figure>
       <section id="introduction" class="prose">
         <h2>Introduction</h2>
-        <p>MineTrials explores how effectively today’s models can play Minecraft. Specifically, how many achievements can they collect within a one-hour time limit? Minecraft calls these <em>advancements</em>: milestones such as obtaining diamonds or entering the Nether.</p>
+        <p>MineTrials explores how effectively today’s models can play Minecraft. Specifically, how many achievements can they collect within a one-hour time limit?</p>
         <p>The answer I arrive at is… quite a few! And Astra is really good at Minecraft.</p>
         <p>All tested models were capable of playing with some reasonable capacity. Many were able to get diamond gear, and a few even reached the Nether. It almost astounds me that they can play at all, being such square pegs for this task.</p>
         <p>I’m also fascinated by the importance of time in this test: both the world still running in real time and the constraint of a time limit. There’s something a bit more tangible about it to me. I like to think that <a href="https://metr.org/blog/2025-03-19-measuring-ai-ability-to-complete-long-tasks/">METR’s work on measuring AI ability to complete long tasks</a> was so captivating for similar reasons.</p>
         <p>Another aspect being evaluated here is the harness. MineTrials is really a meta-harness: we plug into Codex, Claude Code, Cursor, or OpenCode, connecting them to a custom MCP server. I took this direction after initial efforts to build my own were so easily outperformed by out-of-the-box Claude Code. I wonder if there is a lesson here about building harnesses…</p>
-        <p>The comparison above covers <strong>60 runs across 13 model–harness combinations</strong>. Best shows what each setup managed in its strongest run; Mean shows its average progress across repeated attempts.</p>
       </section>
       <section id="astra" class="prose">
         <h2>Astra’s best run</h2>
-        <p>You can watch Astra’s best attempt below, including its occasional commentary in chat. For more details, including full traces, explore the <a href="https://huggingface.co/datasets/mxls/MineTrials">MineTrials dataset on Hugging Face</a>.</p>
+        <p>You can watch Astra’s best attempt below, including its occasional commentary in chat. For more details, including full traces, see the <a href="https://huggingface.co/datasets/mxls/MineTrials">dataset on Hugging Face</a>.</p>
       </section>
       <figure class="wide video-figure">
         <iframe src="https://www.youtube-nocookie.com/embed/ntVf2DUeaBg" title="GPT-6 Astra’s best Minecraft run — 24 advancements in one hour" width="1280" height="720" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
-        <figcaption>Astra’s selected best run, with commentary captions. Caption timing is approximate. <a href="https://youtu.be/ntVf2DUeaBg">Watch on YouTube</a></figcaption>
+        <figcaption>Astra’s selected best run, with commentary captions.</figcaption>
       </figure>
       <div class="prose">
-        <p>On why Astra seemed to perform so well, some thoughts: it was certainly more reliable and consistent than the other models. <strong>Even its worst run was better than the best of every other setup in this cohort</strong>—20 advancements, compared with the next-best score of 18. Its five-run mean was 22.4, and its best runs reached 24.</p>
+        <p>On why Astra seemed to perform so well, some thoughts: it was certainly more reliable and consistent than the other models. <strong>Even its worst run was better than the best of every other setup</strong> (20 versus 18).</p>
         <p>On vibes, I observed it to be more adaptive and flexible. All models made a lot of errors and encountered unexpected situations throughout their runs. Astra seemed the most robust. For instance, in this run, after dying in pursuit of blaze rods, it readily abandoned that objective and took up the more peaceful pastime of fishing.</p>
-        <p>I also hypothesise that its compaction was more effective than what I believe occurred in Claude Code, which seemed to keep accumulating context within its spacious 1M-token limit. That’s an impression from watching the runs, rather than something these results isolate or measure.</p>
+        <p>I also hypothesise that its compaction was more effective than what I believe occurred in Claude Code, which seemed to keep accumulating context within its spacious 1M-token limit.</p>
       </div>
       <section id="cost" class="prose">
         <h2>Pareto frontier</h2>
-        <p>We’re able to get some data on cost effectiveness here. At face value, the results seem consistent with OpenAI’s claims about occupying the performance–cost frontier: the Codex combinations trace out the frontier in this comparison.</p>
-        <p>The chart compares average advancement counts with average model-usage cost. A point is on the Pareto frontier if no plotted alternative is both at least as successful and no more expensive, with an improvement on at least one of those measures.</p>
-        <p>I couldn’t get token data for Cursor in these experiments, so it’s omitted here. I was, of course, making use of subscriptions for these runs! The figures below estimate model usage rather than my subscription bills: Codex tokens are valued at standard short-context API rates, Claude Code reports list-price estimates, and OpenCode reports gateway-metered usage.</p>
+        <p>We’re able to get some data on cost effectiveness here. At face value, the results seem consistent with OpenAI’s claims about occupying the a good share of the frontier.</p>
+        <p>Note that I couldn’t get token data for Cursor in these experiments. I was limited in resources and of course, making use of subscriptions for these runs. Thus, we're working off the traces I could get.</p>
       </section>
       <figure class="wide">
         <a href="assets/cost-performance.png" aria-label="Open the cost–performance frontier at full resolution"><img src="assets/cost-performance.png" width="3456" height="1630" loading="lazy" alt="Cost–performance comparison of 11 model–harness combinations over 53 runs. The frontier steps through Codex models, from Luna at $0.86 and 14 mean advancements to Astra at $24.53 and 22.4."></a>
-        <figcaption><span>Figure 2</span> Cost on a logarithmic axis; performance is the mean one-hour advancement count. Cursor is excluded. Codex long-context rate applicability remains unverified. <a href="assets/cost-performance.png">View full size</a></figcaption>
+        <figcaption><span>Figure 2</span> Cost on a logarithmic axis; performance is the mean one-hour advancement count. Cursor is excluded. <a href="assets/cost-performance.png">View full size</a></figcaption>
       </figure>
       <section id="conclusion" class="prose">
         <h2>Conclusion</h2>
-        <p>For anyone grappling with the anxieties of rapid progress in AI, I will say that spending some time playing alongside these agents can offer some temporary relief. It’s both magical and frustrating as they struggle to build a home and interact with a live—and hostile!—3D world.</p>
-        <p>I first saw this idea two years ago on <a href="https://www.youtube.com/watch?v=NTHWMk5pcYs">Emergent Garden’s YouTube channel</a>. The <a href="https://github.com/kolbytn/mindcraft">Mindcraft project</a> has since inspired many others to explore what language models can do in Minecraft. I also draw parallels to the original <a href="https://www.twitch.tv/claudeplayspokemon">Claude Plays Pokémon</a>, whose creator shared a <a href="https://github.com/davidhershey/ClaudePlaysPokemonStarter">starter harness</a>.</p>
+        <p>For anyone grappling with the anxieties of rapid progress in AI, I will say that spending some time playing alongside these agents can offer some temporary relief. It’s both magical and frustrating as they struggle to build a home and interact with a live (and hostile!) 3D world.</p>
+        <p>I first saw this idea two years ago on <a href="https://www.youtube.com/watch?v=NTHWMk5pcYs">Emergent Garden’s YouTube channel</a>. The <a href="https://github.com/kolbytn/mindcraft">Mindcraft project</a> has since inspired many others to explore what language models can do in Minecraft. I also draw parallels to the original <a href="https://www.twitch.tv/claudeplayspokemon">Claude Plays Pokémon</a> and even Typeface's more timely <a href="https://typesafe.ai/blog/introducing-system-one-models-and-jev#:~:text=Doom">Doomo</a.>.</p>
       </section>
-      <details class="prose methods">
-        <summary>A note on the numbers</summary>
-        <p>Figures use the candidate-run release audit from 16 August–17 September 2026. Advancements count only when their receipt timestamp falls within the recorded one-hour budget. The single-run Luna/Codex cohort from a different source revision is excluded; the four-run cohort is retained. Historical source revisions and harness versions differ, so these results compare complete setups rather than isolating model capability.</p>
-        <p>Best runs are selected by highest one-hour count, then earliest final advancement, then run ID. The selected Astra run is <code>astra-low-20260917-three-t3</code>. Mean curves give every run equal weight. Astra’s low reasoning setting is reconstructed from launcher evidence; other reasoning settings were not consistently recorded. DeepSeek V4 Flash uses the experimental vision variant.</p>
-        <p>The cost frontier covers 53 runs across 11 priced combinations. It compares cohort means across differing cost bases and does not establish statistically significant dominance. Cohort and pricing review remain provisional.</p>
-        <p><a href="https://github.com/massiminoe/minetrials/tree/main/bench">Benchmark code</a> · <a href="https://github.com/massiminoe/minetrials/blob/main/bench/release/README.md">Cohort methodology</a> · <a href="https://huggingface.co/datasets/mxls/MineTrials">Dataset and traces</a></p>
-      </details>
     </article>
   </main>
   <footer class="footer"><span>MineTrials · An experiment in autonomous agents</span><span>Minecraft imagery © Mojang. Independent project; not affiliated with Mojang or the model providers.</span></footer>
